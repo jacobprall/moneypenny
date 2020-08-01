@@ -18,8 +18,8 @@
 #
 class Goal < ApplicationRecord
 
-  validates :completed, :goal_amt, :goal_category, :title, :account_id, presence: true
-
+  validates_presence_of :goal_amt, :goal_category, :title, :account_id
+  validates_inclusion_of :completed, :in => [true, false]
   belongs_to :account,
   foreign_key: :account_id,
   class_name: :Account 

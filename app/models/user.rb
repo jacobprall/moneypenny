@@ -5,8 +5,8 @@
 #  id               :bigint           not null, primary key
 #  avatar_file_name :string
 #  email            :string           not null
-#  fname            :string
-#  lname            :string
+#  fname            :string           not null
+#  lname            :string           not null
 #  password_digest  :string           not null
 #  session_token    :string           not null
 #  created_at       :datetime         not null
@@ -20,6 +20,7 @@ class User < ApplicationRecord
   validates :fname, :lname, :password_digest, :session_token, presence: true
   validates :email, presence: true, uniqueness: true
   validates :password, length: { minimum: 6, allow_nil: true }
+
 
   has_many :accounts, 
   foreign_key: :user_id,
@@ -42,9 +43,9 @@ class User < ApplicationRecord
   after_initialize :ensure_session_token
 
   def self.find_by_credentials(em, pw) 
-    user = user.find_by(email: em);
-    if user && user.is_password?(pw) 
-      user 
+    @user = User.find_by(email: em);
+    if @user && @user.is_password?(pw) 
+      @user 
     else
       nil
     end

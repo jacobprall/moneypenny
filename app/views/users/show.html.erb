@@ -1,0 +1,50 @@
+
+
+Accounts
+<ul>
+<% @user.accounts.each do |a| %>
+  
+  <li><%= a.label %> 
+    <li><%= a.account_type %> </li>
+    <li><%= a.balance %></li>
+  </li>
+<% end %>
+
+
+
+
+
+Transactions
+<ul>
+<% @user.transactions.each do |t| %>
+
+  <li><%= t.category %>
+  <li><%= t.amount %></li>
+  </li>
+<% end %>
+
+</ul>
+
+Bills
+<ul>
+<% @user.bills.each do |b| %>
+
+  <li><%= b.details %>
+  <li><%= b.due_date %></li>
+  </li>
+<% end %>
+
+</ul>
+
+Goals
+<ul>
+<% @user.goals.each do |g| %>
+
+  <li><%= g.title %>
+  <li><%= g.account.label %></li>
+  <li><%= g.goal_amt %></li>
+
+  </li>
+<% end %>
+
+</ul>

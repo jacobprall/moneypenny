@@ -5,8 +5,8 @@
 #  id               :bigint           not null, primary key
 #  avatar_file_name :string
 #  email            :string           not null
-#  fname            :string
-#  lname            :string
+#  fname            :string           not null
+#  lname            :string           not null
 #  password_digest  :string           not null
 #  session_token    :string           not null
 #  created_at       :datetime         not null

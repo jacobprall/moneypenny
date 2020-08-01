@@ -23,4 +23,4 @@ t2 = Transaction.create(amount: 12.5, category: "Gas", description: "Shell", dat
 
 g = Goal.create(completed: false, goal_amt: 100, goal_category: "savings", notes: "i want a boat", title: "boat", account_id: a.id)
 
-b = Bill.create(amount_due: 5, details: "Jen", due_date: DateTime.new(2020, 8, 8), paid: false, recurring: 0, user_id: u.id)
+b = Bill.new(amount_due: 5, name: "Jen", details: "Power", due_date: DateTime.new(2020, 8, 8), recurring: 0, user_id: u.id, paid: false)

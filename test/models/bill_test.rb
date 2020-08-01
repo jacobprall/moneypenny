@@ -7,7 +7,7 @@
 #  details    :string
 #  due_date   :datetime
 #  name       :string           not null
-#  paid       :boolean          not null
+#  paid       :boolean          default(FALSE), not null
 #  recurring  :integer          not null
 #  created_at :datetime         not null
 #  updated_at :datetime         not null

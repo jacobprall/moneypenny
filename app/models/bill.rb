@@ -7,7 +7,7 @@
 #  details    :string
 #  due_date   :datetime
 #  name       :string           not null
-#  paid       :boolean          not null
+#  paid       :boolean          default(FALSE), not null
 #  recurring  :integer          not null
 #  created_at :datetime         not null
 #  updated_at :datetime         not null
@@ -18,20 +18,24 @@
 #  index_bills_on_user_id  (user_id)
 #
 class Bill < ApplicationRecord
-  validates :amount_due, :name, :paid, :recurring, :user_id, presence: true
-
+  validates :amount_due, :name, :recurring, :user_id, presence: true
+  
   belongs_to :user,
   foreign_key: :user_id,
   class_name: :User 
 
   def recurring_freq
-    if self.recurring == 0
-      @recurrance = "None"
-    elsif self.recurring == 1
+    case self.recurring
+    when 0 
+       @recurrance = "None"
+    when 1
       @recurrance = "Weekly"
-    elsif self.recurring == 2
+    when 2
       @recurrance = "Monthly"
+    when 3
+      @recurrance = "Annually"
     end
   end
+ 
 
 end

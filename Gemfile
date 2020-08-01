@@ -26,11 +26,16 @@ gem 'jbuilder', '~> 2.5'
 # gem 'redis', '~> 4.0'
 # Use ActiveModel has_secure_password
 gem 'bcrypt', '~> 3.1.7'
-# gem 'pry-rails',
-# gem 'annotate',
-# gem 'better_errors'
-# gem 'binding_of_errors'
 
+gem 'paperclip'
+gem 'figaro'
+gem 'aws-sdk', '~> 1.6'
+gem 'font-awesome-rails'
+gem 'kaminari'
+gem 'accountingjs-rails'
+gem 'pg_search'
+gem 'omniauth-facebook'
+gem 'open_uri_redirections'
 
 # Use ActiveStorage variant
 # gem 'mini_magick', '~> 4.8'

@@ -18,6 +18,9 @@
 #
 class Transaction < ApplicationRecord
 
+  attr_accessor :total
+
+  default_scope { order('date DESC') }
   validates :amount, :description, :account_id, :category, :date, presence: true
  
   belongs_to :account,
@@ -31,5 +34,9 @@ class Transaction < ApplicationRecord
   def isCharge?
     @charge = self.amount < 0 ? true : false
   end
+  
+  
+  include PgSearch
+  multisearchable :against => [:description, :category, :amount, :date, :account_id]
 
 end

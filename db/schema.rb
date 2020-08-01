@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema.define(version: 2020_07_31_195529) do
+ActiveRecord::Schema.define(version: 2020_08_01_181201) do
 
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
@@ -22,8 +22,8 @@ ActiveRecord::Schema.define(version: 2020_07_31_195529) do
     t.string "account_type", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.boolean "debit", null: false
     t.string "inst"
+    t.string "type", null: false
     t.index ["user_id"], name: "index_accounts_on_user_id"
   end
 
@@ -36,7 +36,7 @@ ActiveRecord::Schema.define(version: 2020_07_31_195529) do
     t.integer "user_id"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.boolean "paid", null: false
+    t.boolean "paid", default: false, null: false
     t.index ["user_id"], name: "index_bills_on_user_id"
   end
 
@@ -71,8 +71,8 @@ ActiveRecord::Schema.define(version: 2020_07_31_195529) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.string "avatar_file_name"
-    t.string "fname"
-    t.string "lname"
+    t.string "fname", null: false
+    t.string "lname", null: false
     t.index ["email"], name: "index_users_on_email", unique: true
   end
 
