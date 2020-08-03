@@ -16,7 +16,7 @@ Bill.delete_all
 
 u = User.create(fname: 'J', lname: 'P', password_digest: '#', session_token: '#', email: 'j@g.com', password: 'jacobp')
 
-a = Account.create(account_type: "Checking", balance: 0, debit: true, inst: "Chase", label: "Personal", user_id: u.id)
+a = Account.create(account_type: "Checking", balance: 1005.57, balance_sheet: "Asset", inst: "Chase", label: "Personal", user_id: u.id)
 
 t1 = Transaction.create(amount: 12.5, category: "Food", description: "Denny's", date: DateTime.new(2020, 2, 3, 4), notes: "pancakes", account_id: a.id)
 t2 = Transaction.create(amount: 12.5, category: "Gas", description: "Shell", date: DateTime.new(2020, 4, 3, 4), notes: "fuel", account_id: a.id)

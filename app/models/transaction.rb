@@ -36,7 +36,7 @@ class Transaction < ApplicationRecord
   end
   
   
-  include PgSearch
-  multisearchable :against => [:description, :category, :amount, :date, :account_id]
+  # include PgSearch
+  # multisearchable :against => [:description, :category, :amount, :date, :account_id]
 
 end
