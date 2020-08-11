@@ -3,9 +3,9 @@
 # Table name: accounts
 #
 #  id            :bigint           not null, primary key
-#  account_type  :string           not null
 #  balance       :decimal(8, 2)    not null
 #  balance_sheet :string           not null
+#  category      :string           not null
 #  inst          :string
 #  label         :string           not null
 #  created_at    :datetime         not null

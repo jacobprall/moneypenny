@@ -1,5 +1,27 @@
 {
   "name": "spearment",
   "private": true,
-  "dependencies": {}
+  "dependencies": {},
+  "description": "This README would normally document whatever steps are necessary to get the application up and running.",
+  "version": "1.0.0",
+  "main": "index.js",
+  "directories": {
+    "lib": "lib",
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "webpack --watch --mode=development"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jacobprall/spearmint.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/jacobprall/spearmint/issues"
+  },
+  "homepage": "https://github.com/jacobprall/spearmint#readme"
 }

@@ -7,6 +7,7 @@
 #  goal_amt      :integer          not null
 #  goal_category :string           not null
 #  notes         :string
+#  target_date   :datetime
 #  title         :string           not null
 #  created_at    :datetime         not null
 #  updated_at    :datetime         not null

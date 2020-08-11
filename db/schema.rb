@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema.define(version: 2020_08_03_225238) do
+ActiveRecord::Schema.define(version: 2020_08_11_023037) do
 
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
@@ -19,7 +19,7 @@ ActiveRecord::Schema.define(version: 2020_08_03_225238) do
     t.string "label", null: false
     t.string "user_id", null: false
     t.decimal "balance", precision: 8, scale: 2, null: false
-    t.string "account_type", null: false
+    t.string "category", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.string "inst"
@@ -33,17 +33,11 @@ ActiveRecord::Schema.define(version: 2020_08_03_225238) do
     t.decimal "amount_due", precision: 8, scale: 2, null: false
     t.integer "recurring", null: false
     t.datetime "due_date"
-    t.integer "user_id"
+    t.integer "user_id", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.boolean "paid", default: false, null: false
     t.index ["user_id"], name: "index_bills_on_user_id"
-  end
-
-  create_table "budget_generators", force: :cascade do |t|
-    t.integer "user_id", null: false
-    t.datetime "created_at", null: false
-    t.datetime "updated_at", null: false
   end
 
   create_table "goals", force: :cascade do |t|
@@ -55,6 +49,7 @@ ActiveRecord::Schema.define(version: 2020_08_03_225238) do
     t.boolean "completed", default: false, null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.datetime "target_date"
     t.index ["account_id"], name: "index_goals_on_account_id"
   end
 
@@ -67,6 +62,7 @@ ActiveRecord::Schema.define(version: 2020_08_03_225238) do
     t.datetime "updated_at", null: false
     t.string "description"
     t.string "category"
+    t.string "tags"
     t.index ["account_id"], name: "index_transactions_on_account_id"
   end
 
@@ -76,7 +72,6 @@ ActiveRecord::Schema.define(version: 2020_08_03_225238) do
     t.string "session_token", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.string "avatar_file_name"
     t.string "fname", null: false
     t.string "lname", null: false
     t.index ["email"], name: "index_users_on_email", unique: true
