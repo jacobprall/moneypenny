@@ -1,0 +1,109 @@
+// Place all the styles related to the api/sessions controller here.
+// They will automatically be included in application.css.
+// You can use Sass (SCSS) here: http://sass-lang.com/
+body {
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+}
+.session-page {
+  background-color: #eceef1;
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+  font-family: Avenir, Helvetica, sans-serif;
+}
+
+// alt nav
+.alt-nav {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end; 
+  align-items: center;
+  padding-right: 20px;
+  height: 60px;    
+}
+
+.alt-nav button {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  width: 75px;
+  height: 34px;
+  font-size: 0.93em;
+  text-align: center;
+  background: #0077C5;
+  border-radius: 5px;
+}
+
+.alt-nav button:hover {
+  transition: 0.3s;
+  background: #0271bb
+}
+
+.alt-nav button a {
+  text-decoration: none;
+  color: white;
+  padding: 5px;
+}
+
+.alt-nav p {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  font-weight: 400;
+  font-size: 16px;
+  color: #505050;
+  text-align: right;
+  padding-right: 7px;
+}
+// title
+.session-title {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  align-content: center;
+  width: 100vw;
+  height: auto;
+  padding-bottom: 10px;
+  flex-direction: column;
+}
+.session-logo {
+  display: flex;
+  align-items: center;
+ 
+}
+.session-tagline {
+  margin: 0;
+}
+
+// form container
+.session-form {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border: 1px solid #c7c7c7;
+  box-sizing: border-box;
+  margin: auto;
+  overflow: visible;
+  width: 380px;
+  padding: 30px;
+  line-height: 1.5;
+  text-align: center;
+  color: #4C4C4C;
+  background-color:white;
+}
+
+.session-form label {
+  margin-right: 20px;
+  display: flex;
+  justify-content: flex-start;
+  font-size: 14px;
+}
+.session-form input {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  border: 1px solid gray;
+  height: 30px;
+}
