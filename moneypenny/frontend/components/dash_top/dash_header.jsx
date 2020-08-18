@@ -24,7 +24,7 @@ export default function DashHeader({ logout }) {
           <a href="#">LINKEDIN</a>
         </li>
         <li>
-          <a href="/" onClick={eventHandler}>LOGOUT</a>
+          <a href="#" onClick={eventHandler}>LOGOUT</a>
         </li>
       </ul>
     </div>

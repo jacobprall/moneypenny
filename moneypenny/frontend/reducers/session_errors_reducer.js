@@ -1,13 +1,15 @@
-const { RECEIVE_SESSION_ERRORS, RECEIVE_CURRENT_USER } = require("../actions/session_actions");
+const { RECEIVE_SESSION_ERRORS, RECEIVE_CURRENT_USER, CLEAR_SESSION_ERRORS } = require("../actions/session_actions");
 
 const sessionErrorsReducer = (oldState = [], action) => {
   let newState = Object.assign({}, oldState);
   switch (action.type) {
     case RECEIVE_SESSION_ERRORS:
-      newState.session = action.errors;
+      return action.errors;
+    case CLEAR_SESSION_ERRORS:
+      newState.errors = [];
       return newState;
     case RECEIVE_CURRENT_USER:
-      newState.errors = null;
+      newState.errors = [];
       return newState;
     default:
       return oldState;

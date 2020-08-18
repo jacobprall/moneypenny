@@ -1,0 +1,1 @@
+json.partial! 'api/accounts/accounts', accounts: @accounts

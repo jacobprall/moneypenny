@@ -2,7 +2,8 @@ class Api::AccountsController < ApplicationController
   before_action :deny_access_if_not_logged_in
   
   def index
-    @accounts = current_user.accounts
+    # @accounts = current_user.accounts
+    render 'api/users/show'
   end
 
   def new
@@ -12,7 +13,7 @@ class Api::AccountsController < ApplicationController
   def create
     @account = Account.create(account_params)
     if @account.save!
-      render json: @account
+      render 'api/users/show'
     else
       render json: @account.errors.full_messages
     end
@@ -25,7 +26,7 @@ class Api::AccountsController < ApplicationController
   def update
     @account = Account.find(params[:id])
     if @account.update(account_params)
-      render json: @account
+      render 'api/users/show'
     else
       render json: @account.errors.full_messages, status: 422
     end
@@ -34,7 +35,7 @@ class Api::AccountsController < ApplicationController
   def destroy
     @account = current_user.accounts.find(params[:id])
     @account.destroy
-    render json: @account
+    render 'api/users/show'
   end
 
   def account_params

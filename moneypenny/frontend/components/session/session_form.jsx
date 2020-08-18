@@ -2,7 +2,7 @@ import React,{ useState } from 'react'
 import { Link } from 'react-router-dom'
 
 
-export default function SessionForm({errors, formType,processForm}) {
+export default function SessionForm({errors, formType, processForm, processDemoForm, clearErrors}) {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -15,6 +15,15 @@ export default function SessionForm({errors, formType,processForm}) {
     processForm(user);
     
   };
+
+  const handleAlt = () => {
+    clearErrors()
+  }
+
+  const handleDemo = (e) => {
+    const user = {email: 'demo@email.com', password: 'password', p_num: '1234567890'}
+    processDemoForm(user)
+  }
 
   const update = (field) => {
     switch (field) {
@@ -30,15 +39,18 @@ export default function SessionForm({errors, formType,processForm}) {
   }
     
 
-  // const renderErrors = () => (
-  //   <ul>
-  //     {errors.map((error, i) => {
-  //       <li key={`error-${i}`}>
-  //         {error}
-  //       </li>
-  //     })}
-  //   </ul>
-  // )
+  const renderErrors = () => {
+    // debugger
+    return (
+      <ul className="session-errors">
+        {errors.map((error, i) => (
+          <li className="session-error" key={`error-${i}`}>
+            {error}
+          </li>
+        ))}
+      </ul>
+    ) 
+}
 
   const formSpecificInputs = () => {
     //Primary form box data
@@ -93,12 +105,15 @@ export default function SessionForm({errors, formType,processForm}) {
         />
         <br/>
         {formChoice.pNumber()}
-        <br/>
+       
       </div>
     );
 
     formChoice["submit"] = () => (
-      <button onClick={handleSubmit}>{formChoice.text}</button>
+      <>
+       <button onClick={handleSubmit}>{formChoice.text}</button> 
+       <button onClick={handleDemo}>Sign in as Demo User</button>
+      </>
     )
 
       return formChoice;
@@ -113,7 +128,7 @@ export default function SessionForm({errors, formType,processForm}) {
       <div className="alt-nav">
         <p>{formChoice.altTagline}</p>
         <button>
-          <Link to={formChoice.altLink}>{formChoice.altText}</Link>
+          <Link to={formChoice.altLink} onClick={handleAlt}>{formChoice.altText}</Link>
         </button>
       </div>
       <div className="session-title">
@@ -124,10 +139,10 @@ export default function SessionForm({errors, formType,processForm}) {
         <p className="session-tagline">{formChoice.tagline}</p>
       </div>
       <form className="session-form">
-      {formChoice.text}
-      {formChoice.inputFields()}
-      {formChoice.submit()}
-      {/* {renderErrors()} */}
+        {formChoice.text}
+        {formChoice.inputFields()}
+        {renderErrors()}
+        {formChoice.submit()}
       </form>
 
       <footer>

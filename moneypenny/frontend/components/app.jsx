@@ -6,26 +6,28 @@ import { AuthRoute, ProtectedRoute } from "../util/route_util";
 // import DashHeaderContainer from './dash_top/dash_header_container'
 import Overview from './overview/overview'
 import SplashPage from './splash/splash_page'
-
-
 import SplashNavBar from './splash/splash_nav_bar'
+import DashTop from "./dash_top/dash_top";
 
 const App = ({store}) => {
 
   return (
     <>
-    
-        <Route exact path="/" component={SplashNavBar} />
+
+
+      <AuthRoute exact path="/" component={SplashPage} />
+      <ProtectedRoute path={["/overview", "/transactions", '/goals', '/bills']} component={DashTop} />
       
       <Switch>
         <AuthRoute exact path="/login" component={LoginFormContainer} />
         <AuthRoute exact path="/signup" component={SignupFormContainer} />
-        <ProtectedRoute path="/overview" component={Overview} />
-        <ProtectedRoute path="/transactions" component={Overview} />
-        <ProtectedRoute path="/goals" component={Overview} />
-        <ProtectedRoute path="/bills" component={Overview} />
+        <ProtectedRoute exact path="/overview" component={Overview} />
 
-        <Route exact path="/" component={SplashPage} />
+
+        {/* <ProtectedRoute path="/transactions" component={Overview} />
+        <ProtectedRoute path="/goals" component={Overview} />
+        <ProtectedRoute path="/bills" component={Overview} /> */}
+        
       </Switch>
     </>
   );

@@ -1,9 +1,11 @@
 import React from 'react'
-import DashTop from '../dash_top/dash_top'
+import AccountIndexContainer from '../accounts/accounts_index_container'
 export default function overview() {
   return (
     <>
-      <DashTop />
+      {/* <AccountIndexContainer /> */}
+      <div className="accounts-filler"></div>
+      <div className='chart-filler'></div>
     </>
   )
 }
