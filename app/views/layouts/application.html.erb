@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>moneypenny</title>
+    <%= csrf_meta_tags %>
+    <%= csp_meta_tag %>
+
+    <script type="text/javascript">
+     window.logo = "<%= image_url('logo.png') %>"
+     window.down_arrow = "<%= image_url('icon-arrow-down.svg') %>"
+     window.card = "<%= image_url('icon-card.svg') %>"
+     window.chart = "<%= image_url('icon-chart.svg') %>"
+     window.cap = "<%= image_url('icon-gradcap.svg') %>"
+     window.house = "<%= image_url('icon-house.svg') %>"
+     window.money = "<%= image_url('icon-money.svg') %>"
+
+    </script>
+    <%= stylesheet_link_tag    'application', media: 'all' %>
+    <%= javascript_include_tag 'application' %>
+  </head>
+
+  <body>
+    <%= yield %>
+  </body>
+</html>

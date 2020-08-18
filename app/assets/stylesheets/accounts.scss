@@ -1,0 +1,74 @@
+// Place all the styles related to the accounts controller here.
+// They will automatically be included in application.css.
+// You can use Sass (SCSS) here: http://sass-lang.com/
+ul {
+  margin: none;
+  padding: none;
+}
+.overview-page {
+  
+}
+
+.accounts-index-container {
+  width: 60%;
+  margin: auto;
+  border-right: 1px solid gray;
+  border-left: 1px solid gray;
+
+
+}
+
+.account-category {
+  display: flex;
+  border: 1px solid gray;
+  height: 50px;
+  width: 80%;
+  justify-content: space-between;
+  margin: auto;
+  margin-top: 20px;
+  margin-bottom: 20px;
+  background: #F7F7F7;
+  align-items: center;
+}
+
+.account-category:hover {
+  background: #f3f2f2;
+}
+.account-category.active > .category-line-items {
+  
+  display: flex;
+  flex-direction: column;
+  height: auto;
+  position: relative;
+  margin: 20px;
+  
+}
+
+
+.category-icons {
+  width: 40px;
+  height: 40px;
+}
+.down-arrow {
+  width: 20px;
+  height: 20px;
+}
+
+
+
+.account-category-label {
+  font-family: Avenir,
+  Helvetica,
+  sans-serif;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 500;
+}
+
+.category-line-items {
+  padding: 0;
+  margin: 0;
+  margin-top: 60px;
+  display: none;
+}
+
