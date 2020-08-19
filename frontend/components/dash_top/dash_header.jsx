@@ -17,7 +17,7 @@ export default function DashHeader({ logout, openModal }) {
       </div>
       <ul className="header-links">
         <li>
-          <Link to="#" onClick={() => openModal('new')}>+ADD ACCOUNT</Link>
+          <Link to="/overview" onClick={() => openModal('new')}>+ADD ACCOUNT</Link>
         </li>
         <li>
           <a href="#">GITHUB</a>

@@ -39,10 +39,10 @@
   cursor: pointer;
 }
 
-.account-category.active {
-  background: #f3f2f2;
-  margin-bottom: 20px;
-}
+// .account-category-li.active {
+//   background: #f3f2f2;
+//   margin-bottom: 20px;
+// }
 
 .account-category-li {
   display: flex;
@@ -66,7 +66,7 @@
 
 }
 
-.account-category.active > .category-line-items {
+.account-category-li.active + .category-line-items {
 
   display: block;
   
@@ -77,14 +77,10 @@
     margin: 0;
     padding: 0;
     list-style: none;
-
-
-   
 }
 
-.account-items {
-  list-style: none;
-  display: block;
+.category-line-items ul .account-line-item:hover {
+  cursor: pointer;
 }
 
 

@@ -1,11 +1,10 @@
 import React from 'react'
-import { openModal } from '../../actions/modal_actions'
 
 export default function account_line_item({account, openModal}) {
   return (
     <li key={account.id} className="account-line-item">
      
-      <ul className="account-items">
+      <ul className="account-items" onClick={() => openModal('edit')}>
         <li className="account-item">{account.label}</li>
         <li className="account-institution">{account.institution}</li>
       </ul>

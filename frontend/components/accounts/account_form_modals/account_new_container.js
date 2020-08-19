@@ -3,7 +3,7 @@ import {
 } from 'react-redux';
 import React from 'react';
 import {
-  postAccount
+  postAccount, createAccount
 } from '../../../actions/account_actions';
 import {
   openModal,
@@ -11,19 +11,18 @@ import {
 } from '../../../actions/modal_actions';
 import AccountForm from './account_form';
 
-const mapStateToProps = ({
-  errors
-}) => {
+const mapStateToProps = (state) => {
   return {
-    errors: errors.session,
+    errors: Object.values(state.errors.account),
     formType: 'new',
-    account: {account_category: "None", balance: 0, debit: true, institution: "None", label: ""}
+    passedAccount: {'account_category': "Cash", 'balance': 0, 'debit': false, 'institution': "None", 'label': "", 'user_id': `${state.session.id}`},
+
   };
 };
 
 const mapDispatchToProps = dispatch => {
   return {
-    processForm: (account) => dispatch(postAccount(account)),
+    processForm: (account) => dispatch(createAccount(account)),
     closeModal: () => dispatch(closeModal())
   };
 };

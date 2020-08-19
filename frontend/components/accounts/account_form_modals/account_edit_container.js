@@ -13,9 +13,10 @@ import AccountForm from './account_form';
 
 const mapStateToProps = (state, ownProps) => {
   return {
-    errors: state.errors.session,
+    errors: Object.values(state.errors.account),
     formType: 'edit',
-    account: ownProps.account
+    passedAccount: ownProps.account,
+    user_id: state.session.id
   };
 };
 

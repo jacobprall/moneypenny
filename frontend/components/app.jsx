@@ -12,7 +12,7 @@ const App = ({store}) => {
 
   return (
     <>
-
+      <Modal />
       
       <AuthRoute exact path="/" component={SplashPage} />
       <ProtectedRoute path={["/overview", "/transactions", '/goals', '/bills']} component={DashTop} />
@@ -20,7 +20,7 @@ const App = ({store}) => {
       <Switch>
         <AuthRoute exact path="/login" component={LoginFormContainer} />
         <AuthRoute exact path="/signup" component={SignupFormContainer} />
-        <ProtectedRoute exact path="/overview" component={OverviewContainer} />
+        <ProtectedRoute exact path={["/overview", "/overview/aa"]} component={OverviewContainer} />
 
 
         {/* <ProtectedRoute path="/transactions" component={Overview} />

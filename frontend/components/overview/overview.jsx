@@ -8,7 +8,6 @@ export default function overview({getAccounts}) {
 
   return (
     <main className="overview-page">
-      <Modal />
       <AccountIndexContainer />
       {/* <div className="accounts-filler"></div>
       <div className='chart-filler'></div> */}

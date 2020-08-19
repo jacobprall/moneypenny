@@ -35,7 +35,7 @@ class Api::AccountsController < ApplicationController
   end
 
   def account_params
-    params.require(:account).permit(:account_category, :institution, :label, :balance, :user_id)
+    params.require(:account).permit(:account_category, :institution, :label, :balance, :user_id, :debit)
   end
 end
 
