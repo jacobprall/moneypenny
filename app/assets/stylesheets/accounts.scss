@@ -6,48 +6,81 @@ ul {
   padding: none;
 }
 .overview-page {
-  
+  font-family: Avenir,
+  Helvetica,
+  sans-serif;
 }
 
 .accounts-index-container {
   width: 60%;
   margin: auto;
-  border-right: 1px solid gray;
-  border-left: 1px solid gray;
-
-
+  margin-top: 20px;
+  box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2);
+  border: 1px solid #d4d7dc;
+  position: relative;
+  display: block;
+  // flex-direction: column;
 }
 
 .account-category {
-  display: flex;
+  position: relative;
+  display: block;
   border: 1px solid gray;
   height: 50px;
   width: 80%;
-  justify-content: space-between;
   margin: auto;
   margin-top: 20px;
   margin-bottom: 20px;
   background: #F7F7F7;
   align-items: center;
+  padding: 0;
+  list-style: none;
 }
 
 .account-category:hover {
   background: #f3f2f2;
 }
-.account-category.active > .category-line-items {
-  
+
+.account-category.active {
+  background: #f3f2f2;
+}
+
+.account-category-li {
   display: flex;
-  flex-direction: column;
-  height: auto;
-  position: relative;
-  margin: 20px;
+  align-content: center;
+  justify-content: space-between;
   
+}
+.account-category-li span {
+  margin-top: 10px;
+
+}
+
+.category-sutotal {
+  margin-right: 10px;
+}
+
+.category-line-items {
+  // padding: 0;
+  // margin: 0;
+  display: none;
+
+}
+
+.account-category.active > .category-line-items {
+  display: list-item;
+}
+
+.account-items {
+  list-style: none;
+  display: block;
 }
 
 
 .category-icons {
   width: 40px;
   height: 40px;
+  margin-top: 7px;
 }
 .down-arrow {
   width: 20px;
@@ -57,18 +90,41 @@ ul {
 
 
 .account-category-label {
-  font-family: Avenir,
-  Helvetica,
-  sans-serif;
-  justify-content: center;
+
+  margin-bottom: 5px;
   font-size: 20px;
   font-weight: 500;
 }
 
-.category-line-items {
-  padding: 0;
-  margin: 0;
-  margin-top: 60px;
-  display: none;
+
+
+.net-worth {
+  list-style: none;
+  margin: auto;
+  padding: none;
+  width: 80%;
+  border-top: 1px solid #eceef1;
+  margin-bottom: 40px;
+  padding-top: 10px;
+  padding-inline-start: 0px;
 }
 
+.net-worth-li {
+  display: flex;
+  justify-content: space-between;
+}
+
+.net-worth-assets {
+  color: #00a6a4;
+
+}
+
+.net-worth-liabilities {
+  color: red;
+
+}
+
+.net-worth-data {
+  
+
+}

@@ -4,43 +4,48 @@ import NetWorth from './net_worth'
 
 
 export default function accounts_index({accounts, getAccounts}) {
- 
-  // const [accounts, setAccounts] = useState([])
+
   useEffect(() => {
     getAccounts()
   }, [])
-
-
+  const categoryList = ['Cash', 'Credit Cards', 'Loans', 'Investments', 'Property']
   
-  console.log(accounts)
-  
-  const cash = accounts.filter((account) => (
-    account.account_category === 'Cash'
-  ));
+  const accountCategories = (categoryList) => {
+    const categories = {};
+    categoryList.forEach((category) => {
+      const categoryAccounts = accounts.filter((account) => (
+        account.account_category === `${category}`
+      ))
+      categories[category] = categoryAccounts
+    })
+    return categories
+  }
 
-  const creditCards = accounts.filter((account) => (
-    account.account_category === 'Credit Cards'
-  ));
+  const categories = accountCategories(categoryList)
 
-  const loans = accounts.filter((account) => (
-    account.account_category === 'Loans'
-  ));
+  const categorySubTotal = (categoriesObj) => {
+    const categorySubs = {};
+    for (const category in categoriesObj) {
+      categorySubs[category] = categoriesObj[category].map((account) => (
+        Math.round(account.balance)
+      )).reduce((acc = 0, balance) => (
+        acc + balance
+      ), 0)
+    }
+    return categorySubs
+  }
 
-  const investments = accounts.filter((account) => (
-    account.account_category === 'Investments'
-  ));
+  const categorySubs = categorySubTotal(categories)
+  console.log(categorySubs)
 
-  const property = accounts.filter((account) => (
-    account.account_category === 'Property'
-  ));
 
   return (
     <div className='accounts-index-container'>
-      <AccountCategory accounts={cash} category="Cash" logo={window.money}/>
-      <AccountCategory accounts={creditCards} category="Credit Cards" logo={window.card}/>
-      <AccountCategory accounts={loans} category="Loans" logo={window.cap}/>
-      <AccountCategory accounts={investments} category="Investments" logo={window.chart}/>
-      <AccountCategory accounts={property} category="Property" logo={window.house} />
+      <AccountCategory accounts={categories['Cash']} category="Cash" logo={window.money} catSub={categorySubs['Cash']}/>
+      <AccountCategory accounts={categories['Credit Cards']} category="Credit Cards" logo={window.card} catSub={categorySubs['Credit Cards']}/>
+      <AccountCategory accounts={categories['Loans']} category="Loans" logo={window.cap} catSub={categorySubs['Loans']}/>
+      <AccountCategory accounts={categories['Investments']} category="Investments" logo={window.chart} catSub={categorySubs['Investments']}/>
+      <AccountCategory accounts={categories['Property']} category="Property" logo={window.house}  catSub={categorySubs['Property']}/>
       <NetWorth accounts={accounts} />
     </div>
   )

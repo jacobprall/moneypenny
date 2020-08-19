@@ -10,7 +10,7 @@ export default function net_worth({accounts}) {
     )).reduce((acc = 0, account) => (
       account + acc
     ), 0);
-    console.log(assets)
+
     let liabilities = accounts.filter((account) => (
       !account.debit
     )).map((account) => (
@@ -28,17 +28,25 @@ export default function net_worth({accounts}) {
   
   
   return (
-    <div className="net-worth-left">
-      <span className="net-worth-label">Assets</span>
-      <span className="net-worth-label">Liabilities</span>
-      <span className="net-worth-label">Net Worth</span>
-
-      <div className="net-worth-right">
+    <>
+    <ul className="net-worth">
+      <li className="net-worth-li">
+        <span className="net-worth-label">Assets</span>
         <span className="net-worth-assets">{assets}</span>
-        <span className="net-worth-liabilities">{liabilities}</span>
+      </li>
+        <br/>
+      <li className="net-worth-li">
+        <span className="net-worth-label">Debts</span>
+      <span className="net-worth-liabilities">{liabilities}</span>
+      </li>
+        <br/>
+        <li className="net-worth-li">
+        <span className="net-worth-label">Net Worth</span>
         <span className="net-worth-data">{netWorth}</span>
-      </div>
+      </li>
+      </ul>
+      </>
 
-    </div>
+   
   )
 }
