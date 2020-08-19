@@ -36,7 +36,7 @@ export default function accounts_index({accounts, getAccounts}) {
   }
 
   const categorySubs = categorySubTotal(categories)
-  console.log(categorySubs)
+  
 
 
   return (

@@ -16,6 +16,7 @@ export const createAccount = account => (
 export const updateAccount = account => (
   $.ajax({
     url: `api/accounts/${account.id}`,
+    method: 'PATCH',
     data: { account }
   })
 );

@@ -10,7 +10,7 @@ const mapStateToProps = (state, ownProps) => ({
 })
 
 const mapDispatchToProps = (dispatch) => ({
-  openModal: modalType => dispatch(openModal(modalType))
+  openModal: (modalType, account) => dispatch(openModal(modalType, account))
 
 })
 

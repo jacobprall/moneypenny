@@ -9,12 +9,12 @@ function Modal({ modal, closeModal }) {
     return null;
   }
   let component;
-  switch (modal) {
+  switch (modal[0]) {
     case 'new':
       component = <AccountNewContainer />;
       break;
     case 'edit':
-      component = <AccountEditContainer />;
+      component = <AccountEditContainer account={modal[0]}/>;
       break;
     default:
       return null;

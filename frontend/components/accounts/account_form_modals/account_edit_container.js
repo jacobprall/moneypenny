@@ -3,7 +3,7 @@ import {
 } from 'react-redux';
 import React from 'react';
 import {
-  patchAccount
+  updateAccount
 } from '../../../actions/account_actions';
 import {
   openModal,
@@ -15,14 +15,13 @@ const mapStateToProps = (state, ownProps) => {
   return {
     errors: Object.values(state.errors.account),
     formType: 'edit',
-    passedAccount: ownProps.account,
-    user_id: state.session.id
+    passedAccount: Object.assign(state.ui.modal.account[1], { user_id: state.session.id })
   };
 };
 
 const mapDispatchToProps = dispatch => {
   return {
-    processForm: (account) => dispatch(patchAccount(account)),
+    processForm: (account) => dispatch(updateAccount(account)),
     closeModal: () => dispatch(closeModal())
   };
 };

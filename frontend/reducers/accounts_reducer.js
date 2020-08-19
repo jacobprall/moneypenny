@@ -8,8 +8,8 @@ const accountsReducer = (oldState = [], action) => {
       newState = action.accounts
       return newState;
     case RECEIVE_ACCOUNT:
-      let newAccount = { [action.account.id]: action.account }
-      newState = Object.assign(newState, newAccount);
+      let newAccount = [{[action.account.id]: action.account}]
+      newState = newState.concat(newAccount);
       return newState;
     case REMOVE_ACCOUNT:
       delete newState[action.accountId];

@@ -1,21 +1,19 @@
 
 import React, {useState} from 'react'
 
-export default function account_form({passedAccount, formType, errors, processForm, closeModal, user_id}) {
+export default function account_form({passedAccount, formType, errors, processForm, closeModal}) {
   
 
   const [account, setAccount] = useState(passedAccount)
   
   const update = (field) => {
+    console.log(account)
     return e => (
       setAccount({...account, [field]: e.currentTarget.value,})
     )
   }
 
   const handleSubmit = (e) => {
-    console.log(user_id)
-    
-
     console.log(account)
     e.preventDefault();
     if (errors.length === 0) {
@@ -81,7 +79,7 @@ export default function account_form({passedAccount, formType, errors, processFo
           </label>
           
           <label>Balance:
-            <input type="number" min="1" value={account.balance} onChange={update('balance')} />
+            <input type="number" min="0" step=".01" value={account.balance} onChange={update('balance')} />
           </label>
           
           <label>Institution:

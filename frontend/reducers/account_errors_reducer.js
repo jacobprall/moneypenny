@@ -5,7 +5,7 @@ const {
 } = require("../actions/account_actions");
 
 const accountErrorsReducer = (oldState = [], action) => {
-  let newState = Object.assign({}, oldState);
+  let newState = [];
   switch (action.type) {
     case RECEIVE_ACCOUNT_ERRORS:
       return action.errors;
