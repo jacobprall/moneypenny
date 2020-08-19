@@ -15,7 +15,7 @@ const accountsReducer = (oldState = [], action) => {
       delete newState[action.accountId];
       return newState;
     default:
-      return oldState;
+      return newState;
   }
 }
 

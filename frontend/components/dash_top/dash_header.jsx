@@ -1,11 +1,13 @@
 import React from 'react'
 import {Link} from 'react-router-dom'
-export default function DashHeader({ logout }) {
+export default function DashHeader({ logout, openModal }) {
 
   const eventHandler = (e) => {
     e.preventDefault();
     logout();
   }
+
+
 
   return (
     <div className="top-header">
@@ -15,7 +17,7 @@ export default function DashHeader({ logout }) {
       </div>
       <ul className="header-links">
         <li>
-          <Link to="/overview/aa">+ADD ACCOUNT</Link>
+          <Link to="#" onClick={() => openModal('new')}>+ADD ACCOUNT</Link>
         </li>
         <li>
           <a href="#">GITHUB</a>

@@ -1,10 +1,7 @@
 // Place all the styles related to the accounts controller here.
 // They will automatically be included in application.css.
 // You can use Sass (SCSS) here: http://sass-lang.com/
-ul {
-  margin: none;
-  padding: none;
-}
+
 .overview-page {
   font-family: Avenir,
   Helvetica,
@@ -26,7 +23,7 @@ ul {
   position: relative;
   display: block;
   border: 1px solid gray;
-  height: 50px;
+
   width: 80%;
   margin: auto;
   margin-top: 20px;
@@ -39,10 +36,12 @@ ul {
 
 .account-category:hover {
   background: #f3f2f2;
+  cursor: pointer;
 }
 
 .account-category.active {
   background: #f3f2f2;
+  margin-bottom: 20px;
 }
 
 .account-category-li {
@@ -68,7 +67,19 @@ ul {
 }
 
 .account-category.active > .category-line-items {
-  display: list-item;
+
+  display: block;
+  
+}
+
+.category-line-items ul {
+    background: white;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+
+
+   
 }
 
 .account-items {
@@ -80,7 +91,7 @@ ul {
 .category-icons {
   width: 40px;
   height: 40px;
-  margin-top: 7px;
+  
 }
 .down-arrow {
   width: 20px;
@@ -89,6 +100,13 @@ ul {
 
 
 
+.account-line-item {
+  display: flex;
+  justify-content: space-between;
+  width: 90%;
+  margin: auto;
+  
+}
 .account-category-label {
 
   margin-bottom: 5px;
@@ -96,6 +114,10 @@ ul {
   font-weight: 500;
 }
 
+.account-institution {
+  font-size: 12px;
+  color: #8d9096;
+}
 
 
 .net-worth {
@@ -127,4 +149,8 @@ ul {
 .net-worth-data {
   
 
+}
+
+.account-form-container {
+  z-index: 2;
 }

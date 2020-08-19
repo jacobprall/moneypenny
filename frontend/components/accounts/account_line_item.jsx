@@ -1,15 +1,16 @@
 import React from 'react'
-import accountsReducer from '../../reducers/accounts_reducer'
+import { openModal } from '../../actions/modal_actions'
 
-export default function account_line_item({account}) {
+export default function account_line_item({account, openModal}) {
   return (
     <li key={account.id} className="account-line-item">
      
       <ul className="account-items">
         <li className="account-item">{account.label}</li>
-        <li className="account-item">{account.institution}</li>
+        <li className="account-institution">{account.institution}</li>
       </ul>
       <span className="item-balance">{account.balance}</span>
+      {/* <span onClick={openModal('edit')}>Edit</span> */}
     </li>
   )
 }

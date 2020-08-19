@@ -7,13 +7,13 @@ import { AuthRoute, ProtectedRoute } from "../util/route_util";
 import OverviewContainer from './overview/overview_container'
 import SplashPage from './splash/splash_page'
 import DashTop from "./dash_top/dash_top";
-
+import Modal from './modal'
 const App = ({store}) => {
 
   return (
     <>
 
-
+      
       <AuthRoute exact path="/" component={SplashPage} />
       <ProtectedRoute path={["/overview", "/transactions", '/goals', '/bills']} component={DashTop} />
       

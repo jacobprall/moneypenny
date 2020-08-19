@@ -2,7 +2,7 @@ import React, {useState, useEffect} from 'react'
 import AccountLineItem from './account_line_item'
 
 
-export default function account_category({ accounts, category, logo, catSub }) {
+export default function account_category({ accounts, category, logo, catSub, openModal }) {
 
   const [toggle, setToggle] = useState(false)
 
@@ -29,20 +29,20 @@ export default function account_category({ accounts, category, logo, catSub }) {
 
   return (
     
-      <ul className={`account-category ${toggle ? "active" : ""}`} onClick={handleClick} >
-        <li className="account-category-li">
+    <div className={`account-category ${toggle ? "active" : ""}`} onClick={handleClick} >
+        <div className="account-category-li">
           <img src={logo} alt="image" className="category-icons" />
           <span className="account-category-label">{category}</span>
           <span className="category-subtotal">{catSub}</span>
-        </li>
+        </div>
         
-        <li className="category-line-items">
+        <div className="category-line-items">
           <ul>
             {accounts.map((account) => (
-              <AccountLineItem account={account} key={account.id}/>
+              <AccountLineItem account={account} key={account.id} openModal={openModal}/>
             ))}
           </ul>
-        </li>
-   </ul>
+        </div>
+   </div>
   )
 }
