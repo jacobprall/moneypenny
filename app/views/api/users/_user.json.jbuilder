@@ -1,2 +1,2 @@
-json.extract! user.accounts
-json.extract! user, :id, :email
+
+json.extract! current_user, :id, :email

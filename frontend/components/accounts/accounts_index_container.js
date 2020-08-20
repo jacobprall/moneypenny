@@ -4,7 +4,7 @@ import allAccounts from '../../reducers/selector'
 import { requestAccounts } from '../../actions/account_actions'
 import {openModal} from '../../actions/modal_actions'
 const mSTP = ({entities: {accounts}}) => ({
-  accounts
+  accounts: Object.values(accounts)
 })
 
 const mDTP = dispatch => ({

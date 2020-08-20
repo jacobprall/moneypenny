@@ -5,14 +5,15 @@ export const RECEIVE_ACCOUNTS = 'RECEIVE_ACCOUNTS';
 export const RECEIVE_ACCOUNT = 'RECEIVE_ACCOUNT';
 export const REMOVE_ACCOUNT = 'REMOVE_ACCOUNT';
 export const RECEIVE_ACCOUNT_ERRORS = 'RECEIVE_ACCOUNT_ERRORS'
+export const CLEAR_ACCOUNT_ERRORS = 'CLEAR_ACCOUNT_ERRORS'
+
 export const receiveAccounts = (accounts) => ({
   type: RECEIVE_ACCOUNTS,
   accounts
-
 });
 
 export const postAccount = account => ({
-  type: RECEIVE_ACCOUNTS,
+  type: RECEIVE_ACCOUNT,
   account
 });
 
@@ -29,7 +30,11 @@ export const removeAccount = (accountId) => ({
 export const receiveAccountErrors = (errors) => ({
   type: RECEIVE_ACCOUNT_ERRORS,
   errors
-})
+});
+
+export const clearAccountErrors = () => ({
+  type: CLEAR_ACCOUNT_ERRORS
+});
 
 
 export const requestAccounts = () => dispatch => (

@@ -10,7 +10,7 @@ const accountErrorsReducer = (oldState = [], action) => {
     case RECEIVE_ACCOUNT_ERRORS:
       if (action.errors !== undefined) return action.errors;
       return newState
-    case RECEIVE_ACCOUNT:
+    case CLEAR_ACCOUNT_ERRORS:
       newState.errors = [];
       return newState;
     default:

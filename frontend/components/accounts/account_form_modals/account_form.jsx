@@ -1,26 +1,30 @@
 
 import React, {useState} from 'react'
 
-export default function account_form({passedAccount, formType, errors, processForm, closeModal, deleteAccount}) {
+export default function account_form({passedAccount, formType, errors, processForm, closeModal, deleteAccount, clearAccountErrors}) {
   
 
   const [account, setAccount] = useState(passedAccount)
   
   const update = (field) => {
-    console.log(account)
     return e => (
       setAccount({...account, [field]: e.currentTarget.value,})
     )
   }
 
+  // const handleSubmit = (e) => {
+  //   e.preventDefault();
+  //   processForm(account).then(closeModal(errors));
+  // }
+
+
   const handleSubmit = (e) => {
-    console.log(account)
+    console.log(errors)
     e.preventDefault();
-    if (errors.length === 0) {
-      processForm(account).then(closeModal());
-    }
-    
-  }
+    processForm(account).then(
+      () => closeModal()).then(
+      () => clearAccountErrors())
+  };
 
   const handleToggle = (e) => {
     e.preventDefault();
@@ -31,11 +35,17 @@ export default function account_form({passedAccount, formType, errors, processFo
     }
   }
 
+  const handleClose = (e) => {
+    e.preventDefault();
+    closeModal();
+    clearAccountErrors();
+  }
+
   const renderErrors = () => {
     return (
-      <ul>
+      <ul className="account-form-errors">
         {errors.map((error, i) => (
-          <li key={i}>{error}</li>
+          <li className="account-form-error" key={i}>{error}</li>
         ))}
       </ul>
     )
@@ -69,10 +79,10 @@ export default function account_form({passedAccount, formType, errors, processFo
   return (
     <div className="account-form-container">
       <form onSubmit={handleSubmit} className="account-form">
-        <div onClick={closeModal} className="close-x">X</div>
+        <div onClick={handleClose} className="close-x">X</div>
         <div className="account-inputs">
           <label>Label:
-            <input type="text" value={account.label} onChange={update('label')}/>
+            <input type="text" value={(account.label)} onChange={update('label')}/>
           </label>
           
           <label>Category:
@@ -101,7 +111,7 @@ export default function account_form({passedAccount, formType, errors, processFo
            
             <input type="checkbox" value={account.debit} onChange={handleToggle} checked={account.debit}/>
           </label>
-          <input className="account-form-submit" type="submit" value={formType} />
+              <button className="account-form-submit" value={formType}>{formType.toUpperCase()}</button>
           {deleteOption()}
           {renderErrors()}
         </div>

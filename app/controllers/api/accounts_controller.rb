@@ -3,15 +3,15 @@ class Api::AccountsController < ApplicationController
   
   def index
     @accounts = current_user.accounts
-    render 'api/accounts/show'
+    render :index
   end
 
   def create
     @account = Account.create(account_params)
-    if @account.save!
-      render 'api/accounts/show'
+    if @account.save
+      render 'api/accounts/update'
     else
-      render json: @account.errors.full_messages
+      render json: @account.errors.full_messages, status: 422
     end
   end
 
@@ -20,9 +20,9 @@ class Api::AccountsController < ApplicationController
   end
 
   def update
-    @account = Account.find(params[:id])
+    @account = current_user.accounts.find(params[:id])
     if @account.update(account_params)
-      render 'api/users/show'
+      render 'api/accounts/update'
     else
       render json: @account.errors.full_messages, status: 422
     end

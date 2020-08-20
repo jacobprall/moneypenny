@@ -1,15 +1,15 @@
 import { RECEIVE_ACCOUNTS, RECEIVE_ACCOUNT, REMOVE_ACCOUNT} from '../actions/account_actions'
 
-const accountsReducer = (oldState = [], action) => {
-  let newState = [].concat(oldState);
+const accountsReducer = (oldState = {}, action) => {
+  let newState = Object.assign(oldState, {})
   
   switch (action.type) {
     case RECEIVE_ACCOUNTS:
       newState = action.accounts
       return newState;
     case RECEIVE_ACCOUNT:
-      let newAccount = [{[action.account.id]: action.account}]
-      newState = newState.concat(newAccount);
+      let newAccount = {[action.account.id]: action.account}
+      newState = Object.assign(newAccount, newState);
       return newState;
     case REMOVE_ACCOUNT:
       delete newState[action.accountId];

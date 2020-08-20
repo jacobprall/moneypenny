@@ -3,10 +3,9 @@ import {
 } from 'react-redux';
 import React from 'react';
 import {
-  postAccount, createAccount
+  createAccount, clearAccountErrors
 } from '../../../actions/account_actions';
 import {
-  openModal,
   closeModal
 } from '../../../actions/modal_actions';
 import AccountForm from './account_form';
@@ -23,7 +22,8 @@ const mapStateToProps = (state) => {
 const mapDispatchToProps = dispatch => {
   return {
     processForm: (account) => dispatch(createAccount(account)),
-    closeModal: () => dispatch(closeModal())
+    closeModal: () => dispatch(closeModal()),
+    clearAccountErrors: () => dispatch(clearAccountErrors()),
   };
 };
 
