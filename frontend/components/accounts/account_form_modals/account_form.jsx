@@ -1,7 +1,7 @@
 
 import React, {useState} from 'react'
 
-export default function account_form({passedAccount, formType, errors, processForm, closeModal}) {
+export default function account_form({passedAccount, formType, errors, processForm, closeModal, deleteAccount}) {
   
 
   const [account, setAccount] = useState(passedAccount)
@@ -57,6 +57,14 @@ export default function account_form({passedAccount, formType, errors, processFo
     'None'
   ]
 
+  const deleteOption = () => {
+    if (formType === 'edit') {
+      return (
+        <span className="edit-delete" onClick={() => deleteAccount(account.id)}>Delete Account</span>
+      )
+    }
+  }
+
 
   return (
     <div className="account-form-container">
@@ -89,11 +97,12 @@ export default function account_form({passedAccount, formType, errors, processFo
               ))}
             </select>
           </label>
-          
           <label>Debit?
-            <input type="checkbox" value={account.debit} onClick={handleToggle} />
+           
+            <input type="checkbox" value={account.debit} onChange={handleToggle} checked={account.debit}/>
           </label>
-          <input type="submit" value={formType} />
+          <input className="account-form-submit" type="submit" value={formType} />
+          {deleteOption()}
           {renderErrors()}
         </div>
       </form>

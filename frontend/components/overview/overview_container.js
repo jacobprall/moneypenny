@@ -11,7 +11,7 @@ const mSTP = (state) => ({
 })
 
 const mDTP = dispatch => ({
-  // getAccounts: () => (dispatch(requestAccounts()))
+  getAccounts: () => (dispatch(requestAccounts()))
 })
 
 export default connect(mSTP, mDTP)(Overview)

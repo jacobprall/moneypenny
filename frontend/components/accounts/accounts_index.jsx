@@ -5,9 +5,10 @@ import NetWorth from './net_worth'
 
 export default function accounts_index({accounts, getAccounts}) {
 
-  useEffect(() => {
-    getAccounts()
-  }, [])
+  // useEffect(() => {
+  //   getAccounts()
+  // }, [])
+
   const categoryList = ['Cash', 'Credit Cards', 'Loans', 'Investments', 'Property']
   
   const accountCategories = (categoryList) => {

@@ -41,5 +41,29 @@
 
 .close-x {
   cursor: pointer;
-  justify-self: flex-end;
+  margin: 10px;
+  box-sizing: border-box;
+  
+}
+
+.edit-delete {
+  cursor: pointer;
+  color: red;
+  margin-top: 20px;
+}
+
+.account-form-submit {
+  cursor: pointer;
+  text-transform: uppercase;
+  color: white;
+  background-color: #0077c5;
+  width: 50px;
+  height: 30px;
+  border-radius: 5px;
+  border: none;
+}
+
+.account-form-submit:hover {
+  background: #0194f5;
+  transition: 0.3s;
 }

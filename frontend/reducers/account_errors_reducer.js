@@ -8,7 +8,8 @@ const accountErrorsReducer = (oldState = [], action) => {
   let newState = [];
   switch (action.type) {
     case RECEIVE_ACCOUNT_ERRORS:
-      return action.errors;
+      if (action.errors !== undefined) return action.errors;
+      return newState
     case RECEIVE_ACCOUNT:
       newState.errors = [];
       return newState;

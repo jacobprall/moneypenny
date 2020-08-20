@@ -42,7 +42,7 @@ export default function net_worth({accounts}) {
         <br/>
         <li className="net-worth-li">
         <span className="net-worth-label">Net Worth</span>
-        <span className="net-worth-data">{netWorth}</span>
+        <span className={`net-worth-data ${netWorth > 0 ? 'green' : 'red'}`}>{netWorth}</span>
       </li>
       </ul>
       </>

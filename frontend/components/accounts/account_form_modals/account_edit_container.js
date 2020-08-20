@@ -3,7 +3,7 @@ import {
 } from 'react-redux';
 import React from 'react';
 import {
-  updateAccount
+  updateAccount, deleteAccount
 } from '../../../actions/account_actions';
 import {
   openModal,
@@ -22,7 +22,9 @@ const mapStateToProps = (state, ownProps) => {
 const mapDispatchToProps = dispatch => {
   return {
     processForm: (account) => dispatch(updateAccount(account)),
-    closeModal: () => dispatch(closeModal())
+    closeModal: () => dispatch(closeModal()),
+    deleteAccount: (account) => dispatch(deleteAccount(account))
+
   };
 };
 

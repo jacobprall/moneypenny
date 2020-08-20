@@ -6,19 +6,6 @@ export default function account_category({ accounts, category, logo, catSub, ope
 
   const [toggle, setToggle] = useState(false)
 
-  // const [catSub, setCatSub] = useState(0);
-  
-  // const categorySubTotal = accounts.map((account) => (
-  //     account.balance
-  //   )).reduce((acc = 0, balance) => {
-  //     acc + balance
-  //   }, 0);
-    
-  //   useEffect(() => (
-  //     setCatSub(categorySubTotal)
-  //   ),[0])
-  
-
 
   const handleClick = () => {
     setToggle(() => (

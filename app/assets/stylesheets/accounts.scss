@@ -48,6 +48,8 @@
   display: flex;
   align-content: center;
   justify-content: space-between;
+  margin: auto;
+  width: 90%;
   
 }
 .account-category-li span {
@@ -142,11 +144,44 @@
 
 }
 
-.net-worth-data {
-  
+.net-worth-data.green {
+  color: #00a6a4
 
+}
+.net-worth-data.red {
+  color: red;
 }
 
 .account-form-container {
   z-index: 2;
+}
+.line-item-right {
+  display: flex;
+  align-content: center;
+}
+.x {
+  width: 20px;
+  height: 20px;
+  padding: 5px;
+  border-radius: 5px;
+  margin-left: 3px;
+}
+.x:hover {
+  // background: rgb(225, 224, 224);
+  background: rgba(254, 85, 85, 0.762);
+}
+
+.pencil {
+    width: 20px;
+    height: 20px;
+    margin-right: 3px;
+    margin-left: 3px;
+    padding: 5px;
+    // margin-bottom: 2px;
+
+}
+
+.pencil:hover {
+  background: rgb(225, 224, 224);
+  border-radius: 5px;
 }
