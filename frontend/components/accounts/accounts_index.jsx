@@ -28,10 +28,10 @@ export default function accounts_index({accounts, getAccounts}) {
     const categorySubs = {};
     for (const category in categoriesObj) {
       categorySubs[category] = categoriesObj[category].map((account) => (
-        Math.round(account.balance)
+        account.balance
       )).reduce((acc = 0, balance) => (
         acc + balance
-      ), 0)
+      ), 0).toFixed(2)
     }
     return categorySubs
   }

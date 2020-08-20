@@ -168,20 +168,21 @@
 }
 .x:hover {
   // background: rgb(225, 224, 224);
-  background: rgba(254, 85, 85, 0.762);
+  border: 1px solid rgba(254, 85, 85, 0.762);
+ 
 }
 
 .pencil {
-    width: 20px;
-    height: 20px;
+    width: 25px;
+    height: 25px;
     margin-right: 3px;
     margin-left: 3px;
-    padding: 5px;
+    padding: 0px;
     // margin-bottom: 2px;
 
 }
 
 .pencil:hover {
-  background: rgb(225, 224, 224);
+  border: 1px solid rgb(225, 224, 224);
   border-radius: 5px;
 }

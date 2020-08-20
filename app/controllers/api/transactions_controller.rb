@@ -1,13 +1,13 @@
 class Api::TransactionsController < ApplicationController
   def index 
     @transactions = current_user.transactions 
-    render 'api/transactions/show'
+    render :index
   end
 
   def create 
     @transaction = Transaction.create(transaction_params)
-    if @transaction.save! 
-      render 'api/transactions/show'
+    if @transaction.save
+      render 'api/transactions/update'
     else
       render json: @transaction.errors.full_messages 
     end
@@ -16,7 +16,8 @@ class Api::TransactionsController < ApplicationController
   def update 
     @transaction = Transaction.find(params[:id])
     if @transaction.update(transaction_params)
-      render 'api/transactions/show'
+      @transaction.update_account(@transaction.amount)
+      render 'api/transactions/update'
     else
       render json: @transaction.errors.full_messages, status: 422
     end
@@ -25,7 +26,7 @@ class Api::TransactionsController < ApplicationController
   def destroy 
     @transaction = current_user.transactions.find(params[:id])
     @transaction.destroy
-    render 'api/transactions/show'
+    render 'api/transactions/index'
   end
 
   def transaction_params 

@@ -11,7 +11,7 @@ const accountErrorsReducer = (oldState = [], action) => {
       if (action.errors !== undefined) return action.errors;
       return newState
     case CLEAR_ACCOUNT_ERRORS:
-      newState.errors = [];
+      newState = [];
       return newState;
     default:
       return oldState;

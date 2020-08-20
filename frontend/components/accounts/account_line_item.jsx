@@ -9,7 +9,7 @@ export default function account_line_item({account, openModal, deleteAccount}) {
         <li className="account-institution">{account.institution}</li>
       </ul>
       <div className="line-item-right">
-        <span className="item-balance">{account.balance}</span>
+        <span className="item-balance">{account.balance.toFixed(2)}</span>
         <img src={`${window.pencil}`} alt="pencil" className="pencil" onClick={() => openModal('edit', account)}/>
         <img src={`${window.trashCan}`} alt="x" className="x" onClick={() => deleteAccount(account.id)}/>
       </div>

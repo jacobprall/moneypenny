@@ -4,7 +4,7 @@
 #
 #  id                   :bigint           not null, primary key
 #  amount               :float            not null
-#  date                 :string
+#  date                 :datetime         not null
 #  description          :string           not null
 #  tags                 :string
 #  transaction_category :string           not null
