@@ -7,6 +7,7 @@ class Api::TransactionsController < ApplicationController
   def create 
     @transaction = Transaction.create(transaction_params)
     if @transaction.save
+      @transaction.update_account(@transaction.amount)
       render 'api/transactions/update'
     else
       render json: @transaction.errors.full_messages 

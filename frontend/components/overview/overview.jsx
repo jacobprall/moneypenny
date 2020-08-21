@@ -3,11 +3,12 @@ import { Route } from 'react-router-dom'
 import AccountIndexContainer from '../accounts/accounts_index_container'
 import TransactionIndexContainer from '../transactions/transaction_index_container'
 import Modal from '../modal'
-export default function overview({getAccounts}) {
+export default function overview({getAccounts, getTransactions}) {
   // const [accounts, setAccounts] = useState([])
   // setAccounts(getAccounts())
   useEffect(() => {
     getAccounts()
+    getTransactions()
   }, [])
 
   return (

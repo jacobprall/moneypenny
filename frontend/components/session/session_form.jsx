@@ -21,7 +21,7 @@ export default function SessionForm({errors, formType, processForm, processDemoF
   }
 
   const handleDemo = (e) => {
-    const user = {email: 'demo@email.com', password: 'password', p_num: '1234567890'}
+    const user = {email: 'demo@email.com', password: 'password'}
     processDemoForm(user)
   }
 

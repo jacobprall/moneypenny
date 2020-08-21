@@ -6,7 +6,7 @@ export const REMOVE_TRANSACTION = 'REMOVE_ACCOUNT';
 export const RECEIVE_TRANSACTION_ERRORS = 'RECEIVE_ACCOUNT_ERRORS';
 export const CLEAR_TRANSACTION_ERRORS = 'CLEAR_TRANSACTION_ERRORS';
 
-export const receiveTransaction = (transactions) => ({
+export const receiveTransactions = (transactions) => ({
   type: RECEIVE_TRANSACTIONS,
   transactions
 });

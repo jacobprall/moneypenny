@@ -16,10 +16,14 @@ class Transaction < ApplicationRecord
   include PgSearch::Model
   pg_search_scope :search_for_transaction, against: [:description, :transaciton_category, :date]
   validates_presence_of :amount, :date, :description, :transaction_category, :account_id
-  validates :transaction_category, inclusion: { in: %w(Housing Transportation Food Utilities Healthcare Personal Recreation/Entertainment Shopping Miscellaneous Other)}
+  validates :transaction_category, inclusion: { in: %w(Housing Transportation Food Utilities Healthcare Personal Recreation/Entertainment Shopping Miscellaneous Income Other)}
   belongs_to :account
 
   def update_account(amt)
-    self.account.balance += amt
+    if (self.account.debit)
+      self.account.balance += amt
+    else
+      self.account.balance -= amt
+    end
   end
 end

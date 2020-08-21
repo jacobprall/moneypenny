@@ -5,7 +5,7 @@ const transactionErrorsReducer = (oldState = [], action) => {
   let newState = [];
   switch (action.type) {
     case RECEIVE_TRANSACTION_ERRORS:
-      if (action.errors !== undefined) return action.errors;
+      if (action.errors.length) return action.errors;
       return newState;
     case CLEAR_TRANSACTION_ERRORS:
       return newState;
@@ -13,4 +13,4 @@ const transactionErrorsReducer = (oldState = [], action) => {
       return oldState;
   }
 }
-export default transactionsReducer
+export default transactionErrorsReducer
