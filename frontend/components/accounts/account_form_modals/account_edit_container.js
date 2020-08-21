@@ -1,12 +1,10 @@
 import {
   connect
 } from 'react-redux';
-import React from 'react';
 import {
   updateAccount, deleteAccount, clearAccountErrors
 } from '../../../actions/account_actions';
 import {
-  openModal,
   closeModal
 } from '../../../actions/modal_actions';
 import AccountForm from './account_form';

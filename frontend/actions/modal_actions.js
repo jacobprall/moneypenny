@@ -3,10 +3,10 @@
 export const OPEN_MODAL = 'OPEN_MODAL';
 export const CLOSE_MODAL = 'CLOSE_MODAL';
 
-export const openModal = (modalType, account) => ({
+export const openModal = (modalType, payload) => ({
   type: OPEN_MODAL,
   modalType,
-  account
+  payload
 });
 
 export const closeModal = () => ({

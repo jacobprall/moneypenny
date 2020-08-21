@@ -11,7 +11,7 @@ export default function account_line_item({account, openModal, deleteAccount, co
       <div className="line-item-right">
         <span className="item-balance">{`$${commaFormat((account.balance.toFixed(2).toString()))}`}</span>
         {/* <div className="account-edit-options"> */}
-          <img src={`${window.pencil}`} alt="pencil" className="pencil" onClick={() => openModal('edit', account)}/>
+          <img src={`${window.pencil}`} alt="pencil" className="pencil" onClick={() => openModal('edit account', account)}/>
           <img src={`${window.trashCan}`} alt="x" className="x" onClick={() => deleteAccount(account.id)}/>
         {/* </div> */}
       </div>

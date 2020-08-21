@@ -3,19 +3,26 @@ import { closeModal } from '../actions/modal_actions';
 import { connect } from 'react-redux';
 import AccountNewContainer from './accounts/account_form_modals/account_new_container';
 import AccountEditContainer from './accounts/account_form_modals/account_edit_container';
-
+import CreateTransactionContainer from './transactions/transaction_form/create_transaction_container'
+import EditTransactionContainer from './transactions/transaction_form/edit_transaction_container'
 function Modal({ modal, closeModal }) {
+  
   if (!modal) {
     return null;
   }
   let component;
   switch (modal[0]) {
-    case 'new':
+    
+    case 'new account':
       component = <AccountNewContainer />;
       break;
-    case 'edit':
-      component = <AccountEditContainer account={modal[0]}/>;
+    case 'edit account':
+      component = <AccountEditContainer />;
       break;
+    case 'new transaction':
+      component = <CreateTransactionContainer />
+    case 'edit transaction':
+      component = <EditTransactionContainer />
     default:
       return null;
   }

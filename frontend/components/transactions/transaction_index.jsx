@@ -1,7 +1,7 @@
 import React from 'react'
 import TransactionLineItemContainer from './transaction_line_item_container'
 
-export default function transaction_index({transactions, createTransaction}) {
+export default function transaction_index({transactions, openModal}) {
   const renderTransactions = () => (
     transactions.map((transaction) => (
       <TransactionLineItemContainer transaction={transaction} />
@@ -23,22 +23,21 @@ export default function transaction_index({transactions, createTransaction}) {
     <div className="transactions-index-container">
       <div className="transactions">
         <div className="above-table">
-       <button className="add-transaction" onClick={createTransaction}>+ Add Transaction</button>
-       <input type="text"/>
+          <button className="add-transaction" onClick={() => openModal('new transaction')}>+ Add Transaction</button>
+          <input type="text"/>
         </div>
-        
-      <table>
-          {renderTableHeader()}
-          <th className="delete-column"><img src={window.trashCan} className="trash-can" /></th>
-        {/* <div className="table-headers"> */}
-          
-        {/* </div> */}
-        {/* <div className="table-rows-container"> */}
-          {renderTransactions()}
-        {/* </div> */}
-      </table>
+        <table>
+          <thead>
+            <tr>
+              {renderTableHeader()}
+              <th className="delete-column"><img src={window.trashCan} className="trash-can" /></th>
+            </tr>
+            </thead>
+          <tbody>
+            {renderTransactions()}
+          </tbody>
+        </table>
       </div>
-      
     </div>
   )
 }

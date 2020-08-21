@@ -1,7 +1,7 @@
 import {
   connect
 } from 'react-redux';
-import React from 'react';
+
 import {
   createAccount, clearAccountErrors
 } from '../../../actions/account_actions';

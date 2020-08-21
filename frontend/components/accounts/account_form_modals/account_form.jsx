@@ -43,9 +43,9 @@ export default function account_form({passedAccount, formType, errors, processFo
 
   const renderErrors = () => {
     return (
-      <ul className="account-form-errors">
+      <ul className="modal-form-errors">
         {errors.map((error, i) => (
-          <li className="account-form-error" key={i}>{error}</li>
+          <li className="modal-form-error" key={i}>{error}</li>
         ))}
       </ul>
     )
@@ -77,10 +77,10 @@ export default function account_form({passedAccount, formType, errors, processFo
 
 
   return (
-    <div className="account-form-container">
-      <form onSubmit={handleSubmit} className="account-form">
+    <div className="modal-form-container">
+      <form onSubmit={handleSubmit} className="modal-form">
         <div onClick={handleClose} className="close-x">X</div>
-        <div className="account-inputs">
+        <div className="modal-inputs">
           <label>Label:
             <input type="text" value={(account.label)} onChange={update('label')}/>
           </label>
@@ -111,7 +111,7 @@ export default function account_form({passedAccount, formType, errors, processFo
            
             <input type="checkbox" value={account.debit} onChange={handleToggle} checked={account.debit}/>
           </label>
-              <button className="account-form-submit" value={formType}>{formType.toUpperCase()}</button>
+              <button className="modal-form-submit" value={formType}>{formType.toUpperCase()}</button>
           {deleteOption()}
           {renderErrors()}
         </div>
