@@ -1,5 +1,5 @@
 import React, {useState} from 'react'
-
+import commaFormat from '../../util/number_formatter'
 export default function net_worth({accounts}) {
   // const [netWorth, setNetWorth] = useState(0)
 
@@ -32,17 +32,17 @@ export default function net_worth({accounts}) {
     <ul className="net-worth">
       <li className="net-worth-li">
         <span className="net-worth-label">Assets</span>
-        <span className="net-worth-assets">{assets}</span>
+        <span className="net-worth-assets">{`$${commaFormat(assets.toString())}`}</span>
       </li>
         <br/>
       <li className="net-worth-li">
         <span className="net-worth-label">Debts</span>
-      <span className="net-worth-liabilities">{liabilities}</span>
+      <span className="net-worth-liabilities">{`$${commaFormat(liabilities.toString())}`}</span>
       </li>
         <br/>
         <li className="net-worth-li">
         <span className="net-worth-label">Net Worth</span>
-        <span className={`net-worth-data ${netWorth > 0 ? 'green' : 'red'}`}>{netWorth}</span>
+        <span className={`net-worth-data ${netWorth > 0 ? 'green' : 'red'}`}>{`$${commaFormat(netWorth.toString())}`}</span>
       </li>
       </ul>
       </>

@@ -11,9 +11,9 @@ export default function transaction_index({transactions, openModal}) {
   function renderTableHeader() {
     if (transactions.length) {
     let header = Object.keys(transactions[0])
-    return header.map((key, index) => {
-      if (key !== 'id' && key !== 'tags' && key !== 'account_id') {
-        return <th key={index}>{key.toUpperCase()}</th>
+    return header.map((k, index) => {
+      if (k !== 'id' && k !== 'tags' && k !== 'account_id') {
+        return <th key={index}>{k.toUpperCase()}</th>
       }
     })
     }

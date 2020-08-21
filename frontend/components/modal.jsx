@@ -7,25 +7,35 @@ import CreateTransactionContainer from './transactions/transaction_form/create_t
 import EditTransactionContainer from './transactions/transaction_form/edit_transaction_container'
 function Modal({ modal, closeModal }) {
   
-  if (!modal) {
+  if (!modal.account && !modal.transaction) {
     return null;
   }
+
   let component;
-  switch (modal[0]) {
-    
-    case 'new account':
-      component = <AccountNewContainer />;
-      break;
-    case 'edit account':
-      component = <AccountEditContainer />;
-      break;
-    case 'new transaction':
-      component = <CreateTransactionContainer />
-    case 'edit transaction':
-      component = <EditTransactionContainer />
-    default:
-      return null;
+
+  if (modal.account !== null) {
+    switch (modal.account[0]) {
+      
+      case 'new account':
+        component = <AccountNewContainer />;
+        break;
+      case 'edit account':
+        component = <AccountEditContainer />;
+        break;
+      default:
+        return null;
+    }
+  } else if (modal.transaction !== null) {
+    switch (modal.transaction[0]) {
+      case 'new transaction':
+        component = <CreateTransactionContainer />
+      case 'edit transaction':
+        component = <EditTransactionContainer />
+      default:
+        return null;
+    }
   }
+
   return (
     <div className="modal-background" onClick={closeModal}>
       <div className="modal-child" onClick={e => e.stopPropagation()}>
@@ -35,9 +45,11 @@ function Modal({ modal, closeModal }) {
   );
 }
 
+
+
 const mapStateToProps = state => {
   return {
-    modal: state.ui.modal.account
+    modal: state.ui.modal
   };
 };
 

@@ -6,7 +6,6 @@ export default function transaction_form({processForm, closeModal, clearTransact
   return (
     <div className="modal-form-container">
       <form className="modal-form">
-
       </form>
     </div>
   )
