@@ -3,7 +3,7 @@ import AccountCategory from './account_category'
 import NetWorth from './net_worth'
 
 
-export default function accounts_index({accounts, getAccounts}) {
+export default function accounts_index({accounts, commaFormat}) {
 
   // useEffect(() => {
   //   getAccounts()
@@ -42,11 +42,11 @@ export default function accounts_index({accounts, getAccounts}) {
 
   return (
     <div className='accounts-index-container'>
-      <AccountCategory accounts={categories['Cash']} category="Cash" logo={window.money} catSub={categorySubs['Cash']}/>
-      <AccountCategory accounts={categories['Credit Cards']} category="Credit Cards" logo={window.card} catSub={categorySubs['Credit Cards']}/>
-      <AccountCategory accounts={categories['Loans']} category="Loans" logo={window.cap} catSub={categorySubs['Loans']}/>
-      <AccountCategory accounts={categories['Investments']} category="Investments" logo={window.chart} catSub={categorySubs['Investments']}/>
-      <AccountCategory accounts={categories['Property']} category="Property" logo={window.house}  catSub={categorySubs['Property']}/>
+      <AccountCategory accounts={categories['Cash']} category="Cash" logo={window.money} catSub={categorySubs['Cash']} commaFormat={commaFormat}/>
+      <AccountCategory accounts={categories['Credit Cards']} category="Credit Cards" logo={window.card} catSub={categorySubs['Credit Cards']} commaFormat={commaFormat}/>
+      <AccountCategory accounts={categories['Loans']} category="Loans" logo={window.cap} catSub={categorySubs['Loans']} commaFormat={commaFormat}/>
+      <AccountCategory accounts={categories['Investments']} category="Investments" logo={window.chart} catSub={categorySubs['Investments']} commaFormat={commaFormat}/>
+      <AccountCategory accounts={categories['Property']} category="Property" logo={window.house} catSub={categorySubs['Property']} commaFormat={commaFormat}/>
       <NetWorth accounts={accounts} />
     </div>
   )

@@ -7,7 +7,8 @@ import {
 } from '../../actions/modal_actions'
 import { deleteAccount } from '../../actions/account_actions'
 const mapStateToProps = (state, ownProps) => ({
-  account: ownProps.account
+  account: ownProps.account,
+  commaFormat: ownProps.commaFormat
 })
 
 const mapDispatchToProps = (dispatch) => ({

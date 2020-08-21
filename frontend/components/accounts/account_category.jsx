@@ -2,7 +2,7 @@ import React, {useState, useEffect} from 'react'
 import AccountLineItemContainer from './account_line_item_container'
 
 
-export default function account_category({ accounts, category, logo, catSub, openModal }) {
+export default function account_category({ accounts, category, logo, catSub, openModal, commaFormat }) {
 
   const [toggle, setToggle] = useState(false)
 
@@ -20,13 +20,13 @@ export default function account_category({ accounts, category, logo, catSub, ope
         <div className={`account-category-li ${toggle ? "active" : ""}`}>
           <img src={logo} alt="image" className="category-icons" />
           <span className="account-category-label">{category}</span>
-          <span className="category-subtotal">{catSub}</span>
+          <span className="category-subtotal">{`$${commaFormat(catSub.toString())}`}</span>
         </div>
         
         <div className="category-line-items">
           <ul>
             {accounts.map((account) => (
-              <AccountLineItemContainer account={account} openModal={openModal}/>
+              <AccountLineItemContainer account={account} openModal={openModal} commaFormat={commaFormat}/>
             ))}
           </ul>
         </div>

@@ -102,8 +102,15 @@
   display: flex;
   justify-content: space-between;
   width: 90%;
-  margin: auto;
+  margin-left: auto;
+  margin-right: 5px;
   
+}
+
+.account-line-item:hover .line-item-right img {
+  transition: 0.3s;
+  opacity: 1;
+
 }
 .account-category-label {
 
@@ -159,30 +166,31 @@
   display: flex;
   align-content: center;
 }
-.x {
+.line-item-right .x {
   width: 20px;
   height: 20px;
   padding: 5px;
   border-radius: 5px;
   margin-left: 3px;
+  opacity: 0;
 }
 .x:hover {
-  // background: rgb(225, 224, 224);
-  border: 1px solid rgba(254, 85, 85, 0.762);
- 
+  cursor: pointer;
+  
 }
 
+
 .pencil {
-    width: 25px;
-    height: 25px;
+    width: 30px;
+    height: 30px;
     margin-right: 3px;
     margin-left: 3px;
     padding: 0px;
+    opacity: 0;
     // margin-bottom: 2px;
 
 }
 
 .pencil:hover {
-  border: 1px solid rgb(225, 224, 224);
-  border-radius: 5px;
+  cursor: pointer;
 }

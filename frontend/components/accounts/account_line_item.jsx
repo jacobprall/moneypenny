@@ -1,6 +1,6 @@
 import React from 'react'
 
-export default function account_line_item({account, openModal, deleteAccount}) {
+export default function account_line_item({account, openModal, deleteAccount, commaFormat}) {
   return (
     <li key={account.id} className="account-line-item">
      
@@ -9,9 +9,11 @@ export default function account_line_item({account, openModal, deleteAccount}) {
         <li className="account-institution">{account.institution}</li>
       </ul>
       <div className="line-item-right">
-        <span className="item-balance">{account.balance.toFixed(2)}</span>
-        <img src={`${window.pencil}`} alt="pencil" className="pencil" onClick={() => openModal('edit', account)}/>
-        <img src={`${window.trashCan}`} alt="x" className="x" onClick={() => deleteAccount(account.id)}/>
+        <span className="item-balance">{`$${commaFormat((account.balance.toFixed(2).toString()))}`}</span>
+        {/* <div className="account-edit-options"> */}
+          <img src={`${window.pencil}`} alt="pencil" className="pencil" onClick={() => openModal('edit', account)}/>
+          <img src={`${window.trashCan}`} alt="x" className="x" onClick={() => deleteAccount(account.id)}/>
+        {/* </div> */}
       </div>
       
 
