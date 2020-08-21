@@ -7,7 +7,7 @@ class Api::TransactionsController < ApplicationController
   def create 
     @transaction = Transaction.create(transaction_params)
     if @transaction.save
-      @transaction.update_account(@transaction.amount)
+      @transaction.update_account
       render 'api/transactions/update'
     else
       render json: @transaction.errors.full_messages 
@@ -16,8 +16,9 @@ class Api::TransactionsController < ApplicationController
 
   def update 
     @transaction = Transaction.find(params[:id])
+    old_amount = @transaction.amount
     if @transaction.update(transaction_params)
-      @transaction.update_account(@transaction.amount)
+      @transaction.update_on_change(old_amount)
       render 'api/transactions/update'
     else
       render json: @transaction.errors.full_messages, status: 422
@@ -26,6 +27,7 @@ class Api::TransactionsController < ApplicationController
 
   def destroy 
     @transaction = current_user.transactions.find(params[:id])
+    @transaction.update_on_delete
     @transaction.destroy
     render 'api/transactions/index'
   end

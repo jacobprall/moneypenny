@@ -19,11 +19,29 @@ class Transaction < ApplicationRecord
   validates :transaction_category, inclusion: { in: %w(Housing Transportation Food Utilities Healthcare Personal Recreation/Entertainment Shopping Miscellaneous Income Other)}
   belongs_to :account
 
-  def update_account(amt)
+  def update_account
     if (self.account.debit)
-      self.account.balance += amt
+      self.account.balance += self.amount
     else
-      self.account.balance -= amt
+      self.account.balance -= self.amount
     end
   end
+
+  def update_on_delete
+    if (self.account.debit)
+      self.account.balance -= self.amount 
+    else
+      self.account.balance += self.amount
+    end
+  end
+
+  def update_on_change(old_amt)
+    if (self.account.debit)
+      self.account.balance += self.amount - old_amt
+    else
+      self.account.balance -= self.amount - old_amt
+    end
+  end
+  
+
 end
