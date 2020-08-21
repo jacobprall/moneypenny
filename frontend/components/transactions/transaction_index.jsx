@@ -26,10 +26,12 @@ export default function transaction_index({transactions, createTransaction}) {
        <button className="add-transaction" onClick={createTransaction}>+ Add Transaction</button>
        <input type="text"/>
         </div>
+        
       <table>
-        {/* <div className="table-headers"> */}
           {renderTableHeader()}
-          <th className="delete-column"><img  src={window.trashCan} className="trash-can" /></th>
+          <th className="delete-column"><img src={window.trashCan} className="trash-can" /></th>
+        {/* <div className="table-headers"> */}
+          
         {/* </div> */}
         {/* <div className="table-rows-container"> */}
           {renderTransactions()}

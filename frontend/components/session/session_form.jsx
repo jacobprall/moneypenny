@@ -110,10 +110,10 @@ export default function SessionForm({errors, formType, processForm, processDemoF
     );
 
     formChoice["submit"] = () => (
-      <>
-       <button onClick={handleSubmit}>{formChoice.text}</button> 
-       <button onClick={handleDemo}>Sign in as Demo User</button>
-      </>
+      <div className="session-buttons">
+       <button className="session-submit" onClick={handleSubmit}>{formChoice.text}</button> 
+       <button className="session-submit" onClick={handleDemo}>Sign in as Demo User</button>
+      </div>
     )
 
       return formChoice;
@@ -133,9 +133,9 @@ export default function SessionForm({errors, formType, processForm, processDemoF
       </div>
       <div className="session-title">
         <div className="session-logo">
-          <Link to="/"><img className='leaf' src={window.logo} alt="leaf" /></Link>
+          <img className='leaf' src={window.logo} alt="leaf" />
           
-          <h2 className="session-logo">moneypenny</h2> 
+          <Link to="/"> <h2 className="session-logo">moneypenny</h2></Link>
         </div>
         <p className="session-tagline">{formChoice.tagline}</p>
       </div>

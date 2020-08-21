@@ -3,7 +3,7 @@ import {Link} from 'react-router-dom'
 export default function nav_bar() {
 
   return (
-    <div className ="background">
+    // <div className ="background">
       <div className="app-header">
         <header className='splash-header'>
           <div className="color-bar"></div>
@@ -24,6 +24,6 @@ export default function nav_bar() {
           </nav>
         </header>
       </div>
-    </div>
+    // </div>
   )
 }

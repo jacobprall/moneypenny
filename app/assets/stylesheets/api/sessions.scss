@@ -25,15 +25,14 @@ body {
 }
 
 .alt-nav button {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  width: 75px;
+
+  width: 90px;
   height: 34px;
   font-size: 0.93em;
   text-align: center;
   background: #0077C5;
   border-radius: 5px;
+  border: none;
 }
 
 .alt-nav button:hover {
@@ -72,6 +71,13 @@ body {
   display: flex;
   align-items: center;
  
+}
+.session-logo a {
+  text-decoration: none;
+  color: black;
+  margin: 0;
+  padding: 0;
+
 }
 .session-tagline {
   margin: 0;
@@ -120,8 +126,25 @@ body {
   text-align: center;
 }
 
-.session-form button {
+.session-buttons {
+  display: flex;
+  flex-direction: column;
+}
+
+
+.session-submit {
   color: white;
   background: #0077C5;
-  margin: 5px;
+  
+  height: 40px;
+  border-radius: 5px;
+  border: none;
+  width: 50%;
+  margin: auto;
+  margin-top: 10px;
+}
+
+.session-submit:hover {
+  background: #1492e6;
+  cursor: pointer;
 }
