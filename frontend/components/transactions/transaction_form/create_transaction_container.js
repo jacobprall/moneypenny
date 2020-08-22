@@ -6,7 +6,7 @@ import { closeModal } from '../../../actions/modal_actions'
 
 const mSTP = (state) => ({
   
-    errors: Object.values(state.errors.account),
+    errors: Object.values(state.errors.transaction),
     formType: 'new',
     passedTransaction: {
       'amount': 0,

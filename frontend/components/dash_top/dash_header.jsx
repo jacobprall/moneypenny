@@ -1,6 +1,8 @@
-import React from 'react'
+import React, { useState } from 'react'
 import {Link} from 'react-router-dom'
-export default function DashHeader({ logout, openModal }) {
+
+
+export default function DashHeader({ logout, openModal, AccountFormContainer, passedAccount }) {
 
   const eventHandler = (e) => {
     e.preventDefault();
@@ -17,7 +19,7 @@ export default function DashHeader({ logout, openModal }) {
       </div>
       <ul className="header-links">
         <li>
-          <Link to="/overview" onClick={() => openModal('new account')}>+ADD ACCOUNT</Link>
+          <Link to="/overview" onClick={() => openModal('new', AccountFormContainer, passedAccount )}>+ADD ACCOUNT</Link>
         </li>
         <li>
           <a href="#">GITHUB</a>

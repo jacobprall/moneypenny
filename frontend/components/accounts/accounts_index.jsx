@@ -1,20 +1,18 @@
 import React, { useEffect, useState } from 'react'
 import AccountCategory from './account_category'
 import NetWorth from './net_worth'
+import { useSelector, shallowEqual } from 'react-redux'
+import commaFormat from '../../util/number_formatter'
+export default function accounts_index() {
 
-
-export default function accounts_index({accounts, commaFormat}) {
-
-  // useEffect(() => {
-  //   getAccounts()
-  // }, [])
+  const allAccounts = useSelector(((state) => Object.values(state.entities.accounts)), shallowEqual) 
 
   const categoryList = ['Cash', 'Credit Cards', 'Loans', 'Investments', 'Property']
   
   const accountCategories = (categoryList) => {
     const categories = {};
     categoryList.forEach((category) => {
-      const categoryAccounts = accounts.filter((account) => (
+      const categoryAccounts = allAccounts.filter((account) => (
         account.account_category === `${category}`
       ))
       categories[category] = categoryAccounts
@@ -47,7 +45,7 @@ export default function accounts_index({accounts, commaFormat}) {
       <AccountCategory accounts={categories['Loans']} category="Loans" logo={window.cap} catSub={categorySubs['Loans']} commaFormat={commaFormat}/>
       <AccountCategory accounts={categories['Investments']} category="Investments" logo={window.chart} catSub={categorySubs['Investments']} commaFormat={commaFormat}/>
       <AccountCategory accounts={categories['Property']} category="Property" logo={window.house} catSub={categorySubs['Property']} commaFormat={commaFormat}/>
-      <NetWorth accounts={accounts} />
+      <NetWorth accounts={allAccounts} />
     </div>
   )
 }

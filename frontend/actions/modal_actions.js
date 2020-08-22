@@ -3,9 +3,10 @@
 export const OPEN_MODAL = 'OPEN_MODAL';
 export const CLOSE_MODAL = 'CLOSE_MODAL';
 
-export const openModal = (modalType, payload) => ({
+export const openModal = (formType, component, payload) => ({
   type: OPEN_MODAL,
-  modalType,
+  formType,
+  component,
   payload
 });
 

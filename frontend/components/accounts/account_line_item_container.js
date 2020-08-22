@@ -12,7 +12,7 @@ const mapStateToProps = (state, ownProps) => ({
 })
 
 const mapDispatchToProps = (dispatch) => ({
-  openModal: (modalType, account) => dispatch(openModal(modalType, account)),
+  openModal: (formType, component, account) => dispatch(openModal(formType, component, account)),
   deleteAccount: (account_id) => dispatch(deleteAccount(account_id))
 
 })

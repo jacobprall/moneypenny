@@ -1,12 +1,12 @@
 
 import { OPEN_MODAL, CLOSE_MODAL } from '../../actions/modal_actions'
 
-export default function componentModalReducer(state = {}, action) {
+export default function componentModalReducer(state = [], action) {
   switch (action.type) {
     case OPEN_MODAL:
-      return action.component;
+      return [action.component];
     case CLOSE_MODAL:
-      return {};
+      return [];
     default:
       return state;
   }

@@ -1,6 +1,6 @@
 import React, {useEffect} from 'react'
 import { Route } from 'react-router-dom'
-import AccountIndexContainer from '../accounts/accounts_index_container'
+import AccountsIndex from '../accounts/accounts_index'
 import TransactionIndexContainer from '../transactions/transaction_index_container'
 import Modal from '../modal'
 export default function overview({getAccounts, getTransactions}) {
@@ -14,7 +14,7 @@ export default function overview({getAccounts, getTransactions}) {
   return (
     <main className="overview-page">
       <Route exact path="/overview">
-        <AccountIndexContainer />
+        <AccountsIndex />
       </Route>
       <Route exact path="/overview/transactions">
         <TransactionIndexContainer />
