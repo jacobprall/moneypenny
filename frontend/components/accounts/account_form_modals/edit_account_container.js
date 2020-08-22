@@ -1,0 +1,33 @@
+import {
+  connect
+} from 'react-redux';
+import {
+  updateAccount, deleteAccount, clearAccountErrors
+} from '../../../actions/account_actions';
+import {
+  closeModal
+} from '../../../actions/modal_actions';
+import AccountForm from './account_form';
+
+const mapStateToProps = (state, ownProps) => {
+  return {
+    errors: state.errors.account,
+    formType: 'edit',
+    passedAccount: Object.assign(state.ui.modal.account, { user_id: state.session.id })
+  };
+};
+
+const mapDispatchToProps = dispatch => {
+  return {
+    processForm: (account) => dispatch(updateAccount(account)),
+    closeModal: () => dispatch(closeModal()),
+    clearAccountErrors: () => dispatch(clearAccountErrors()),
+    deleteAccount: (account) => dispatch(deleteAccount(account)),
+    
+
+
+  };
+};
+const EditAccountContainer = connect(mapStateToProps, mapDispatchToProps)(AccountForm);
+
+export default EditAccountContainer
