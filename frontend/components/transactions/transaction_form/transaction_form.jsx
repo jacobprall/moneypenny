@@ -6,7 +6,7 @@ export default function transaction_form({ props: {selectedData, transactionDele
   const {errors, formType, passedTransaction, accounts} = selectedData
   const [transaction, setTransaction] = useState(passedTransaction)
   const accountsList = Object.values(accounts);
-  console.log(formType)
+ 
   const update = (field) => e => setTransaction({ ...transaction, [field]: e.currentTarget.value })
   
   const handleSubmit = (e) => {

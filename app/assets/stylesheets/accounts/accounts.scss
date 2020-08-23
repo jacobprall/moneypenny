@@ -167,12 +167,12 @@
   align-content: center;
 }
 .line-item-right .x {
-  width: 18px;
-  height: 18px;
-  padding: 5px;
-  border-radius: 5px;
+  width: 22px;
+  height: 22px;
+  // padding: 5px;
+  border-radius: 10px;
   margin-left: 3px;
-  margin-bottom: 4px;
+  margin-top: 3px;
   opacity: 0;
 }
 .x:hover {

@@ -26,11 +26,13 @@
 // }
 
 .above-table {
-  width: 90%;
+  width: 89.5%;
   display: flex;
   justify-content: space-between;
   margin: auto;
+  margin-top: 5px;
 }
+
 table {
     text-align: center;
     border-collapse: collapse;
@@ -39,6 +41,7 @@ table {
     height: 100%;
     table-layout: auto;
     margin: auto;
+    
 }
 
 table td,
@@ -57,6 +60,7 @@ table th {
   text-align: center;
   background-color: #00a6a4;
   color: white;
+
 }
 
 .transactions th {
@@ -82,11 +86,12 @@ table tr:hover {
 }
 
 .trash-can {
-  height: 20px;
-  width: 20px;
+  height: 35px;
+  width: 35px;
   padding: 0;
   margin: 0;
   border-radius: 20px;
+  margin-right: 2px;
 }
 
 table th.column {

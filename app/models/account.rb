@@ -47,12 +47,12 @@ class Account < ApplicationRecord
 
   belongs_to :user
   has_many :transactions
-  
+
     def get_transaction_totals_by_category
-    user = self.user_id
+    user = self.user
     allTransactions = user.transactions 
     allTransactions = allTransactions.map do |transaction|
-      [transaction.category, transaction.amount]
+      [transaction.transaction_category, transaction.amount]
     end
 
     categories = Hash.new(0)
