@@ -42,6 +42,8 @@ class Transaction < ApplicationRecord
       self.account.balance -= self.amount - old_amt
     end
   end
+
+  
   
 
 end

@@ -3,7 +3,7 @@ class Api::AccountsController < ApplicationController
   
   def index
     @accounts = current_user.accounts
-    
+    @chart_data = @accounts[0].get_transaction_totals_by_category
     render :index
   end
 
