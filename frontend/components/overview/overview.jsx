@@ -1,26 +1,34 @@
-import React, {useEffect} from 'react'
+import React, { useEffect } from 'react'
+import { useDispatch } from 'react-redux'
 import { Route } from 'react-router-dom'
 import AccountsIndex from '../accounts/accounts_index'
-import TransactionIndexContainer from '../transactions/transaction_index_container'
-import Modal from '../modal'
-export default function overview({getAccounts, getTransactions}) {
-  // const [accounts, setAccounts] = useState([])
-  // setAccounts(getAccounts())
+import TransactionIndex from '../transactions/transaction_index'
+import {requestAccounts} from '../../actions/account_actions'
+
+
+export default function overview() {
+  // dispatch and retrieve accounts
+  const dispatch = useDispatch()
+  const getAccounts = () => (dispatch(requestAccounts()))
   useEffect(() => {
     getAccounts()
-    getTransactions()
-  }, [])
+  }, []);
+
 
   return (
     <main className="overview-page">
       <Route exact path="/overview">
         <AccountsIndex />
+        {/* {<Chart />} */}
+
       </Route>
       <Route exact path="/overview/transactions">
-        <TransactionIndexContainer />
+        <TransactionIndex />
       </Route>
-      {/* <div className="accounts-filler"></div>
-      <div className='chart-filler'></div> */}
+
+
+
+
     </main>
   )
 } 

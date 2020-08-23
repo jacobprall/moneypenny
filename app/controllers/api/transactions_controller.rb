@@ -29,7 +29,8 @@ class Api::TransactionsController < ApplicationController
     @transaction = current_user.transactions.find(params[:id])
     @transaction.update_on_delete
     @transaction.destroy
-    render 'api/transactions/index'
+    @transactions = current_user.transactions
+    render :index
   end
 
   def transaction_params 

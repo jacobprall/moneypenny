@@ -25,6 +25,12 @@
 //   background-color: #4CAF50;
 // }
 
+.above-table {
+  width: 90%;
+  display: flex;
+  justify-content: space-between;
+  margin: auto;
+}
 table {
     text-align: center;
     border-collapse: collapse;

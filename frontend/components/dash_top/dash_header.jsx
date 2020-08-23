@@ -1,12 +1,31 @@
-import React, { useState } from 'react'
+import React from 'react'
 import {Link} from 'react-router-dom'
+import { useSelector, useDispatch } from 'react-redux'
+import AccountFormContainer from '../accounts/account_form_modals/account_form_container'
+import { logout } from '../../actions/session_actions'
+import { openModal } from '../../actions/modal_actions'
 
+export default function DashHeader() {
 
-export default function DashHeader({ logout, openModal, AccountFormContainer, passedAccount }) {
+  const selectedData = useSelector((state) => ({
+    passedAccount: {
+      'account_category': 'Cash',
+      'balance': 0,
+      'debit': true,
+      'institution': "None",
+      'label': "",
+      'user_id': state.session.id
+    }
+  }));
+
+  const { passedAccount } = selectedData
+  const dispatch = useDispatch()
+  const logOut = () => dispatch(logout())
+  const modalOpener = (formType, component, payload) => dispatch(openModal(formType, component, payload))
 
   const eventHandler = (e) => {
     e.preventDefault();
-    logout();
+    logOut();
   }
 
 
@@ -19,7 +38,7 @@ export default function DashHeader({ logout, openModal, AccountFormContainer, pa
       </div>
       <ul className="header-links">
         <li>
-          <Link to="/overview" onClick={() => openModal('new', AccountFormContainer, passedAccount )}>+ADD ACCOUNT</Link>
+          <Link to="/overview" onClick={() => modalOpener('new', AccountFormContainer, passedAccount )}>+ADD ACCOUNT</Link>
         </li>
         <li>
           <a href="#">GITHUB</a>

@@ -1,10 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import AccountCategory from './account_category'
 import NetWorth from './net_worth'
-import { useSelector, shallowEqual } from 'react-redux'
+import { useSelector, shallowEqual} from 'react-redux'
 import commaFormat from '../../util/number_formatter'
-export default function accounts_index() {
 
+
+
+export default function accounts_index() {
+  
   const allAccounts = useSelector(((state) => Object.values(state.entities.accounts)), shallowEqual) 
 
   const categoryList = ['Cash', 'Credit Cards', 'Loans', 'Investments', 'Property']

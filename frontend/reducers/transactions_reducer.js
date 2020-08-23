@@ -9,7 +9,7 @@ const transactionsReducer = (oldState = {}, action) => {
       newState = action.transactions;
       return newState;
     case RECEIVE_TRANSACTION: 
-      let newTransaction = {[action.transaction.id]: action.account};
+      let newTransaction = {[action.transaction.id]: action.transaction};
       newState = Object.assign(newTransaction, newState);
       return newState;
     case REMOVE_TRANSACTION:
