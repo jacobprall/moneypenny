@@ -141,7 +141,7 @@ export default function SessionForm({errors, formType, processForm, processDemoF
       </div>
       <div className="session-title">
         <div className="session-logo">
-          <img className='leaf' src={window.logo} alt="leaf" />
+          {/* <img className='leaf' src={window.logo} alt="leaf" /> */}
           
           <Link to="/"> <h2 className="session-logo">moneypenny</h2></Link>
         </div>
