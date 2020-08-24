@@ -10,7 +10,7 @@ export default function nav_bar() {
           <div className="color-bar"></div>
           <nav className = "splash-nav">
             <div className="logo">
-              {/* <img className='leaf' src={window.logo} alt="leaf"/> */}
+              <img className='leaf' src={window.logo} alt="leaf"/>
               <h2 className="name">moneypenny</h2>
             </div>
             <ul className="splash-links">

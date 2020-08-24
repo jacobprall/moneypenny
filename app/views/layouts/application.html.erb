@@ -4,7 +4,8 @@
     <title>moneypenny</title>
     <%= csrf_meta_tags %>
     <%= csp_meta_tag %>
-
+    <%= stylesheet_link_tag    'application', media: 'all' %>
+    <%= javascript_include_tag 'application' %>
     <script type="text/javascript">
      window.down_arrow = "<%= image_url('icon-arrow-down.svg') %>"
      window.card = "<%= image_url('icon-card.svg') %>"
@@ -14,12 +15,18 @@
      window.money = "<%= image_url('icon-money.svg') %>"
      window.x = "<%= image_url('icon-x.svg') %>"
      window.pencil = "<%= image_url('icon-gear-gray3.svg') %>"
+     window.trashCan = "<%= image_url('trashCan.jpg') %>"
+     window.hero_image = "<%= image_url('hero-image.jpg') %>"
+     window.logo = "<%= image_url('logo.png') %>"
+     window.house_dollar = "<%= image_url('house-dollar.png') %>"
+     window.dial = "<%= image_url('dial.png') %>"
+     window.checklist = "<%= image_url('check-list.png') %>"
+
 
 
 
     </script>
-    <%= stylesheet_link_tag    'application', media: 'all' %>
-    <%= javascript_include_tag 'application' %>
+
   </head>
 
   <body>

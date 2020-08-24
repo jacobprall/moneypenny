@@ -33,7 +33,7 @@ export default function DashHeader() {
   return (
     <div className="top-header">
       <div className="main-logo">
-        {/* <img className='leaf' src={window.logo} alt="leaf" /> */}
+        <img className='leaf' src={window.logo} alt="leaf" />
         <Link to="/overview">moneypenny</Link>
       </div>
       <ul className="header-links">

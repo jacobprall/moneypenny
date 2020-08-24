@@ -20,7 +20,7 @@ export default function account_line_item({account, commaFormat}) {
         <span className="item-balance">{`$${commaFormat((account.balance.toFixed(2).toString()))}`}</span>
 
           <img src={window.pencil} alt="pencil" className="pencil" onClick={() => modalOpener('edit', AccountFormContainer, account)}/>
-          {/* <img src={window.trashCan} alt="x" className="x" onClick={() => accountDeleter(account.id)}/> */}
+          <img src={window.trashCan} alt="x" className="x" onClick={() => accountDeleter(account.id)}/>
 
       </div>
       

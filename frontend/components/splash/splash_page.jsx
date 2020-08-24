@@ -13,7 +13,7 @@ export default function splash_page() {
         
         <section className="hero-section">
           <div className="hero-div">
-            {/* <img className="hero-image" src={`${window.hero_image}`} alt="hero"/> */}
+            <img className="hero-image" src={`${window.hero_image}`} alt="hero"/>
             <div className="hero-text">
               <h1>All your money, in one place</h1>
               <h3>When you have control over your finances, life becomes a whole lot simpler.
@@ -25,7 +25,7 @@ export default function splash_page() {
         <ScrollPoint />
           <div id="cards" className="card-container">
             <div className="cards card-1">
-              {/* <img className="card-icon" src={`${window.checklist}`} alt=""/> */}
+              <img className="card-icon" src={`${window.checklist}`} alt=""/>
               <div className="card-header">
                 <h1>Your Money. Your Way.</h1>
               </div>
@@ -37,7 +37,7 @@ export default function splash_page() {
 
             </div>
             <div className="cards card-2">
-              {/* <img className="card-icon" src={`${window.house_dollar}`} alt="" /> */}
+              <img className="card-icon" src={`${window.house_dollar}`} alt="" />
             <div className="card-header">
               <h1>Budget in the Modern Era</h1>
             </div>
@@ -47,7 +47,7 @@ export default function splash_page() {
 
             </div>
             <div id="cards" className="cards card-3">
-              {/* <img className="card-icon" src={`${window.dial}`} alt="" /> */}
+              <img className="card-icon" src={`${window.dial}`} alt="" />
               <div className="card-header">
                 <h1>Never miss a bill again</h1>
               </div>
