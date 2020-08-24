@@ -19,7 +19,7 @@ const App = ({store}) => {
       <Switch>
         <AuthRoute exact path="/login" component={LoginFormContainer} />
         <AuthRoute exact path="/signup" component={SignupFormContainer} />
-        <ProtectedRoute path={"/overview"} component={Overview} />
+        <ProtectedRoute path={["/overview", "/overview/chart"]} component={Overview} />
         
       </Switch>
     </>
