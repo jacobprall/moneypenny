@@ -9,6 +9,7 @@ import commaFormat from '../../util/number_formatter'
 export default function accounts_index() {
   
   const allAccounts = useSelector(((state) => Object.values(state.entities.accounts)), shallowEqual) 
+ 
 
   const categoryList = ['Cash', 'Credit Cards', 'Loans', 'Investments', 'Property']
   

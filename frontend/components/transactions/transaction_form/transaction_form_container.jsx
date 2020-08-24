@@ -20,8 +20,9 @@ export default function transaction_form_container() {
   } else {
     processForm = (transaction) => dispatch(updateTransaction(transaction));
   };
-  const transactionDeleter = (transaction) => dispatch(deleteTransaction(transaction))
+  
   const modalCloser = () => dispatch(closeModal());
+  const transactionDeleter = (transaction) => (dispatch(deleteTransaction(transaction)).then(() => modalCloser()))
   const transactionErrorsClearer = () => dispatch(clearTransactionErrors());
 
   const props = {

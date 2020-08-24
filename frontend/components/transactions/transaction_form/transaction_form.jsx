@@ -6,7 +6,8 @@ export default function transaction_form({ props: {selectedData, transactionDele
   const {errors, formType, passedTransaction, accounts} = selectedData
   const [transaction, setTransaction] = useState(passedTransaction)
   const accountsList = Object.values(accounts);
- 
+  
+
   const update = (field) => e => setTransaction({ ...transaction, [field]: e.currentTarget.value })
   
   const handleSubmit = (e) => {
@@ -30,9 +31,13 @@ export default function transaction_form({ props: {selectedData, transactionDele
     </ul>
   );
 
+  
   const deleteOption = () => {
     if (formType === 'edit') {
-      <span className='edit-delete' onClick={() => transactionDeleter(transaction.id)}>Delete Transaction</span>
+      console.log(transaction.id)
+      return (
+        <span className='edit-delete' onClick={() => transactionDeleter(transaction.id)}>Delete Transaction</span>
+      )
     }
   }
 

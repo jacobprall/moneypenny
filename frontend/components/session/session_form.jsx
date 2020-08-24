@@ -126,10 +126,17 @@ export default function SessionForm({errors, formType, processForm, processDemoF
     
     <div className="session-page">
       <div className="alt-nav">
-        <p>{formChoice.altTagline}</p>
-        <button>
-          <Link to={formChoice.altLink} onClick={handleAlt}>{formChoice.altText}</Link>
-        </button>
+        <div className="home-div">
+          <button className="home-button">
+            <Link to="/" >Back to Home</Link>
+          </button>
+        </div>
+        <div className="alt-div">
+          <p>{formChoice.altTagline}</p>
+          <button>
+            <Link to={formChoice.altLink} onClick={handleAlt}>{formChoice.altText}</Link>
+          </button>
+        </div>
       </div>
       <div className="session-title">
         <div className="session-logo">

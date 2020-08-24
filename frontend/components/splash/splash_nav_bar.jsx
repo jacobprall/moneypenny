@@ -1,7 +1,8 @@
 import React from 'react'
 import {Link} from 'react-router-dom'
+import Scroll from 'react-scroll'
 export default function nav_bar() {
-
+  const ScrollLink = Scroll.Link;
   return (
     // <div className ="background">
       <div className="app-header">
@@ -13,9 +14,20 @@ export default function nav_bar() {
               <h2 className="name">moneypenny</h2>
             </div>
             <ul className="splash-links">
-              <li> <a href="#" className="splash-link" >How it works</a> </li>
-              <li> <a className="splash-link" href="#"> LinkedIn</a></li>
-              <li> <a href="#" className="splash-link">Github</a> </li>
+              <li> 
+                <ScrollLink 
+                  to="scroll-to"
+                  spy={true}
+                  smooth={true}
+                  duration={500}
+                  className="splash-link"
+                >
+                  How it works
+                </ScrollLink>
+              </li>
+
+              <li> <a className="splash-link" target="_blank" href="https://www.linkedin.com/in/jacob-prall-01abb867/"> LinkedIn</a></li>
+              <li> <a href="https://github.com/jacobprall/moneypenny" target="_blank" className="splash-link">Github</a> </li>
             </ul>
             <div className="splash-btns">
               <button className="sign-up"><Link to="/signup">Sign up</Link></button>

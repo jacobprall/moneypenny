@@ -2,8 +2,8 @@ import * as TransactionAPIUtil from '../util/transaction_api_util'
 
 export const RECEIVE_TRANSACTIONS = 'RECEIVE_TRANSACTIONS';
 export const RECEIVE_TRANSACTION = 'RECEIVE_TRANSACTION';
-export const REMOVE_TRANSACTION = 'REMOVE_ACCOUNT';
-export const RECEIVE_TRANSACTION_ERRORS = 'RECEIVE_ACCOUNT_ERRORS';
+export const REMOVE_TRANSACTION = 'REMOVE_TRANSACTION';
+export const RECEIVE_TRANSACTION_ERRORS = 'RECEIVE_TRANSACTION_ERRORS';
 export const CLEAR_TRANSACTION_ERRORS = 'CLEAR_TRANSACTION_ERRORS';
 
 export const receiveTransactions = (transactions) => ({

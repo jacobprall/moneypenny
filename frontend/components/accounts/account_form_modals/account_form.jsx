@@ -2,48 +2,12 @@
 import React, { useState } from 'react'
 
 export default function account_form({props: { selectedData, processForm, modalCloser, accountErrorsClearer, accountDeleter }}) {
-  console.log(processForm)
-  const {formType, passedAccount, errors} = selectedData
+  
+  const {formType, passedAccount, errors} = selectedData;
 
-  const [account, setAccount] = useState(passedAccount)
+  const [account, setAccount] = useState(passedAccount);
 
-  const update = (field) => {
-    return e => (
-      setAccount({ ...account, [field]: e.currentTarget.value, })
-    )
-  }
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    processForm(account).then(
-      () => modalCloser()).then(
-      () => accountErrorsClearer())
-  };
-
-  const handleToggle = (e) => {
-    e.preventDefault();
-    if (account.debit === false) {
-      setAccount({ ...account, debit: true })
-    } else {
-      setAccount({ ...account, debit: false })
-    }
-  }
-
-  const handleClose = (e) => {
-    e.preventDefault();
-    modalCloser();
-    accountErrorsClearer();
-  }
-
-  const renderErrors = () => {
-    return (
-      <ul className="modal-form-errors">
-        {errors.map((error, i) => (
-          <li className="modal-form-error" key={i}>{error}</li>
-        ))}
-      </ul>
-    )
-  }
+ 
   const institutions = [
     'Chase Bank',
     'J.P. Morgan',
@@ -59,7 +23,39 @@ export default function account_form({props: { selectedData, processForm, modalC
     'Visa',
     'Other',
     'None'
-  ]
+  ];
+
+  const update = (field) => {
+    return e => (
+      setAccount({ ...account, [field]: e.currentTarget.value })
+    )
+  };
+
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    processForm(account).then(
+      () => modalCloser()).then(
+      () => accountErrorsClearer());
+  };
+
+  const handleToggle = (e) => {
+    e.preventDefault();
+    if (account.debit === false) {
+      setAccount({ ...account, debit: true });
+    } else {
+      setAccount({ ...account, debit: false });
+    }
+  };
+
+  const handleClose = (e) => {
+    e.preventDefault();
+    modalCloser();
+    accountErrorsClearer();
+  };
+
+  
+  
 
   const deleteOption = () => {
     if (formType === 'edit') {
@@ -67,7 +63,17 @@ export default function account_form({props: { selectedData, processForm, modalC
         <span className="edit-delete" onClick={() => accountDeleter(account.id)}>Delete Account</span>
       )
     }
-  }
+  };
+
+  const renderErrors = () => {
+    return (
+      <ul className="modal-form-errors">
+        {errors.map((error, i) => (
+          <li className="modal-form-error" key={i}>{error}</li>
+        ))}
+      </ul>
+    )
+  };
 
 
   return (

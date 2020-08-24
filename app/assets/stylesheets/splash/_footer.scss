@@ -1,17 +1,16 @@
 .footer-container {
-    font-family: Avenir,
+  font-family: Avenir,
     Helvetica,
     sans-serif;
-    display: flex;
-
+  display: flex;
+  width: 80%;
+  margin: auto;
+  background: #F4F5F8;
+  flex-direction: column;
+  position: relative;
+  top: -20px;
 }
 
-.footer-container {
-   width: 80%;
-   margin: auto;
-   background: #F4F5F8;
-   flex-direction: column;
-}
 
 .footer-columns {
   display: flex;

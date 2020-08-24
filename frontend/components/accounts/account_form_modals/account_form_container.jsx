@@ -22,7 +22,7 @@ export default function account_form_container() {
 
   const modalCloser = () => dispatch(closeModal());
   const accountErrorsClearer = () => dispatch(clearAccountErrors())
-  const accountDeleter = (account) => dispatch(deleteAccount(account))
+  const accountDeleter = (account) => (dispatch(deleteAccount(account)).then(() => modalCloser()))
 
   
 

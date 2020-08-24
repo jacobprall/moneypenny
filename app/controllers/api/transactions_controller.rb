@@ -10,7 +10,7 @@ class Api::TransactionsController < ApplicationController
       @transaction.update_account
       render 'api/transactions/update'
     else
-      render json: @transaction.errors.full_messages 
+      render json: @transaction.errors.full_messages, status: 422
     end
   end
 
@@ -30,7 +30,7 @@ class Api::TransactionsController < ApplicationController
     @transaction.update_on_delete
     @transaction.destroy
     @transactions = current_user.transactions
-    render :index
+    render json: @transaction.id
   end
 
   def transaction_params 

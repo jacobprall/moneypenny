@@ -1,7 +1,4 @@
-.background {
-  z-index: -1;
 
-}
 
 .hero-image {
   position: absolute;
@@ -57,5 +54,6 @@
 }
 
 .cta-btn:hover {
-  background: #e7872e
+  background: #e7872e;
+  transition: 0.3s;
 }

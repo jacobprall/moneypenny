@@ -1,7 +1,6 @@
 const {
   RECEIVE_ACCOUNT_ERRORS,
   CLEAR_ACCOUNT_ERRORS,
-  RECEIVE_ACCOUNT
 } = require("../actions/account_actions");
 
 const accountErrorsReducer = (oldState = [], action) => {

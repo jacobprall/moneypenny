@@ -1,6 +1,7 @@
 import React from 'react'
 import SplashNavBar from './splash_nav_bar'
 import { Link } from 'react-router-dom'
+import ScrollPoint from './scroll_point'
 export default function splash_page() {
   return (
     <div className="background">
@@ -21,8 +22,8 @@ export default function splash_page() {
             </div>
           </div>
         </section>
-        {/* <section className="card-section"> */}
-          <div className="card-container">
+        <ScrollPoint />
+          <div id="cards" className="card-container">
             <div className="cards card-1">
               <img className="card-icon" src={`${window.checklist}`} alt=""/>
               <div className="card-header">
@@ -45,7 +46,7 @@ export default function splash_page() {
             </div>
 
             </div>
-            <div className="cards card-3">
+            <div id="cards" className="cards card-3">
               <img className="card-icon" src={`${window.dial}`} alt="" />
               <div className="card-header">
                 <h1>Never miss a bill again</h1>
@@ -60,8 +61,8 @@ export default function splash_page() {
         <footer>
           <div className="footer-container">
             <div className="footer-links">
-              <a href="#">Github</a>
-              <a href="#">LinkedIn</a>
+              <a href="https://github.com/jacobprall/moneypenny" target="_blank">Github</a>
+              <a href="https://www.linkedin.com/in/jacob-prall-01abb867/" target="_blank">LinkedIn</a>
             </div>
           </div>
           <div className="color-bar footer"></div>

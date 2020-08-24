@@ -13,17 +13,10 @@
 
 .transactions {
   display: block;
-  // width: 90%
-  // justify-content: center;
-  // flex-direction: column;
 
 }
 
-// .table-headers {
-//   // display: flex;
-//   // justify-content: space-between;
-//   background-color: #4CAF50;
-// }
+
 
 .above-table {
   width: 89.5%;
@@ -94,6 +87,19 @@ table tr:hover {
   margin-right: 2px;
 }
 
-table th.column {
-  background-color: red;
+table tr th:last-child {
+  background-color: rgb(236, 93, 74);
+}
+
+.transaction-gear {
+  opacity: 0;
+  width: 20px;
+  height: 20px;
+  right: -50px;
+  top: 5px;
+  position: relative;
+}
+
+tr:hover img.transaction-gear {
+  opacity: 1;
 }

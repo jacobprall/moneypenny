@@ -16,9 +16,6 @@ class Api::AccountsController < ApplicationController
     end
   end
 
-  def edit
-    @accounts = current_user.accounts
-  end
 
   def update
     @account = current_user.accounts.find(params[:id])
@@ -32,7 +29,7 @@ class Api::AccountsController < ApplicationController
   def destroy
     @account = current_user.accounts.find(params[:id])
     @account.destroy
-    render 'api/users/show'
+    render json: @account.id
   end
 
   def account_params

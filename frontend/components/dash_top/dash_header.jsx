@@ -38,16 +38,16 @@ export default function DashHeader() {
       </div>
       <ul className="header-links">
         <li>
-          <Link to="/overview" onClick={() => modalOpener('new', AccountFormContainer, passedAccount )}>+ADD ACCOUNT</Link>
+          <Link to="#" onClick={() => modalOpener('new', AccountFormContainer, passedAccount )}>+ADD ACCOUNT</Link>
         </li>
         <li>
-          <a href="#">GITHUB</a>
+          <a href="https://github.com/jacobprall/moneypenny" target="_blank">GITHUB</a>
         </li>
         <li>
-          <a href="#">LINKEDIN</a>
+          <a href="https://www.linkedin.com/in/jacob-prall-01abb867/" target="_blank">LINKEDIN</a>
         </li>
         <li>
-          <a href="#" onClick={eventHandler}>LOGOUT</a>
+          <a href="/" onClick={eventHandler}>LOGOUT</a>
         </li>
       </ul>
     </div>

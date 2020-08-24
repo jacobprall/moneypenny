@@ -2,8 +2,12 @@ import React, {useState, useEffect} from 'react'
 import AccountLineItem from './account_line_item'
 import { useSelector, shallowEqual} from 'react-redux'
 
-export default function account_category({ accounts, category, logo, catSub, openModal, commaFormat }) {
+export default function account_category({ accounts, category, logo, catSub, commaFormat }) {
   const [toggle, setToggle] = useState(false)
+  
+
+  // console.log(accountsChecker)
+
   const handleClick = () => {
     setToggle(() => (
       !toggle
@@ -23,7 +27,7 @@ export default function account_category({ accounts, category, logo, catSub, ope
         <div className="category-line-items">
           <ul>
             {accounts.map((account, i) => (
-              <AccountLineItem account={account} openModal={openModal} commaFormat={commaFormat} key={i}/>
+              <AccountLineItem account={account} commaFormat={commaFormat} key={i}/>
             ))}
           </ul>
         </div>

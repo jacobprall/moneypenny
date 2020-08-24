@@ -18,29 +18,71 @@ body {
 .alt-nav {
   display: flex;
   flex-direction: row;
-  justify-content: flex-end; 
+  justify-content: space-between; 
   align-items: center;
   padding-right: 20px;
+  padding-left: 20px;
   height: 60px;    
 }
 
-.alt-nav button {
+.home-button {
+  width: 100px;
+  height: 40px;
+  font-size: 0.93em;
+  text-align: center;
+  border: 2px solid #ff9331;
+  border-radius: 5px;
+  background: white;
+}
+
+.home-button a {
+  color: #ff9331;
+  text-decoration: none;
+  font-weight: 300;
+}
+
+.home-button:hover {
+  background: #ff9331;
+  transition: 0.3s;
+  cursor: pointer;
+}
+
+.home-button:hover a {
+  color: white;
+}
+
+.alt-div {
+  display: flex;
+  justify-content: center;
+  align-content: center;
+}
+
+.alt-div button {
 
   width: 90px;
   height: 34px;
   font-size: 0.93em;
   text-align: center;
-  background: #0077C5;
+  background: white;
   border-radius: 5px;
   border: none;
+  margin-top: 10px;
+  border: 2px solid #0077C5;
 }
 
-.alt-nav button:hover {
+.alt-div button:hover {
   transition: 0.3s;
-  background: #0271bb
+  background: #0077C5;
+  cursor: pointer;
 }
 
-.alt-nav button a {
+.alt-div button a {
+  text-decoration: none;
+  color: #0077C5;
+  padding: 5px;
+}
+
+.alt-div button:hover a {
   text-decoration: none;
   color: white;
   padding: 5px;

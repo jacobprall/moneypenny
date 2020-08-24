@@ -10,7 +10,7 @@ const transactionsReducer = (oldState = {}, action) => {
       return newState;
     case RECEIVE_TRANSACTION: 
       let newTransaction = {[action.transaction.id]: action.transaction};
-      newState = Object.assign(newTransaction, newState);
+      newState = Object.assign(newState, newTransaction);
       return newState;
     case REMOVE_TRANSACTION:
       delete newState[action.transactionId];

@@ -1,7 +1,7 @@
 .background {
   z-index: -1;
   background-color: #f4f5f8;
-  height: 100vh;
+  height: 100%;
   position: static;
 }
 
@@ -73,6 +73,7 @@
   background: #00a6a34d;
   color: black;
   transition: 0.3s;
+  cursor: pointer;
 }
 
 .splash-btns {
