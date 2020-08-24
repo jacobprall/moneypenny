@@ -113,7 +113,7 @@ export default function SessionForm({errors, formType, processForm, processDemoF
     formChoice["submit"] = () => (
       <div className="session-buttons">
        <button className="session-submit" onClick={handleSubmit}>{formChoice.text}</button> 
-       <button className="session-submit" onClick={handleDemo}>Sign in as Demo User</button>
+       <button className="demo-submit" onClick={handleDemo}>Sign in as Demo User</button>
       </div>
     )
 

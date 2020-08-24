@@ -26,19 +26,23 @@ body {
 }
 
 .home-button {
-  width: 100px;
+  width: 130px;
   height: 40px;
-  font-size: 0.93em;
+  font-size: 0.85em;
   text-align: center;
   border: 2px solid #ff9331;
   border-radius: 5px;
   background: white;
+  padding: 0;
 }
 
 .home-button a {
   color: #ff9331;
   text-decoration: none;
   font-weight: 300;
+  padding: 14px 20px;
+
+
 }
 
 .home-button:hover {
@@ -175,18 +179,39 @@ body {
 
 
 .session-submit {
-  color: white;
-  background: #0077C5;
-  
+  color: #0077C5;
+  background: white;
+  border: 1px solid #0077C5;
   height: 40px;
   border-radius: 5px;
-  border: none;
   width: 50%;
   margin: auto;
   margin-top: 10px;
 }
 
 .session-submit:hover {
-  background: #1492e6;
+  background: #0077C5;
+  color: white;
   cursor: pointer;
+  transition: 0.3s;
 }
+
+.demo-submit {
+  color: #00a6a4;
+  background: white;
+  border: 1px solid #00a6a4;
+  height: 40px;
+  border-radius: 5px;
+  width: 50%;
+  margin: auto;
+  margin-top: 10px;
+}
+
+.demo-submit:hover {
+  background: #00a6a4;
+  color: white;
+  cursor: pointer;
+  transition: 0.3s;
+}
+
+

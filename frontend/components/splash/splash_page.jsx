@@ -39,7 +39,7 @@ export default function splash_page() {
             <div className="cards card-2">
               <img className="card-icon" src={`${window.house_dollar}`} alt="" />
             <div className="card-header">
-              <h1>Budget for the Modern Age</h1>
+              <h1>Budget in the Modern Era</h1>
             </div>
             <div className="card-text">
               <p>Easily create and manage accounts, transactions and goals.</p>
