@@ -37,9 +37,9 @@ class User < ApplicationRecord
   through: :accounts, 
   source: :transactions 
   
-  # has_many :goals,
-  # through: :accounts,
-  # source: :goals
+  has_many :goals,
+  through: :accounts,
+  source: :goals
 
 
   

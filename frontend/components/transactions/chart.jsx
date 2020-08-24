@@ -43,7 +43,7 @@ export default function chart() {
 
 
   // console.log(labels)
-  console.log(data)
+  // console.log(data)
 
   const dataset = {
     datasets: [

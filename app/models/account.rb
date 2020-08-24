@@ -47,6 +47,7 @@ class Account < ApplicationRecord
 
   belongs_to :user
   has_many :transactions
+  has_many :goals
 
     def get_transaction_totals_by_category
     user = self.user

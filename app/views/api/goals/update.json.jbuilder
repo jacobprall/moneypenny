@@ -1,0 +1,1 @@
+json.extract! @goal, :id, :goal_amount, :goal_category, :title, :account_id
