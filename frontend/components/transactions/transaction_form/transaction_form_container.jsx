@@ -1,8 +1,10 @@
 import React from 'react'
-import { useDispatch, useSelector, shallowEqual } from 'react-redux'
+import { useDispatch, , shallowEqual, useSelector } from 'react-redux'
 import TransactionForm from './transaction_form'
 import {closeModal} from '../../../actions/modal_actions'
 import { clearTransactionErrors, createTransaction, updateTransaction, deleteTransaction } from '../../../actions/transaction_actions'
+
+
 export default function transaction_form_container() {
 
   const selectedData = useSelector((state) => ({
@@ -18,7 +20,7 @@ export default function transaction_form_container() {
   if (selectedData.formType === 'new') {
     processForm = (transaction) => dispatch(createTransaction(transaction));
   } else {
-    processForm = (transaction) => dispatch(updateTransaction(transaction));
+    processForm = (transaction) => dispatch(updateTransaction(transaction)); 
   };
   
   const modalCloser = () => dispatch(closeModal());
