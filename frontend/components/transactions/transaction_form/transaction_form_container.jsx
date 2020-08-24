@@ -1,5 +1,5 @@
 import React from 'react'
-import { useDispatch, , shallowEqual, useSelector } from 'react-redux'
+import { useDispatch, shallowEqual, useSelector } from 'react-redux'
 import TransactionForm from './transaction_form'
 import {closeModal} from '../../../actions/modal_actions'
 import { clearTransactionErrors, createTransaction, updateTransaction, deleteTransaction } from '../../../actions/transaction_actions'
