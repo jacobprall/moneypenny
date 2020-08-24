@@ -68,7 +68,7 @@ export default function transaction_index() {
           <thead>
             <tr>
               {renderTableHeader()}
-              <th className="delete-column"><img src={window.trashCan} className="trash-can" /></th>
+              {/* <th className="delete-column"><img src={window.trashCan} className="trash-can" /></th> */}
             </tr>
             </thead>
           <tbody>
