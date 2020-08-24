@@ -1,7 +1,7 @@
 const { RECEIVE_CURRENT_USER, LOGOUT_CURRENT_USER } = require("../actions/session_actions");
 
 
-const sessionReducer = (oldState = { id: null }, action) => {
+const sessionReducer = (oldState = {}, action) => {
   let nextState = Object.assign({}, oldState);
   switch (action.type) {
     case RECEIVE_CURRENT_USER:

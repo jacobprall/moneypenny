@@ -63,7 +63,7 @@ export default function transaction_form({ props: {selectedData, transactionDele
           </select>
         </label>
         <label>Date:
-          <input type="date" value={transaction.date} onChange={update('date')} />
+          <input type="datetime-local"  value={transaction.date} onChange={update('date')} />
         </label>
         <label>Tags:
           <input type="text" value={transaction.tags} onChange={update('tags')} />

@@ -40,7 +40,6 @@ export default function account_form({props: { selectedData, processForm, modalC
   };
 
   const handleToggle = (e) => {
-    e.preventDefault();
     if (account.debit === false) {
       setAccount({ ...account, debit: true });
     } else {

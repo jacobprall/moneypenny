@@ -7,7 +7,7 @@ import { signUp, login, CLEAR_SESSION_ERRORS } from '../../actions/session_actio
 
 
 const mapStateToProps = ({ errors }) => ({
-  errors: Object.values(errors.session),
+  errors: errors.session,
   formType: 'signup'
 })
 

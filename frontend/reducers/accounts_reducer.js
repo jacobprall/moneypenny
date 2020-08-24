@@ -1,4 +1,5 @@
 import { RECEIVE_ACCOUNTS, RECEIVE_ACCOUNT, REMOVE_ACCOUNT} from '../actions/account_actions'
+import { LOGOUT_CURRENT_USER } from '../actions/session_actions';
 
 const accountsReducer = (oldState = {}, action) => {
   let newState = Object.assign(oldState, {})
@@ -15,6 +16,8 @@ const accountsReducer = (oldState = {}, action) => {
       delete newState[action.accountId];
       console.log(newState)
       return newState;
+    case LOGOUT_CURRENT_USER:
+      return {}
     default:
       return newState;
   }

@@ -17,7 +17,7 @@ export default function account_category({ accounts, category, logo, catSub, com
 
   return (
     
-    <div className='account-category' onClick={handleClick} >
+    <div className={`account-category ${toggle ? "active" : ""}`} onClick={handleClick} >
         <div className={`account-category-li ${toggle ? "active" : ""}`}>
           <img src={logo} alt="image" className="category-icons" />
           <span className="account-category-label">{category}</span>

@@ -68,11 +68,23 @@
 
 }
 
+.account-category.active {
+  border-right: none;
+  border-left: none;
+  border-bottom: none;
+}
+
 .account-category-li.active + .category-line-items {
 
   display: block;
   
 }
+
+.account-category-li.active {
+  border-bottom: 1px solid lightgray;
+}
+
+
 
 .category-line-items ul {
     background: white;

@@ -4,7 +4,8 @@ class Api::UsersController < ApplicationController
     @user = User.new(user_params)
 
     if @user.save
-      Account.create(debit: true, account_category: 'Cash', institution: 'None', label: 'Greenbacks', balance: 0, user_id: @user.id)
+      @account = Account.create(debit: true, account_category: 'Cash', institution: 'None', label: 'Greenbacks', balance: 0, user_id: @user.id)
+      @transaction = Transaction.create(amount: 0, date: DateTime.new, description: 'My First Transaction', transaction_category: 'Miscellaneous', account_id: @account.id)
       login!(@user)
       render 'api/users/show'
     else
