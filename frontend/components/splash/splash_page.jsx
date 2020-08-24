@@ -13,7 +13,7 @@ export default function splash_page() {
         
         <section className="hero-section">
           <div className="hero-div">
-            <img className="hero-image" src={`${window.hero_image}`} alt="hero"/>
+            {/* <img className="hero-image" src={`${window.hero_image}`} alt="hero"/> */}
             <div className="hero-text">
               <h1>All your money, in one place</h1>
               <h3>When you have control over your finances, life becomes a whole lot simpler.
