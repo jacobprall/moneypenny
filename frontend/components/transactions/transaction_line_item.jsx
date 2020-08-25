@@ -25,4 +25,4 @@ export default function transaction_line_item({ transaction }) {
     </tr>
   )
 
-}
+};

@@ -15,7 +15,7 @@ class Api::GoalsController < ApplicationController
   end
 
   def update
-    @goal = Transaction.find(params[:id])
+    @goal = Goal.find(params[:id])
     if @goal.update(goal_params)
       render 'api/goals/update'
     else

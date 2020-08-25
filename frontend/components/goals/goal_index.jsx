@@ -11,7 +11,7 @@ export default function goal_index() {
   const goals = useSelector((state) => Object.values(state.entities.goals))
   const modalOpener = (formType, component, payload) => dispatch(openModal(formType, component, payload));
   const baseAccount = useSelector((state) => Object.values(state.entities.accounts)[0])
-  // const [accountId, setAccountId] = useState(baseAccount.id)
+
   let accountId = {};
   if (baseAccount) {
     accountId = baseAccount.id;
@@ -36,7 +36,7 @@ export default function goal_index() {
     <div className="goals-index-container">
       <div className="goals">
         <div className="new-goal-line-item">
-          <button className="add-goal" onClick={() => modalOpener('new', GoalFormContainer, newGoal)}>+</button>
+          <button className="add-goal" onClick={() => modalOpener('new', GoalFormContainer, newGoal)}>+ Add Goal</button>
         </div>
         <div className="goals-list-container">
           <ul className="goals-list">

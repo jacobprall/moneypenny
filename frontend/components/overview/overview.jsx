@@ -17,20 +17,19 @@ export default function overview() {
   const getTransactions = () => (dispatch(requestTransactions()))
   const getGoals = () => (dispatch(requestGoals()))
 
-  // useEffect(() => {
-  //   getAccounts()
-  //   getTransactions()
-  // }, []);
-  getAccounts();
-  getTransactions();
-  getGoals();
+  useEffect(() => {
+    getAccounts()
+    getGoals();
+    getTransactions()
+  }, []);
+
 
   return (
     <main className="overview-page">
       <Route exact path="/overview">
         <AccountsIndex />
       </Route>
-      <Route exact path="/overview/spending">
+      <Route exact path="/overview/trends">
         <Chart />
       </Route>
       <Route exact path="/overview/transactions">

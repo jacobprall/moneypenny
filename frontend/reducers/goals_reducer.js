@@ -9,7 +9,7 @@ const goalsReducer = (oldState = {}, action) => {
       return newState;
     case RECEIVE_GOAL:
       let newGoal = {[action.goal.id]: action.goal};
-      newState = object.assign(newState, newGoal);
+      newState = Object.assign(newState, newGoal);
       return newState;
     case REMOVE_GOAL:
       delete newState[action.goalId];

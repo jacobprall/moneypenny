@@ -9,6 +9,7 @@
 User.delete_all
 Account.delete_all
 Transaction.delete_all
+Goal.delete_all
 
 
 demo = User.create(email: 'demo@email.com', password: 'password', p_num: '1234567890')
@@ -39,6 +40,14 @@ Transaction.create(amount: 3482.05, date: Date.new(2020, 8, 12), description: 'P
 Transaction.create(amount: -92.34, date: Date.new(2020, 8, 13), description: 'Auto Shop', transaction_category: 'Transportation', account_id: checking.id)
 Transaction.create(amount: -43.65, date: Date.new(2020, 8, 15), description: 'Amazon', transaction_category: 'Shopping', account_id: checking.id)
 Transaction.create(amount: -25.36, date: Date.new(2020, 8, 17), description: 'Ralphs', transaction_category: 'Food', account_id: checking.id)
+
+Goal.create(goal_category: 'Retirement', title: 'Saving up for Retirement', goal_amount: 1000000, account_id: invest2.id)
+Goal.create(goal_category: 'Wedding', title: 'Wedding Fund', goal_amount: 50000, account_id: savings.id)
+Goal.create(goal_category: 'Travel', title: 'Thailand Vacation', goal_amount: 5000, account_id: checking.id)
+
+
+
+
 
 
 

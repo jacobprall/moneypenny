@@ -16,7 +16,7 @@
 #
 class Goal < ApplicationRecord
   validates_presence_of :goal_amount, :goal_category, :title, :account_id 
-  validates :goal_category, inclusion: { in: %w(Retirement Wedding College Travel Emergencies Purchase General Other) }
+  validates :goal_category, inclusion: { in: %w(Retirement Wedding College Travel Emergency Purchase General Other) }
 
   belongs_to :account
 end

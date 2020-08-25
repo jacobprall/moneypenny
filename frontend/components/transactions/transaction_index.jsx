@@ -62,7 +62,7 @@ export default function transaction_index() {
       <div className="transactions">
         <div className="above-table">
           <button className="add-transaction" onClick={() => modalOpener('new', TransactionFormContainer, newTransaction)}>+ Add Transaction</button>
-          <input type="text"/>
+         
         </div>
         <table>
           <thead>

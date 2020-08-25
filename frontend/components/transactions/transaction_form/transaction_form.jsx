@@ -34,12 +34,11 @@ export default function transaction_form({ props: {selectedData, transactionDele
   
   const deleteOption = () => {
     if (formType === 'edit') {
-      console.log(transaction.id)
       return (
         <span className='edit-delete' onClick={() => transactionDeleter(transaction.id)}>Delete Transaction</span>
       )
     }
-  }
+  };
 
   const transaction_categories = "Housing Transportation Food Utilities Healthcare Personal Recreation Entertainment Shopping Miscellaneous Income Other".split(' ')
 
