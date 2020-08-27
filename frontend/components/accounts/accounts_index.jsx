@@ -1,17 +1,13 @@
-import React, { useEffect, useState } from 'react'
+import React from 'react'
 import AccountCategory from './account_category'
 import NetWorth from './net_worth'
 import { useSelector, shallowEqual, useDispatch} from 'react-redux'
 import commaFormat from '../../util/number_formatter'
 import NewsContainer from './news_container'
-import { requestBusinessNews } from '../../actions/news_actions'
 import Chart from './chart'
 export default function accounts_index() {
-  // const dispatch = useDispatch()
-  // const getBusinessNews = () => dispatch(requestBusinessNews())
-  // getBusinessNews()
+
   const allAccounts = useSelector(((state) => Object.values(state.entities.accounts)), shallowEqual) 
-  // const dispatch = useDispatch()
   const categoryList = ['Cash', 'Credit Cards', 'Loans', 'Investments', 'Property']
   
   const accountCategories = (categoryList) => {
