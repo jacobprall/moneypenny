@@ -1,7 +1,7 @@
 export default function fetchBusinessNews() {
   return (
   $.ajax({
-    url: 'https://newsapi.org/v2/top-headlines?country=us&apiKey=c52b1b6b03304f4b89a6fbfc26a4b2d5'
+    url: 'https://api.nytimes.com/svc/topstories/v2/business.json?api-key=5ZAXAlQ3pBfCdaNrrQM6wAlDADXrodM5'
   })
   )
 };

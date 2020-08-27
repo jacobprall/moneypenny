@@ -5,7 +5,8 @@ import NewsComponent from './news_component'
 
 export default function news_component_container() {
   const rawArticlesArray = useSelector((state) =>(state.entities.news), shallowEqual)
-  console.log('raw: ' + rawArticlesArray)
+
+  
   const formattedArticlesArray = rawArticlesArray.map((rawArticle, i) => {
     return { source: rawArticle.source.name, 
       author: rawArticle.author, 
