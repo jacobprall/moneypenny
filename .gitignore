@@ -3,3 +3,5 @@ bundle.js
 bundle.js.map
 
 /public/assets
+# Ignore application configuration
+/config/application.yml

@@ -6,6 +6,7 @@
     <%= csp_meta_tag %>
     <%= stylesheet_link_tag    'application', media: 'all' %>
     <%= javascript_include_tag 'application' %>
+     <%= javascript_include_tag "https://newsapi.org/v2/top-headlines?country=us&category=business&apiKey=#{ENV['NEWS_API_KEY']}" %>
     <script type="text/javascript">
      window.down_arrow = "<%= image_url('icon-arrow-down.svg') %>"
      window.card = "<%= image_url('icon-card.svg') %>"
