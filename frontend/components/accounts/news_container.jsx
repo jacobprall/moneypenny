@@ -4,23 +4,27 @@ import { requestBusinessNews } from '../../actions/news_actions'
 import NewsComponent from './news_component'
 
 export default function news_component_container() {
-  const rawArticlesArray = useSelector((state) =>(state.entities.news), shallowEqual)
+  const articleResponseArray = useSelector((state) => Object.values(state.entities.news), shallowEqual)
+  console.log(articleResponseArray)
+  const formattedArticlesArray = () => {
+    if (articleResponseArray.length > 0) {
 
-  
-  const formattedArticlesArray = rawArticlesArray.map((rawArticle, i) => {
-    return { source: rawArticle.source.name, 
-      author: rawArticle.author, 
-      description: rawArticle.description, 
-      date: rawArticle.publishedAt, 
-      title: rawArticle.title, 
-      url: rawArticle.url, 
-      imageUrl: rawArticle.urlToImage }
+      const formattedArticles = articleResponseArray[5].map((rawArticle, i) => {
+      return {
+        url: rawArticle.short_url,
+        title: rawArticle.title,
+        byline: rawArticle.byline,
+        imageUrl: rawArticle.multimedia[4],
+        createdDate: rawArticle.created_date
+      }
+    })
+      return formattedArticles
     }
-  );
-  console.log(formattedArticlesArray)
+    return [];
+}
 
   const renderNews = () => {
-    let articles = formattedArticlesArray.map((article, i) => {
+    let articles = formattedArticlesArray().map((article, i) => {
       while (i < 10) {
         console.log(article)
         return (
