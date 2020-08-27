@@ -9,6 +9,7 @@
     "canvasjs": "^1.8.3",
     "chart.js": "^2.9.3",
     "hooks-form": "^1.0.0-alpha.1",
+    "rc-calendar": "^9.15.11",
     "react": "^16.13.1",
     "react-chartjs-2": "^2.10.0",
     "react-dom": "^16.13.1",
@@ -32,7 +33,6 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "webpack --watch --mode=development",
     "postinstall": "webpack"
-    
   },
   "engines": {
     "node": "10.13.0",

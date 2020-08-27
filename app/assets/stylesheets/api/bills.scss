@@ -1,0 +1,151 @@
+// Place all the styles related to the api/bills controller here.
+// They will automatically be included in application.css.
+// You can use Sass (SCSS) here: http://sass-lang.com/
+.bills-index-container {
+  width: 80%;
+  margin: auto;
+  border: 1px solid lightgray;
+  margin-top: 20px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.bills-due-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.text-header-amount {
+  font-size: 30px;
+  margin-top: 10px;
+
+}
+
+.cash-available {
+  margin: 0;
+}
+
+.text-header-bills {
+  margin-top: 10px;
+  font-size: 36px;
+  margin-left: 10px;
+  color: #00a6a4;
+  border-bottom: 1px solid lightgray;
+}
+
+.text-header-amount {
+  margin: 0;
+  font-size: 24px;
+}
+
+.header-center {
+  margin-top: -30px;
+  padding-right: 10px;
+  border-right: 1px solid lightgray;
+}
+.cash-available {
+  color: gray;
+}
+
+.bills {
+  width: 70%;
+}
+
+.add-bill {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.add-bill button {
+  margin-right: 5px;
+  cursor: pointer;
+}
+
+.bills-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  margin-left: 20px;
+  margin-top: 20px;
+}
+
+.bills-list-container {
+  margin-bottom: 40px;
+}
+
+.bill {
+  padding: 10px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.bill:hover {
+  
+  background: rgba(211, 211, 211, 0.461);
+  transition: 0.3s;
+}
+
+.bill-due-date {
+  color: gray;
+  font-size: 24px;
+  text-align: center;
+  padding-right: 10px;
+  border-right: 1px solid gray;
+
+}
+
+.bill-left {
+  display:flex;
+  .bill-info {
+    padding-left: 20px;
+    margin-top: 20px;
+  }
+}
+
+.bill-right {
+  display: flex;
+  flex-direction: column;
+  margin-top: 10px;
+}
+
+.bill-right span:first-child {
+  color: red;
+}
+
+.bill-right span:first-child:hover {
+  text-decoration: underline;
+  cursor: pointer;
+
+}
+
+.bill-page {
+  width: 100%;
+  display: flex;
+}
+
+.add-bill button {
+  color: white;
+  background: #ff9331;
+  border: none;
+  border-radius: 5px;
+  padding: 10px;
+}
+
+.add-bill button:hover {
+  color: #ff9331;
+  background: white;
+  transition: 0.3s;
+  border: 1px solid #ff9331;
+}
+
+.edit-bill {
+  color: #0077c5;
+}
+
+.edit-bill:hover {
+  color: #03609f;
+  cursor: pointer;
+  text-decoration: underline;
+}
+

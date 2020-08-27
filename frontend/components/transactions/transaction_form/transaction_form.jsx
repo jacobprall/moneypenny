@@ -43,7 +43,7 @@ export default function transaction_form({ props: {selectedData, transactionDele
   const transaction_categories = "Housing Transportation Food Utilities Healthcare Personal Recreation Entertainment Shopping Miscellaneous Income Other".split(' ')
 
   
-
+  console.log(transaction)
   return (
     <form onSubmit={handleSubmit} className="modal-form">
       <div onClick={handleClose} className="close-x">X</div>

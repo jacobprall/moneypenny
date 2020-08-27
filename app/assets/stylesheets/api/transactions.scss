@@ -28,14 +28,15 @@
   border-radius: 5px;
   border: none;
   margin-top: 10px;
-  border: 2px solid #0077C5;
-  color: #0077C5;
+  margin-bottom: 10px;
+  border: 2px solid #0AB6C9;
+  color: #0AB6C9;
   font-size: 12px;
 }
 
 .add-transaction:hover {
   transition: 0.3s;
-  background: #0077C5;
+  background: #0AB6C9;
   color: white;
   cursor: pointer;
 }
@@ -88,12 +89,12 @@ table th {
   color: white;
 }
 
-table tr {
+.transactinos table tr {
   cursor: pointer;
 
 }
 
-table tr:hover {
+.transactions table tr:hover {
   background: #ddd
 }
 
@@ -111,7 +112,7 @@ table tr:hover {
   margin-right: 2px;
 }
 
-table tr th:last-child {
+.transasction table tr th:last-child {
   background-color: rgb(236, 93, 74);
 }
 
@@ -126,4 +127,17 @@ table tr th:last-child {
 
 tr:hover img.transaction-gear {
   opacity: 1;
+}
+
+.transaction-header {
+    width: 50%;
+    text-align: center;
+    font-weight: 400;
+    font-size: 24px;
+    margin: auto;
+    padding-bottom: 5px;
+    border-bottom: 1px solid lightgray;
+    margin-bottom: 20px;
+    margin-top: 10px;
+    color: #00a6a4;
 }

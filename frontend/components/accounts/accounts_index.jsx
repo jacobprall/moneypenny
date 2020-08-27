@@ -1,16 +1,17 @@
 import React, { useEffect, useState } from 'react'
 import AccountCategory from './account_category'
 import NetWorth from './net_worth'
-import { useSelector, shallowEqual} from 'react-redux'
+import { useSelector, shallowEqual, useDispatch} from 'react-redux'
 import commaFormat from '../../util/number_formatter'
-
-
-
+import NewsContainer from './news_container'
+import { requestBusinessNews } from '../../actions/news_actions'
+import Chart from './chart'
 export default function accounts_index() {
-  
+  // const dispatch = useDispatch()
+  // const getBusinessNews = () => dispatch(requestBusinessNews())
+  // getBusinessNews()
   const allAccounts = useSelector(((state) => Object.values(state.entities.accounts)), shallowEqual) 
- 
-
+  // const dispatch = useDispatch()
   const categoryList = ['Cash', 'Credit Cards', 'Loans', 'Investments', 'Property']
   
   const accountCategories = (categoryList) => {
@@ -43,13 +44,27 @@ export default function accounts_index() {
 
 
   return (
-    <div className='accounts-index-container'>
-      <AccountCategory accounts={categories['Cash']} category="Cash" logo={window.money} catSub={categorySubs['Cash']} commaFormat={commaFormat}/>
-      <AccountCategory accounts={categories['Credit Cards']} category="Credit Cards" logo={window.card} catSub={categorySubs['Credit Cards']} commaFormat={commaFormat}/>
-      <AccountCategory accounts={categories['Loans']} category="Loans" logo={window.cap} catSub={categorySubs['Loans']} commaFormat={commaFormat}/>
-      <AccountCategory accounts={categories['Investments']} category="Investments" logo={window.chart} catSub={categorySubs['Investments']} commaFormat={commaFormat}/>
-      <AccountCategory accounts={categories['Property']} category="Property" logo={window.house} catSub={categorySubs['Property']} commaFormat={commaFormat}/>
-      <NetWorth accounts={allAccounts} />
-    </div>
+    <section className="overview-all">
+      <div className="accounts-page">
+        <div className="right-side-overview">
+          <div className='accounts-index-container'>
+              <div className="account-header">Your Accounts</div>
+              <AccountCategory accounts={categories['Cash']} category="Cash" logo={window.money} catSub={categorySubs['Cash']} commaFormat={commaFormat}/>
+              <AccountCategory accounts={categories['Credit Cards']} category="Credit Cards" logo={window.card} catSub={categorySubs['Credit Cards']} commaFormat={commaFormat}/>
+              <AccountCategory accounts={categories['Loans']} category="Loans" logo={window.cap} catSub={categorySubs['Loans']} commaFormat={commaFormat}/>
+              <AccountCategory accounts={categories['Investments']} category="Investments" logo={window.chart} catSub={categorySubs['Investments']} commaFormat={commaFormat}/>
+              <AccountCategory accounts={categories['Property']} category="Property" logo={window.house} catSub={categorySubs['Property']} commaFormat={commaFormat}/>
+              <NetWorth accounts={allAccounts} />
+          </div>
+          <Chart />
+        </div>
+        <div className="news-container">
+          <span>Your Daily Briefing</span>
+          <NewsContainer />
+        </div>
+      </div>
+      
+      
+    </section>
   )
 }

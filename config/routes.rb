@@ -6,6 +6,7 @@ Rails.application.routes.draw do
     resources :accounts, except: [:edit, :new]
     resources :transactions, except: [:edit, :new]
     resources :goals, except: [:edit, :new]
+    resources :bills, except: [:edit, :new]
   end
 
   root to: 'static_pages#root'

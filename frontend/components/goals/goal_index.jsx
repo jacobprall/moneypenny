@@ -2,7 +2,6 @@ import React, {useState} from 'react'
 import GoalLineItem from './goal_line_item'
 import GoalFormContainer from './goal_form_container'
 import { useSelector, useDispatch } from 'react-redux'
-import { requestGoals } from '../../actions/goal_actions'
 import { openModal } from '../../actions/modal_actions'
 
 
@@ -35,6 +34,9 @@ export default function goal_index() {
   return (
     <div className="goals-index-container">
       <div className="goals">
+        <div className="goal-header">
+          Your Goals
+        </div>
         <div className="new-goal-line-item">
           <button className="add-goal" onClick={() => modalOpener('new', GoalFormContainer, newGoal)}>+ Add Goal</button>
         </div>

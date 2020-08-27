@@ -1,0 +1,100 @@
+@media screen and (max-width: 1412px) {
+  .hero-text h1 {
+    font-size: 34px;
+  }
+  .hero-text h3 {
+    font-size: 12px;
+  }
+}
+
+@media screen and (max-width: 1250px) {
+  .app-header {
+    width: 100%;
+    margin: 0;
+  } 
+  .hero-div {
+    width: 100%;
+    margin: 0;
+  }
+
+  .card-container {
+    width: 100%;
+    margin: 0;
+  }
+
+  .footer-container {
+    width: 100%;
+    margin: 0;
+  }
+    .color-bar.footer {
+      width: 100%;
+      margin: 0;
+    }
+}
+
+@media screen and (max-width: 990px) {
+  .splash-header {
+    height: auto;
+  }
+  .app-header {
+    height: auto;
+  }
+  
+  .hero-div {
+    margin-top: 20px;
+    height: auto;
+    width: 100vw;
+  }
+  .hero-text {
+    // top: 100px;
+  }
+
+  .hero-text h1 {
+    font-size: 20px;
+    width: 50%;
+  }
+  .hero-text h3 {
+    display: none;
+    }
+  .hero-image {
+    display: none;
+  }
+  .splash-nav {
+    // flex-direction: column;
+    display: flex;
+    height: auto;
+  }
+  .splash-links {
+    display: none;
+  }
+  .background {
+    display: relative;
+  }
+  .splash-main {
+    width: 100vw;
+  }
+  .hero-section {
+    display: none;
+  }
+  .splash-main {
+    top: 50px;
+    height: auto;
+  }
+  .card-container {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    align-content: space-between;
+    width: auto;
+  }
+  .background {
+    width: 100vw;
+  }
+  .cards {
+    width: 600px;
+  }
+  header {
+    height: 20%;
+    width: 100%;
+  }
+}

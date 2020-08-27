@@ -29,9 +29,7 @@ class User < ApplicationRecord
     foreign_key: :user_id,
     class_name: :Account
 
-  # has_many :bills,
-  # foreign_key: :user_id,
-  # class_name: :Bill
+  has_many :bills
 
   has_many :transactions,
   through: :accounts, 

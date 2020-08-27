@@ -10,6 +10,8 @@ User.delete_all
 Account.delete_all
 Transaction.delete_all
 Goal.delete_all
+Bill.delete_all
+
 
 
 demo = User.create(email: 'demo@email.com', password: 'password', p_num: '1234567890')
@@ -24,7 +26,7 @@ creditcard = Account.create(debit: false, account_category: 'Credit Cards', inst
 property = Account.create(debit: true, account_category: 'Property', institution: 'Other', label: 'Mini Cooper', balance: 10000, user_id: demo.id)
 
 Transaction.create(amount: -1500.00, date: Date.new(2020, 8, 3), description: 'Rent', transaction_category: 'Housing', account_id: checking.id)
-Transaction.create(amount: -323.72, date: Date.new(2020, 8, 4), description: 'Lease', transaction_category: 'Transportation', account_id: checking.id)
+Transaction.create(amount: -323.70, date: Date.new(2020, 8, 4), description: 'Lease', transaction_category: 'Transportation', account_id: checking.id)
 Transaction.create(amount: -124.90, date: Date.new(2020, 8, 5), description: 'PGE', transaction_category: 'Utilities', account_id: checking.id)
 Transaction.create(amount: -86.56, date: Date.new(2020, 8, 5), description: 'Ralphs', transaction_category: 'Food', account_id: checking.id)
 Transaction.create(amount: -83.89, date: Date.new(2020, 8, 6), description: 'Target', transaction_category: 'Personal', account_id: checking.id)
@@ -37,7 +39,7 @@ Transaction.create(amount: 73.49, date: Date.new(2020, 8, 11), description: 'Div
 Transaction.create(amount: 50.00, date: Date.new(2020, 8, 11), description: 'Credit Card Payment', transaction_category: 'Miscellaneous', account_id: creditcard.id)
 Transaction.create(amount: -50.00, date: Date.new(2020, 8, 11), description: 'Credit Card Payment', transaction_category: 'Miscellaneous', account_id: checking.id)
 Transaction.create(amount: 3482.05, date: Date.new(2020, 8, 12), description: 'Paycheck', transaction_category: 'Income', account_id: checking.id)
-Transaction.create(amount: -92.34, date: Date.new(2020, 8, 13), description: 'Auto Shop', transaction_category: 'Transportation', account_id: checking.id)
+Transaction.create(amount: -92.30, date: Date.new(2020, 8, 13), description: 'Auto Shop', transaction_category: 'Transportation', account_id: checking.id)
 Transaction.create(amount: -43.65, date: Date.new(2020, 8, 15), description: 'Amazon', transaction_category: 'Shopping', account_id: checking.id)
 Transaction.create(amount: -25.36, date: Date.new(2020, 8, 17), description: 'Ralphs', transaction_category: 'Food', account_id: checking.id)
 
@@ -46,6 +48,8 @@ Goal.create(goal_category: 'Wedding', title: 'Wedding Fund', goal_amount: 50000,
 Goal.create(goal_category: 'Travel', title: 'Thailand Vacation', goal_amount: 5000, account_id: checking.id)
 
 
+Bill.create(amount: 1500, due_date: Date.new(2020, 9, 5), name: 'Rent', recurring: true, user_id: demo.id)
+Bill.create(amount: 500, due_date: Date.new(2020, 9, 10), name: 'Lease', recurring: true, user_id: demo.id)
 
 
 

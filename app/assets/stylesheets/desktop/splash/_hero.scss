@@ -1,0 +1,61 @@
+// @media screen and (min-width: 1025px) {
+
+.hero-image {
+  position: absolute;
+  height: 100%;
+  width: 100%;
+  margin: auto;
+  top: -40px;
+  right: 0px;
+  z-index: 0;
+}
+
+.hero-div {
+  position: relative;
+  width: 80%;
+  height: 500px;
+  margin: auto;
+}
+
+.hero-text {
+  font-family: Avenir,
+  Helvetica,
+  sans-serif;
+  z-index: 2;
+  position: relative;
+  top: 150px;
+  left: 50px;
+  margin: 0;
+  padding: 0;
+}
+
+.hero-text h1 {
+  font-size: 50px;
+  font-weight: 600;
+}
+
+.hero-text h3 {
+  font-weight: 100;
+}
+
+.cta-btn {
+  color: white;
+  background: #ff9331;
+  border: 1px solid #ff9331;
+  border-radius: 10px;
+  // width: 150px;
+  // height: 50px;
+  font-size: 16px;
+  text-decoration: none;
+  padding-left: 35px;
+  padding-right: 35px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.cta-btn:hover {
+  background: #e7872e;
+  transition: 0.3s;
+}
+
+// }

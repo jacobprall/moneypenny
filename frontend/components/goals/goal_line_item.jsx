@@ -14,30 +14,22 @@ export default function goal_line_item({goal}) {
   const goalDeleter = (goalId) => dispatch(deleteGoal(goalId))
 
   let account = useSelector((state) => state.entities.accounts[account_id]);
-  // let accountBalance;
-  // if (account) {
-  //   accountBalance = (account.balance).toString()
-  // } else {
-  //   accountBalance = '1.00'
-  // }
-  // console.log('accountBalance: ' + accountBalance)
-  // if (!goal_amount) {
-  //   goal_amount = '1.00';
-  // } else {
-  //   goal_amount = goal_amount.toString()
-  // }
-  // console.log('goal_amount: ' + goal_amount)
+  let goalColorTag = 'red'
   let accountBalance;
   if (!goal_amount) {
     goal_amount = 1.00;
+  } else {
+    if (goal_amount <= accountBalance) {
+      goalColorTag = 'green'
+    }
   }
   if (!account) {
-    accountBalance = 1.00;
+    accountBalance = 2.00;
   } else {
     accountBalance = account.balance
   }
 
-  console.log(goal_amount.toFixed(2))
+  
 
   return (
     <li className="goal-line-item-container">
@@ -54,8 +46,8 @@ export default function goal_line_item({goal}) {
       </div>
       <div className="goal-right">
         <span className="goal-money-data">
-          ${commaFormat(accountBalance.toFixed(2).toString())} out of $
-          {commaFormat(goal_amount.toFixed(2).toString())}
+          <span className={goalColorTag}>${commaFormat(accountBalance.toFixed(2).toString())}</span> out
+          of <span className="green">${commaFormat(goal_amount.toFixed(2).toString())}</span>
         </span>
         <span className="goal-delete" onClick={() => goalDeleter(id)}>
           Mark as Complete

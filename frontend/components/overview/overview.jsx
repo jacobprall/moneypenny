@@ -7,20 +7,24 @@ import GoalIndex from '../goals/goal_index'
 import {requestAccounts} from '../../actions/account_actions'
 import { requestTransactions } from '../../actions/transaction_actions'
 import { requestGoals } from '../../actions/goal_actions'
-
-import Chart from '../transactions/chart'
-
+import BillsIndex from '../bills/bills_index'
+import Chart from '../accounts/chart'
+import { requestBills } from '../../actions/bill_actions'
+import { requestBusinessNews } from '../../actions/news_actions'
 export default function overview() {
   // dispatch and retrieve accounts
-  const dispatch = useDispatch()
-  const getAccounts = () => (dispatch(requestAccounts()))
-  const getTransactions = () => (dispatch(requestTransactions()))
-  const getGoals = () => (dispatch(requestGoals()))
-
+  const dispatch = useDispatch();
+  const getAccounts = () => (dispatch(requestAccounts()));
+  const getTransactions = () => (dispatch(requestTransactions()));
+  const getGoals = () => (dispatch(requestGoals()));
+  const getBills = () => dispatch(requestBills());
+  const getNews = () => dispatch(requestBusinessNews());
   useEffect(() => {
-    getAccounts()
+    getNews();
+    getAccounts();
     getGoals();
-    getTransactions()
+    getTransactions();
+    getBills();
   }, []);
 
 
@@ -29,22 +33,20 @@ export default function overview() {
       <Route exact path="/overview">
         <AccountsIndex />
       </Route>
-      <Route exact path="/overview/trends">
+      {/* <Route exact path="/overview/trends">
         <Chart />
-      </Route>
+      </Route> */}
       <Route exact path="/overview/transactions">
         <TransactionIndex />
       </Route>
       <Route exact path="/overview/goals">
         <GoalIndex />
       </Route>
-
-
-
-
-
+      <Route exact path="/overview/bills">
+        <BillsIndex />
+      </Route>
     </main>
-  )
+  );
 } 
   
 
