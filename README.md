@@ -35,6 +35,22 @@ The frontend is built entirely in React and Javascript, while utilizing Redux's 
 - figaro to store keys
 - NYT API
 
+## Design Decisions
+### Functional vs. OOP
+In general, object-oriented program makes more sense to me, intuitively, than functional programming. Because of this, I challenged myself to create this app using only functional components. In the process, I learned a great deal about React hooks, and ultimately wrote less lines of code in a more efficient manner to emulate the functionality of a class component.
+
+
+### Redux Hooks vs Redux Containers
+Mid-way through this project, I realized the utility of skipping Redux container components in favor of using the useSelector and useDispatch hooks. This allowed clearer, concise code and allowed me to pass components into state.
+![alt](https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/noreduxcontainer.png)
+
+
+### Modal and Redux State
+Instead of using a modal component as a switch board that receives strings and loads a particular component on import, I decided to pass the necessary modal forms into state, allowing the modal component to directly display the component stored in state. This required sending a formType to state as well, to distinguish between a new form and an edit form. It also required creating a space for a "passed" account, transaction, goal or bill to be stored for the modal component to access.
+
+![alt](https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/modalcode.png)
+
+
 ## Primary Components
 ### User Authentication
 User authentication is handled in Rails using BCrypt for password hashing. Passwords are never stored to the database. When users log in, the password provided is rehashed (with a salt) to be checked against the original encrypted password hash.
@@ -42,25 +58,27 @@ User authentication is handled in Rails using BCrypt for password hashing. Passw
 
 ### Financial Accounts and Overview Page
 Financial institutions don't have public APIs that allow third-party access. Therefore, users can create representations of their accounts in Moneypenny. These accounts can be edited easily, and give a net worth calculated at the bottom of the accounts component.
-
+On the overview page, there is also a daily briefing utilizing the NYT public API. Below the accounts component is a visual representation of the month's transactions, broken down by category.
 ![alt](https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/overview1.png)
 ![alt](https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/overview2.png)
+How net worth is calculated
+![alt](https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/networth.png)
 
 
-On the overview page, there is also a daily briefing utilizing the NYT public API. Below the accounts component is a visual representation of the month's transactions, broken down by category.
-IMAGE
 
 ### Transactions
 Users can add, edit and delete transactions in the transactions section. 
-IMAGE
+![alt](https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/transactions.png)
 
 
 ### Goals 
 Users can create goals and assign them to specific accounts. Goals can be modified and deleted with ease.
-IMAGE
+![alt](https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/goals.png)
+
 
 
 ### Bills
 Users can also create and manage their bills. When set to recurring, paying a bill automatically creates a new bill for the next month. 
-IMAGE
+![alt](https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/bills.png)
+
 
