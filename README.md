@@ -1,6 +1,6 @@
 # moneypenny
 
-![alt text][https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/splash.png]
+![alt text](https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/splash.png)
 
 ## Summary
 
