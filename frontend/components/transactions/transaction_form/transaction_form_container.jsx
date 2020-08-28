@@ -13,7 +13,7 @@ export default function transaction_form_container() {
     passedTransaction: state.ui.modal.transaction[0],
     accounts: state.entities.accounts
   }), shallowEqual);
-  // console.log(selectedData)
+
   const dispatch = useDispatch();
 
   let processForm;
