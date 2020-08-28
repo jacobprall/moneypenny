@@ -43,8 +43,9 @@ User authentication is handled in Rails using BCrypt for password hashing. Passw
 ### Financial Accounts and Overview Page
 Financial institutions don't have public APIs that allow third-party access. Therefore, users can create representations of their accounts in Moneypenny. These accounts can be edited easily, and give a net worth calculated at the bottom of the accounts component.
 
-IMAGE
-CODE
+![alt](https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/overview1.png)
+![alt](https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/overview2.png)
+
 
 On the overview page, there is also a daily briefing utilizing the NYT public API. Below the accounts component is a visual representation of the month's transactions, broken down by category.
 IMAGE
