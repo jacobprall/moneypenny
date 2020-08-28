@@ -1,6 +1,6 @@
 # moneypenny
 
-IMAGE
+
 
 ## Summary
 
