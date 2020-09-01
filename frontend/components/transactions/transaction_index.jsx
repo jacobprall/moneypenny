@@ -10,9 +10,7 @@ export default function transaction_index() {
   // request transactions
   const dispatch = useDispatch();
   const transactionsRequester = () => dispatch(requestTransactions())
-  // useEffect(() => {
-  //   transactionsRequester()
-  // }, []);
+
   
   const transactions = useSelector((state) => Object.values(state.entities.transactions))
   const modalOpener = (formType, component, payload) => dispatch(openModal(formType, component, payload))
