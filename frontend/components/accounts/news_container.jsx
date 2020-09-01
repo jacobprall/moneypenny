@@ -30,7 +30,6 @@ export default function news_component_container() {
   const renderNews = () => {
     let articles = formattedArticlesArray().map((article, i) => {
       while (i < 10) {
-        console.log(article);
         return <NewsComponent article={article} key={i} />;
       }
     });
