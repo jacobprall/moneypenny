@@ -64,5 +64,13 @@ class Account < ApplicationRecord
 
     categories
   end
+
+  def update_total(amt)
+    print "BEFORE"
+    print self.balance
+    self.balance += amt 
+    print "AFTER"
+    print self.balance
+  end
   
 end

@@ -7,6 +7,9 @@ class Api::TransactionsController < ApplicationController
   def create 
     @transaction = Transaction.create(transaction_params)
     if @transaction.save
+      # @account = @transaction.account 
+      # @account.update_total(@transaction.amount)
+      # @account.save
       @transaction.update_account
       render 'api/transactions/update'
     else

@@ -22,24 +22,30 @@ class Transaction < ApplicationRecord
   def update_account
     if (self.account.debit)
       self.account.balance += self.amount
+      self.account.save
     else
       self.account.balance -= self.amount
+      self.account.save
     end
   end
 
   def update_on_delete
     if (self.account.debit)
       self.account.balance -= self.amount 
+      self.account.save
     else
       self.account.balance += self.amount
+      self.account.save
     end
   end
 
   def update_on_change(old_amt)
     if (self.account.debit)
       self.account.balance += self.amount - old_amt
+      self.account.save
     else
       self.account.balance -= self.amount - old_amt
+      self.account.save
     end
   end
 

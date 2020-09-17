@@ -8,7 +8,7 @@ export default function news_component_container() {
     (state) => Object.values(state.entities.news),
     shallowEqual
   );
-  console.log(articleResponseArray);
+
   const formattedArticlesArray = () => {
     if (articleResponseArray.length > 0) {
       const formattedArticles = articleResponseArray[5].map((rawArticle, i) => {
