@@ -7,12 +7,12 @@
 Moneypenny is a single page web application inspired by Mint built using Ruby on Rails utilizing React.js and Redux architecture. 
 Moneypenny allows users to:
 
-- Create an account
-- Log in and out
-- Create finanical accounts to track their assets and liabilities.
+- Create an account, log in and log out
+- Create finanical accounts to track their assets and liabilities
 - Update and delete their financial accounts
 - Browse a daily briefing
 - Add, edit and delete transactions
+- Search for Transactions
 - View of graphical representation of their monthly financial transactions by category
 - Add, edit and delete goals
 - Add, edit and delete bills
@@ -34,6 +34,7 @@ The frontend is built entirely in React and Javascript, while utilizing Redux's 
 - BCrypt for authorization
 - figaro to store keys
 - NYT API
+- pg_search
 
 ## Design Decisions
 ### Functional vs. OOP
@@ -42,13 +43,59 @@ In general, object-oriented program makes more sense to me, intuitively, than fu
 
 ### Redux Hooks vs Redux Containers
 Mid-way through this project, I realized the utility of skipping Redux container components in favor of using the useSelector and useDispatch hooks. This allowed clearer, concise code and allowed me to pass components into state.
-![alt](https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/noreduxcontainer.png)
+Example of React-Redux hooks instead of pure Redux container:
+```javascript
+import React from 'react'
+import { useDispatch, shallowEqual, useSelector } from 'react-redux'
+import TransactionForm from './transaction_form'
+import {closeModal} from '../../../actions/modal_actions'
+import { clearTransactionErrors, createTransaction, updateTransaction, deleteTransaction } from '../../../actions/transaction_actions'
+
+
+export default function transaction_form_container() {
+
+  const selectedData = useSelector((state) => ({
+    errors: Object.values(state.errors.transaction),
+    formType: state.ui.modal.formType[0],
+    passedTransaction: state.ui.modal.transaction[0],
+    accounts: state.entities.accounts
+  }), shallowEqual);
+
+  const dispatch = useDispatch();
+
+  let processForm;
+  if (selectedData.formType === 'new') {
+    processForm = (transaction) => dispatch(createTransaction(transaction));
+  } else {
+    processForm = (transaction) => dispatch(updateTransaction(transaction)); 
+  };
+  
+  const modalCloser = () => dispatch(closeModal());
+  const transactionDeleter = (transaction) => (dispatch(deleteTransaction(transaction)).then(() => modalCloser()))
+  const transactionErrorsClearer = () => dispatch(clearTransactionErrors());
+
+  const props = {
+    selectedData,
+    processForm,
+    modalCloser,
+    transactionErrorsClearer,
+    transactionDeleter
+  }
+
+
+  return (
+    <div className="modal-form-container">
+      <TransactionForm props={props} />
+    </div>
+  )
+}
+
+```
 
 
 ### Modal and Redux State
 Instead of using a modal component as a switch board that receives strings and loads a particular component on import, I decided to pass the necessary modal forms into state, allowing the modal component to directly display the component stored in state. This required sending a formType to state as well, to distinguish between a new form and an edit form. It also required creating a space for a "passed" account, transaction, goal or bill to be stored for the modal component to access.
 
-![alt](https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/modalcode.png)
 
 
 ## Primary Components
@@ -62,7 +109,28 @@ On the overview page, there is also a daily briefing utilizing the NYT public AP
 ![alt](https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/overview1.png)
 ![alt](https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/overview2.png)
 How net worth is calculated
-![alt](https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/networth.png)
+```javascript
+et assets = accounts.filter((account) => (
+      account.debit
+    )).map((account) => (
+      account.balance
+    )).reduce((acc = 0, account) => (
+      account + acc
+    ), 0);
+
+    let liabilities = accounts.filter((account) => (
+      !account.debit
+    )).map((account) => (
+      account.balance
+    )).reduce((acc = 0, account) => (
+      account + acc
+    ), 0);
+    assets = assets.toFixed(2)
+    liabilities = liabilities.toFixed(2)
+    
+    const netWorth = (assets - liabilities).toFixed(2)
+  
+```
 
 
 
