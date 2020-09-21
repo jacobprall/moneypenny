@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from "react";
+import React from "react";
 import { Doughnut } from "react-chartjs-2";
-import { useSelector, shallowEqual, useDispatch } from "react-redux";
+import { useSelector } from "react-redux";
 import { formatDate } from "../../util/date_util";
-import { requestTransactions } from "../../actions/transaction_actions";
+
 export default function chart() {
   const getSelectedData = () =>
     useSelector((state) => state.entities.transactions);
