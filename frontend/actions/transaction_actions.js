@@ -5,6 +5,8 @@ export const RECEIVE_TRANSACTION = "RECEIVE_TRANSACTION";
 export const REMOVE_TRANSACTION = "REMOVE_TRANSACTION";
 export const RECEIVE_TRANSACTION_ERRORS = "RECEIVE_TRANSACTION_ERRORS";
 export const CLEAR_TRANSACTION_ERRORS = "CLEAR_TRANSACTION_ERRORS";
+export const RECEIVE_TRANSACTION_SEARCH = "RECEIVE_TRANSACTION_SEARCH";
+export const CLEAR_TRANSACTION_SEARCH = "CLEAR_TRANSACTION_SEARCH";
 
 export const receiveTransactions = (transactions) => ({
   type: RECEIVE_TRANSACTIONS,
@@ -35,11 +37,31 @@ export const clearTransactionErrors = () => ({
   type: CLEAR_TRANSACTION_ERRORS,
 });
 
+export const searchTransactions = (transactions) => ({
+  type: RECEIVE_TRANSACTION_SEARCH,
+  transactions,
+});
+
+export const clearTransactionSearch = (transactions) => ({
+  type: CLEAR_TRANSACTION_SEARCH,
+  transactions,
+});
+
 /////
 
 export const requestTransactions = () => (dispatch) =>
   TransactionAPIUtil.fetchTransactions().then((transactions) =>
     dispatch(receiveTransactions(transactions))
+  );
+
+export const searchForTransactions = (searchParams) => (dispatch) =>
+  TransactionAPIUtil.searchTransaction(searchParams).then((transactions) =>
+    dispatch(searchTransactions(transactions))
+  );
+
+export const clearSearch = () => (dispatch) =>
+  TransactionAPIUtil.fetchTransactions().then((transactions) =>
+    dispatch(clearTransactionSearch(transactions))
   );
 
 export const createTransaction = (transaction) => (dispatch) =>

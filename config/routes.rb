@@ -7,6 +7,7 @@ Rails.application.routes.draw do
     resources :transactions, except: [:edit, :new]
     resources :goals, except: [:edit, :new]
     resources :bills, except: [:edit, :new]
+    get 'transactions/search/:search_params', to: 'transactions#search'
   end
 
   root to: 'static_pages#root'

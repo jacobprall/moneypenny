@@ -76,7 +76,7 @@ export default function bills_index() {
           </div>
           <div className="add-bill">
             <button
-              className="add-bill"
+              className="add-bill-btn"
               onClick={() => modalOpener("new", BillsFormContainer, newBill)}>
                 + Add Bill
             </button>

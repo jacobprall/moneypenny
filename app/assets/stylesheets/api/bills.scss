@@ -19,7 +19,6 @@
 .text-header-amount {
   font-size: 30px;
   margin-top: 10px;
-
 }
 
 .cash-available {
@@ -57,7 +56,7 @@
   justify-content: flex-end;
 }
 
-.add-bill button {
+.add-bill-btn {
   margin-right: 5px;
   cursor: pointer;
 }
@@ -81,7 +80,6 @@
 }
 
 .bill:hover {
-  
   background: rgba(211, 211, 211, 0.461);
   transition: 0.3s;
 }
@@ -92,11 +90,10 @@
   text-align: center;
   padding-right: 10px;
   border-right: 1px solid gray;
-
 }
 
 .bill-left {
-  display:flex;
+  display: flex;
   .bill-info {
     padding-left: 20px;
     margin-top: 20px;
@@ -116,7 +113,6 @@
 .bill-right span:first-child:hover {
   text-decoration: underline;
   cursor: pointer;
-
 }
 
 .bill-page {
@@ -124,7 +120,7 @@
   display: flex;
 }
 
-.add-bill button {
+.add-bill-btn {
   color: white;
   background: #ff9331;
   border: none;
@@ -132,7 +128,7 @@
   padding: 10px;
 }
 
-.add-bill button:hover {
+.add-bill-btn:hover {
   color: #ff9331;
   background: white;
   transition: 0.3s;
@@ -148,4 +144,3 @@
   cursor: pointer;
   text-decoration: underline;
 }
-

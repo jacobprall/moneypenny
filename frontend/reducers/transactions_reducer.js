@@ -1,4 +1,4 @@
-import { RECEIVE_TRANSACTIONS, RECEIVE_TRANSACTION, REMOVE_TRANSACTION } from '../actions/transaction_actions'
+import { RECEIVE_TRANSACTIONS, RECEIVE_TRANSACTION, REMOVE_TRANSACTION, RECEIVE_TRANSACTION_SEARCH, CLEAR_TRANSACTION_SEARCH } from '../actions/transaction_actions'
 
 
 const transactionsReducer = (oldState = {}, action) => {
@@ -14,6 +14,11 @@ const transactionsReducer = (oldState = {}, action) => {
       return newState;
     case REMOVE_TRANSACTION:
       delete newState[action.transactionId];
+      return newState;
+    case RECEIVE_TRANSACTION_SEARCH:
+      return action.transactions;
+    case CLEAR_TRANSACTION_SEARCH:
+      newState = action.transactions;
       return newState;
     default:
       return newState;

@@ -1,5 +1,4 @@
 .transactions-index-container {
-
   width: 60%;
   margin: auto;
   margin-top: 20px;
@@ -7,19 +6,17 @@
   border: 1px solid #d4d7dc;
   position: relative;
   display: block;
-
-
 }
 
 .transactions {
   display: block;
-
 }
 
-
+.search-bar {
+  height: 28px;
+}
 
 .add-transaction {
-
   width: 120px;
   height: 34px;
   font-size: 0.93em;
@@ -29,19 +26,38 @@
   border: none;
   margin-top: 10px;
   margin-bottom: 10px;
-  border: 2px solid #0AB6C9;
-  color: #0AB6C9;
+  border: 2px solid #0ab6c9;
+  color: #0ab6c9;
   font-size: 12px;
+}
+
+.search-div {
+  width: 35%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.add-goal.search-btn {
+  width: 100px;
+  margin: 0;
 }
 
 .add-transaction:hover {
   transition: 0.3s;
-  background: #0AB6C9;
+  background: #0ab6c9;
   color: white;
   cursor: pointer;
 }
 
+.add-bill-btn.clear-btn {
+  border: 1px solid white;
+  height: 35px;
+}
 
+.add-bill-btn.clear-btn:hover {
+  border: 1px solid #ff9331;
+}
 
 .above-table {
   width: 89.5%;
@@ -52,14 +68,13 @@
 }
 
 table {
-    text-align: center;
-    border-collapse: collapse;
-    border: 3px solid #ddd;
-    width: 90%;
-    height: 100%;
-    table-layout: auto;
-    margin: auto;
-    
+  text-align: center;
+  border-collapse: collapse;
+  border: 3px solid #ddd;
+  width: 90%;
+  height: 100%;
+  table-layout: auto;
+  margin: auto;
 }
 
 table td,
@@ -78,26 +93,23 @@ table th {
   text-align: center;
   background-color: #00a6a4;
   color: white;
-
 }
 
 .transactions th {
   padding-top: 12px;
   padding-bottom: 12px;
   text-align: center;
-  
+
   color: white;
 }
 
 .transactinos table tr {
   cursor: pointer;
-
 }
 
 .transactions table tr:hover {
-  background: #ddd
+  background: #ddd;
 }
-
 
 .table-row-data {
   font-size: 12px;
@@ -130,16 +142,16 @@ tr:hover img.transaction-gear {
 }
 
 .transaction-header {
-    width: 50%;
-    text-align: center;
-    font-weight: 400;
-    font-size: 24px;
-    margin: auto;
-    padding-bottom: 5px;
-    border-bottom: 1px solid lightgray;
-    margin-bottom: 20px;
-    margin-top: 10px;
-    color: #00a6a4;
+  width: 50%;
+  text-align: center;
+  font-weight: 400;
+  font-size: 24px;
+  margin: auto;
+  padding-bottom: 5px;
+  border-bottom: 1px solid lightgray;
+  margin-bottom: 20px;
+  margin-top: 10px;
+  color: #00a6a4;
 }
 
 .delete-transaction:hover {

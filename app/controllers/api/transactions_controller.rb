@@ -7,9 +7,6 @@ class Api::TransactionsController < ApplicationController
   def create 
     @transaction = Transaction.create(transaction_params)
     if @transaction.save
-      # @account = @transaction.account 
-      # @account.update_total(@transaction.amount)
-      # @account.save
       @transaction.update_account
       render 'api/transactions/update'
     else
@@ -34,6 +31,12 @@ class Api::TransactionsController < ApplicationController
     @transaction.destroy
     @transactions = current_user.transactions
     render json: @transaction.id
+  end
+
+  def search
+    @transactions = Transaction.search_for_transaction(params[:search_params])
+    print @transactions
+    render json: @transactions
   end
 
   def transaction_params 
