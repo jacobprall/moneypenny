@@ -136,7 +136,9 @@ table th {
   top: 5px;
   position: relative;
 }
-
+.transaction-gear:hover {
+  cursor: pointer;
+}
 tr:hover img.transaction-gear {
   opacity: 1;
 }

@@ -61,7 +61,7 @@ export default function splash_page() {
           <div id="cards" className="cards card-3">
             <img className="card-icon" src={`${window.dial}`} alt="" />
             <div className="card-header">
-              <h1>Never miss a bill again</h1>
+              <h1>Never Miss a Bill Again</h1>
             </div>
             <div className="card-text">
               <p>Take ownership over your bills with our bill manager.</p>

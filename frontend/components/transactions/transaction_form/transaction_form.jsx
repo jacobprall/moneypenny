@@ -75,7 +75,7 @@ export default function transaction_form({
           <input
             type="number"
             step=".01"
-            value={transaction.amount}
+            value={transaction.amount.toFixed(2)}
             onChange={update("amount")}
           />
         </label>

@@ -6,9 +6,7 @@
   left: 0;
   background: rgba(0, 0, 0, 0.5);
   z-index: 10;
-  font-family: Avenir,
-  Helvetica,
-  sans-serif;
+  font-family: Avenir, Helvetica, sans-serif;
 }
 
 .modal-form {
@@ -17,13 +15,12 @@
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  background: white;
+  background: #00a6a300;
   width: 400px;
   height: auto;
   justify-content: center;
   border-radius: 5px;
   flex-direction: column;
-
 }
 
 .modal-inputs {
@@ -32,17 +29,26 @@
   align-items: center;
   flex-direction: column;
   margin: auto;
+  width: 100%;
   margin-bottom: 20px;
   // box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2);
-  border: 1px solid lightgray;
-  background: #F7F7F7
+  border: 1px solid #0077c5;
+  background: #f7f7f7;
 }
 
 .modal-inputs label {
   padding: 20px;
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  margin-left: 20px;
 }
 
-
+.modal-inputs label input,
+.modal-inputs label select {
+  height: 20px;
+  margin-right: 20px;
+}
 
 .close-x {
   cursor: pointer;
@@ -50,7 +56,9 @@
   margin-right: 0px;
   box-sizing: border-box;
   height: 10px;
-  
+  position: relative;
+  color: white;
+  left: -23px;
 }
 
 .edit-delete {
@@ -81,9 +89,6 @@
   border-radius: 5px;
   border: none;
   text-align: center;
-  
-  
-  
 }
 
 .modal-form-submit:hover {
