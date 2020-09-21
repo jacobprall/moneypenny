@@ -4,13 +4,14 @@ import { useSelector, shallowEqual, useDispatch } from "react-redux";
 import { formatDate } from "../../util/date_util";
 import { requestTransactions } from "../../actions/transaction_actions";
 export default function chart() {
-  const getSelectedData = useSelector((state) => state.entities.transactions);
-  let selectedData = getSelectedData;
-  const [retrievedSelectedData, setRetrievedSelectedData] = useState(
-    selectedData
-  );
+  const getSelectedData = () =>
+    useSelector((state) => state.entities.transactions);
+  let selectedData = getSelectedData();
+  while (selectedData.length === 0) {
+    selectedData = getSelectedData();
+  }
 
-  const categoryAmountPairs = Object.values(retrievedSelectedData).map((transaction) => [
+  const categoryAmountPairs = Object.values(selectedData).map((transaction) => [
     transaction.transaction_category,
     transaction.amount,
     transaction.date,
@@ -42,21 +43,7 @@ export default function chart() {
     return [labels, transactionTotals];
   };
 
-  const [data, setData] = useState([]);
-  const [labels, setLabels] = useState([]);
-
-  if (retrievedSelectedData.length === 0) {
-    setRetrievedSelectedData(getSelectedData());
-  } 
-
-  useEffect(() => {
-    let transactionData = computeTransactionData();
-    setData(transactionData[1]);
-    setLabels(transactionData[0]);
-  }, []);
-
-  // console.log(labels)
-  // console.log(data)
+  let [labels, data] = computeTransactionData();
 
   const dataset = {
     datasets: [
