@@ -109,7 +109,28 @@ On the overview page, there is also a daily briefing utilizing the NYT public AP
 ![alt](https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/overview1.png)
 ![alt](https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/overview2.png)
 How net worth is calculated
-![alt](https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/networth.png)
+```javascript
+et assets = accounts.filter((account) => (
+      account.debit
+    )).map((account) => (
+      account.balance
+    )).reduce((acc = 0, account) => (
+      account + acc
+    ), 0);
+
+    let liabilities = accounts.filter((account) => (
+      !account.debit
+    )).map((account) => (
+      account.balance
+    )).reduce((acc = 0, account) => (
+      account + acc
+    ), 0);
+    assets = assets.toFixed(2)
+    liabilities = liabilities.toFixed(2)
+    
+    const netWorth = (assets - liabilities).toFixed(2)
+  
+```
 
 
 
