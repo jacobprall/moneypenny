@@ -43,13 +43,59 @@ In general, object-oriented program makes more sense to me, intuitively, than fu
 
 ### Redux Hooks vs Redux Containers
 Mid-way through this project, I realized the utility of skipping Redux container components in favor of using the useSelector and useDispatch hooks. This allowed clearer, concise code and allowed me to pass components into state.
-![alt](https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/noreduxcontainer.png)
+Example of React-Redux hooks instead of pure Redux container:
+```javascript
+import React from 'react'
+import { useDispatch, shallowEqual, useSelector } from 'react-redux'
+import TransactionForm from './transaction_form'
+import {closeModal} from '../../../actions/modal_actions'
+import { clearTransactionErrors, createTransaction, updateTransaction, deleteTransaction } from '../../../actions/transaction_actions'
+
+
+export default function transaction_form_container() {
+
+  const selectedData = useSelector((state) => ({
+    errors: Object.values(state.errors.transaction),
+    formType: state.ui.modal.formType[0],
+    passedTransaction: state.ui.modal.transaction[0],
+    accounts: state.entities.accounts
+  }), shallowEqual);
+
+  const dispatch = useDispatch();
+
+  let processForm;
+  if (selectedData.formType === 'new') {
+    processForm = (transaction) => dispatch(createTransaction(transaction));
+  } else {
+    processForm = (transaction) => dispatch(updateTransaction(transaction)); 
+  };
+  
+  const modalCloser = () => dispatch(closeModal());
+  const transactionDeleter = (transaction) => (dispatch(deleteTransaction(transaction)).then(() => modalCloser()))
+  const transactionErrorsClearer = () => dispatch(clearTransactionErrors());
+
+  const props = {
+    selectedData,
+    processForm,
+    modalCloser,
+    transactionErrorsClearer,
+    transactionDeleter
+  }
+
+
+  return (
+    <div className="modal-form-container">
+      <TransactionForm props={props} />
+    </div>
+  )
+}
+
+```
 
 
 ### Modal and Redux State
 Instead of using a modal component as a switch board that receives strings and loads a particular component on import, I decided to pass the necessary modal forms into state, allowing the modal component to directly display the component stored in state. This required sending a formType to state as well, to distinguish between a new form and an edit form. It also required creating a space for a "passed" account, transaction, goal or bill to be stored for the modal component to access.
 
-![alt](https://github.com/jacobprall/moneypenny/blob/master/app/assets/images/modalcode.png)
 
 
 ## Primary Components
