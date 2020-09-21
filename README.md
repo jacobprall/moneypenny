@@ -7,12 +7,12 @@
 Moneypenny is a single page web application inspired by Mint built using Ruby on Rails utilizing React.js and Redux architecture. 
 Moneypenny allows users to:
 
-- Create an account
-- Log in and out
-- Create finanical accounts to track their assets and liabilities.
+- Create an account, log in and log out
+- Create finanical accounts to track their assets and liabilities
 - Update and delete their financial accounts
 - Browse a daily briefing
 - Add, edit and delete transactions
+- Search for Transactions
 - View of graphical representation of their monthly financial transactions by category
 - Add, edit and delete goals
 - Add, edit and delete bills
@@ -34,6 +34,7 @@ The frontend is built entirely in React and Javascript, while utilizing Redux's 
 - BCrypt for authorization
 - figaro to store keys
 - NYT API
+- pg_search
 
 ## Design Decisions
 ### Functional vs. OOP
