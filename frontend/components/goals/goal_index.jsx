@@ -1,4 +1,4 @@
-import React, {useState} from 'react'
+import React from 'react'
 import GoalLineItem from './goal_line_item'
 import GoalFormContainer from './goal_form_container'
 import { useSelector, useDispatch } from 'react-redux'

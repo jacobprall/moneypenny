@@ -1,7 +1,7 @@
 import React from "react";
 import AccountCategory from "./account_category";
 import NetWorth from "./net_worth";
-import { useSelector, shallowEqual, useDispatch } from "react-redux";
+import { useSelector, shallowEqual } from "react-redux";
 import commaFormat from "../../util/number_formatter";
 import NewsContainer from "./news_container";
 import Chart from "./chart";

@@ -16,6 +16,11 @@ export default function transaction_form({
   const update = (field) => (e) =>
     setTransaction({ ...transaction, [field]: e.currentTarget.value });
 
+
+  // const handleToFixed = () => {
+  //   console.log(typeof transaction.amount)
+  //   return transaction.amount ? Number(transaction.amount).toFixed(2) : 0;
+  // };
   const handleSubmit = (e) => {
     e.preventDefault();
     processForm(transaction)
@@ -75,7 +80,7 @@ export default function transaction_form({
           <input
             type="number"
             step=".01"
-            value={transaction.amount.toFixed(2)}
+            value={transaction.amount}
             onChange={update("amount")}
           />
         </label>
@@ -104,7 +109,7 @@ export default function transaction_form({
           Tags:
           <input
             type="text"
-            value={transaction.tags}
+            value={transaction.tags ? transaction.tags : ""}
             onChange={update("tags")}
           />
         </label>

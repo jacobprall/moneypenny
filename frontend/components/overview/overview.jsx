@@ -8,7 +8,6 @@ import { requestAccounts } from "../../actions/account_actions";
 import { requestTransactions } from "../../actions/transaction_actions";
 import { requestGoals } from "../../actions/goal_actions";
 import BillsIndex from "../bills/bills_index";
-import Chart from "../accounts/chart";
 import { requestBills } from "../../actions/bill_actions";
 import { requestBusinessNews } from "../../actions/news_actions";
 export default function overview() {

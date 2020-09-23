@@ -4,7 +4,7 @@ import Scroll from 'react-scroll'
 export default function nav_bar() {
   const ScrollLink = Scroll.Link;
   return (
-    // <div className ="background">
+
       <div className="app-header">
         <header className='splash-header'>
           <div className="color-bar"></div>
@@ -36,6 +36,5 @@ export default function nav_bar() {
           </nav>
         </header>
       </div>
-    // </div>
   )
 }

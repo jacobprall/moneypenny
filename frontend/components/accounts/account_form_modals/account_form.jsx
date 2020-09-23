@@ -55,6 +55,7 @@ export default function account_form({
     accountErrorsClearer();
   };
 
+
   const deleteOption = () => {
     if (formType === "edit") {
       return (
@@ -111,7 +112,7 @@ export default function account_form({
             type="number"
             min="0"
             step=".01"
-            value={account.balance.toFixed(2)}
+            value={account.balance}
             onChange={update("balance")}
           />
         </label>

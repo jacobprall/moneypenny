@@ -15,7 +15,7 @@ export default function bills_index() {
   const accounts = useSelector((state) =>
     Object.values(state.entities.accounts)
   );
-  // console.log(accounts)
+
   
   const cash = accounts.filter((account) => {
     return account.account_category === "Cash";
@@ -24,7 +24,7 @@ export default function bills_index() {
 
   const cashAmounts = cash.map((account) => account.balance)
   const sum = cashAmounts.reduce((acc, ele) => (acc + ele), 0);
-  // console.log(sum)
+
   const sumFormatted = commaFormat(sum.toFixed(2).toString())
   
 

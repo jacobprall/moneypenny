@@ -2,8 +2,6 @@ import React, {useState} from 'react'
 import commaFormat from '../../util/number_formatter'
 
 export default function net_worth({accounts}) {
-  // const [netWorth, setNetWorth] = useState(0)
-
     let assets = accounts.filter((account) => (
       account.debit
     )).map((account) => (
@@ -23,10 +21,6 @@ export default function net_worth({accounts}) {
     liabilities = liabilities.toFixed(2)
     
     const netWorth = (assets - liabilities).toFixed(2)
-  
-
-  
-  
   
   return (
     <>

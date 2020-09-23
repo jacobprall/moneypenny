@@ -41,7 +41,6 @@ export default function SessionForm({errors, formType, processForm, processDemoF
     
 
   const renderErrors = () => {
-    // debugger
     return (
       <ul className="session-errors">
         {errors.map((error, i) => (
@@ -54,10 +53,9 @@ export default function SessionForm({errors, formType, processForm, processDemoF
 }
 
   const formSpecificInputs = () => {
-    //Primary form box data
+
     const formChoice = {};
 
-    // additional info to be added if sign up
     const pNumber = () => (
       <div>
         <label >Phone Number</label> 

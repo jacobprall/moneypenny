@@ -1,5 +1,5 @@
 
-import React, {useState} from 'react'
+import React from 'react'
 import { useSelector, useDispatch, shallowEqual } from 'react-redux'
 import {createAccount, deleteAccount, clearAccountErrors, updateAccount} from '../../../actions/account_actions'
 import { closeModal } from '../../../actions/modal_actions'

@@ -1,8 +1,7 @@
-import React, { useEffect } from "react";
+import React from "react";
 import TransactionLineItem from "./transaction_line_item";
 import TransactionFormContainer from "./transaction_form/transaction_form_container";
 import { useSelector, useDispatch, shallowEqual } from "react-redux";
-import { requestTransactions } from "../../actions/transaction_actions";
 import { openModal } from "../../actions/modal_actions";
 import { searchForTransactions } from "../../actions/transaction_actions";
 import { clearSearch } from "../../actions/transaction_actions";

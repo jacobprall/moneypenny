@@ -1,12 +1,10 @@
-import React, {useState, useEffect} from 'react'
+import React, {useState} from 'react'
 import AccountLineItem from './account_line_item'
-import { useSelector, shallowEqual} from 'react-redux'
+
 
 export default function account_category({ accounts, category, logo, catSub, commaFormat }) {
   const [toggle, setToggle] = useState(false)
-  
 
-  // console.log(accountsChecker)
 
   const handleClick = () => {
     setToggle(() => (

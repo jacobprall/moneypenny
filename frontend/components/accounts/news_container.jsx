@@ -1,6 +1,5 @@
-import React, { useState } from "react";
-import { useSelector, shallowEqual, useDispatch } from "react-redux";
-import { requestBusinessNews } from "../../actions/news_actions";
+import React from "react";
+import { useSelector, shallowEqual } from "react-redux";
 import NewsComponent from "./news_component";
 
 export default function news_component_container() {

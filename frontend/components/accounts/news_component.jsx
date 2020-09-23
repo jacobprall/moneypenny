@@ -5,7 +5,7 @@ export default function news_component({article}) {
   const formattedDate = formatDate(createdDate)
 
   return (
-    <li className="news-list-item" onClick={() => window.open(`${article.url}`, "_blank")}>
+    <li className="news-list-item" onClick={() => window.open(`${url}`, "_blank")}>
       <img className="news-image" src={imageUrl.url} alt="image"/>
       <div className="article-content">
         <div className="article-title">{title}</div>
