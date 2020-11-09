@@ -8,10 +8,11 @@
   z-index: 10;
   border-radius: 5px;
   font-family: Avenir, Helvetica, sans-serif;
+  
 }
 
 .modal-form {
-  position: absolute;
+  position: fixed;
   display: flex;
   top: 50%;
   left: 50%;
@@ -22,6 +23,7 @@
   justify-content: center;
   border-radius: 5px;
   flex-direction: column;
+  transition: all 0.3s ease-out;
 }
 
 .modal-inputs {
@@ -32,11 +34,11 @@
   margin: auto;
   width: 100%;
   margin-bottom: 20px;
-  // box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2);
+  box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2);
   border: 1px solid #0077c5;
   background: #f7f7f7;
   border-radius: 5px;
-
+  
 }
 
 .modal-inputs label {
