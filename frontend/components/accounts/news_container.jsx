@@ -9,6 +9,7 @@ export default function news_component_container() {
   );
 
   const formattedArticlesArray = () => {
+    console.log(articleResponseArray);
     if (articleResponseArray.length > 0) {
       const formattedArticles = articleResponseArray[5].map((rawArticle, i) => {
         if (rawArticle.multimedia) {
@@ -21,7 +22,8 @@ export default function news_component_container() {
           };
         }
       });
-      return formattedArticles;
+      // console.log(formattedArticles);
+      return formattedArticles.filter((article) => article !== undefined);
     }
     return [];
   };
