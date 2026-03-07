@@ -1,23 +1,26 @@
-# AgentSQL
+# Moneypenny
 
 **The autonomous AI agent where the database is the runtime.**
 
-AgentSQL is an open-source, local-first AI agent platform built on SQLite. Unlike conventional agent frameworks that bolt persistence onto an orchestration layer, AgentSQL inverts the stack: inference, memory, search, sync, policy, and tool execution all happen inside the same transactional boundary. The result is an agent that never forgets, never leaks, and works everywhere — including offline.
+Moneypenny is an open-source, local-first AI agent platform built on SQLite. Unlike conventional agent frameworks that bolt persistence onto an orchestration layer, Moneypenny inverts the stack: inference, memory, search, sync, policy, and tool execution all happen inside the same transactional boundary. The result is an agent that never forgets, never leaks, and works everywhere — including offline.
 
 ---
 
 ## Why another agent?
 
-Every major open-source agent today — OpenClaw, LangChain, CrewAI, AutoGen — follows the same pattern: a Node.js or Python orchestrator that calls LLM APIs, dispatches tools, and writes state to disconnected storage (files, Redis, Postgres, etc.). Memory is an afterthought. Governance doesn't exist. Offline is an aspiration.
+Every major open-source agent today — OpenClaw, LangChain, CrewAI, AutoGen — follows the same pattern: a Node.js or Python orchestrator that calls LLM APIs, dispatches tools, and writes state to disconnected storage (files, Redis, Postgres, etc.). 
 
 This architecture has fundamental problems:
 
 - **No transactional guarantees.** If the agent crashes mid-task, you get orphaned state — partial memory writes, lost audit entries, half-executed tool chains.
 - **No governance.** Nothing prevents the agent from dropping a production table, leaking a secret into a transcript, or running the same destructive query in a retry loop.
+- **No permissions engine.** 
 - **Cloud-dependent.** Most agents require API keys for inference and embedding. No network, no agent.
 - **No built-in sync.** Each agent instance is an island. You can hack around this with git or shared databases, but there's no automatic, conflict-free knowledge propagation between agents.
 
-AgentSQL solves these by making the database the agent's runtime — not just its storage.
+Moneypenny solves these by making the database the agent's runtime — not just its storage.
+
+
 
 ---
 
@@ -32,7 +35,7 @@ AgentSQL solves these by making the database the agent's runtime — not just it
 │  Conversation management · Tool dispatch · Streaming            │
 │  Heartbeat scheduler · Session lifecycle                        │
 ├─────────────────────────────────────────────────────────────────┤
-│  AgentSQL Core (SQLite + extensions)                            │
+│  Moneypenny Core (SQLite + extensions)                           │
 │                                                                 │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────┐   │
 │  │sqlite-ai │ │sqlite-   │ │sqlite-   │ │sqlite-agent      │   │
@@ -69,13 +72,13 @@ Everything below the orchestrator is **a single SQLite database** with loaded ex
 
 ### Everything is a transaction
 
-When an AgentSQL agent processes a message, the entire operation — memory retrieval, policy check, tool execution, audit logging, embedding generation, secret redaction — happens inside a single SQLite transaction. If anything fails, everything rolls back. No orphaned state. No partial writes. No lost audit entries.
+When a Moneypenny agent processes a message, the entire operation — memory retrieval, policy check, tool execution, audit logging, embedding generation, secret redaction — happens inside a single SQLite transaction. If anything fails, everything rolls back. No orphaned state. No partial writes. No lost audit entries.
 
 No other agent framework can make this claim.
 
 ### Offline-first, for real
 
-AgentSQL runs full agent capabilities with zero network connectivity. Inference runs on-device via GGUF models through `sqlite-ai`. Embeddings are generated locally. Search is local. Memory is local. There is no degraded mode — offline *is* the mode. Network is an optimization, not a requirement.
+Moneypenny runs full agent capabilities with zero network connectivity. Inference runs on-device via GGUF models through `sqlite-ai`. Embeddings are generated locally. Search is local. Memory is local. There is no degraded mode — offline *is* the mode. Network is an optimization, not a requirement.
 
 ### Governed by default
 
@@ -89,7 +92,7 @@ This is table stakes for enterprise use. No other open-source agent has it.
 
 ### Embeddable everywhere
 
-The entire agent runtime is a stack of SQLite extensions. Anything that can load a SQLite extension can host an AgentSQL agent: mobile apps (iOS, Android), desktop apps, IoT devices, browsers (via WASM + OPFS), CLI tools, server processes. One portable `.db` file contains the complete agent state — memory, embeddings, audit history, policies, sync metadata.
+The entire agent runtime is a stack of SQLite extensions. Anything that can load a SQLite extension can host a Moneypenny agent: mobile apps (iOS, Android), desktop apps, IoT devices, browsers (via WASM + OPFS), CLI tools, server processes. One portable `.db` file contains the complete agent state — memory, embeddings, audit history, policies, sync metadata.
 
 ### Hybrid search with Reciprocal Rank Fusion
 
@@ -99,7 +102,7 @@ Memory retrieval combines vector similarity search with FTS5 full-text search, m
 
 ## What exists today
 
-AgentSQL is built on a mature extension ecosystem. These are not prototypes — they ship with cross-platform binaries, package manager distribution (npm, pip, pub, Maven, Swift PM), and test coverage:
+Moneypenny is built on a mature extension ecosystem. These are not prototypes — they ship with cross-platform binaries, package manager distribution (npm, pip, pub, Maven, Swift PM), and test coverage:
 
 | Component | Status | What it does |
 |---|---|---|
@@ -131,6 +134,4 @@ The hard infrastructure — the data layer — is done. What remains is the orch
 
 A world where AI agents are as reliable, auditable, and portable as the databases they run on. Where "works offline" isn't a footnote but the default. Where a team's collective knowledge lives in a synchronized, governed, encrypted data layer — not scattered across Markdown files and API call logs. Where you can embed a full-capability agent into a mobile app, a CLI tool, or a browser tab with a single SQLite file.
 
-AgentSQL: the agent that remembers everything, leaks nothing, and runs anywhere.
-
-**add my vision from other doc**
+Moneypenny: the agent that remembers everything, leaks nothing, and runs anywhere.

@@ -1,0 +1,16 @@
+[package]
+name = "mp"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "mp"
+path = "src/main.rs"
+
+[dependencies]
+mp-core.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

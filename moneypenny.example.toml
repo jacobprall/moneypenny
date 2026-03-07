@@ -1,0 +1,33 @@
+# Moneypenny configuration
+# Copy this to moneypenny.toml, or run `mp init` to generate one.
+
+data_dir = "./mp-data"
+
+[gateway]
+host = "127.0.0.1"
+port = 4820
+log_level = "info"
+
+[[agents]]
+name = "main"
+trust_level = "standard"
+
+[agents.llm]
+provider = "local"                    # "local" (GGUF via sqlite-ai) or "http" (OpenAI-compatible)
+# model = "qwen2.5-3b"               # local model name (downloaded on first use)
+# embedding_model = "nomic-embed-text"
+# api_base = "https://api.openai.com" # for http provider
+# api_key = ""                        # for http provider
+
+[channels]
+cli = true
+
+# [channels.http]
+# port = 4821
+
+# [channels.slack]
+# bot_token = "xoxb-..."
+# app_token = "xapp-..."
+
+# [channels.discord]
+# bot_token = "..."

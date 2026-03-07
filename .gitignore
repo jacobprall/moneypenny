@@ -1,0 +1,6 @@
+/target
+mp-data/
+moneypenny.toml
+*.db
+*.db-wal
+*.db-shm
