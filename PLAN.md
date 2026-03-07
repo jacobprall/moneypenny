@@ -78,10 +78,9 @@
 
 ## Milestone 7: Policy Engine
 
-- Oso crate integration (embedded Rust, deny-by-default)
-- SQL row → Polar rule compiler
+- Custom Rust rule engine (configurable allow/deny default)
+- Two-layer interface: SQL rows (static rules), behavioral rules (rate_limit, retry_loop, token_budget, time_window)
 - SQL filter generation (policy → WHERE clause for data queries)
-- Three-layer interface: SQL rows (simple), Polar files (complex), custom Rust types
 - Secret redaction (18 regex patterns, always-on, pre-storage)
 - Policy audit trail (`policy_audit` table)
 - Behavioral policies: rate limiting, retry loop detection, token budget enforcement

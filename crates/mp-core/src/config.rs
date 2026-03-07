@@ -38,8 +38,15 @@ pub struct AgentConfig {
     #[serde(default = "default_trust_level")]
     pub trust_level: String,
 
+    /// "allow" or "deny" — what happens when no policy rule matches.
+    #[serde(default = "default_policy_mode")]
+    pub policy_mode: String,
+
     #[serde(default)]
     pub llm: LlmConfig,
+
+    #[serde(default)]
+    pub embedding: EmbeddingConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,11 +58,33 @@ pub struct LlmConfig {
     pub model: Option<String>,
 
     #[serde(default)]
-    pub embedding_model: Option<String>,
+    pub api_base: Option<String>,
 
+    #[serde(default)]
+    pub api_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingConfig {
+    #[serde(default = "default_embedding_provider")]
+    pub provider: String,
+
+    #[serde(default = "default_embedding_model")]
+    pub model: String,
+
+    /// Path to a local model file (GGUF). Resolved relative to data_dir/models/ if not absolute.
+    #[serde(default)]
+    pub model_path: Option<String>,
+
+    /// Embedding vector dimensions. Used for pre-allocating storage.
+    #[serde(default = "default_embedding_dimensions")]
+    pub dimensions: usize,
+
+    /// For remote embedding providers (provider = "http").
     #[serde(default)]
     pub api_base: Option<String>,
 
+    /// For remote embedding providers.
     #[serde(default)]
     pub api_key: Option<String>,
 }
@@ -92,6 +121,15 @@ pub struct DiscordChannelConfig {
     pub bot_token: String,
 }
 
+impl AgentConfig {
+    pub fn policy_mode(&self) -> crate::policy::PolicyMode {
+        match self.policy_mode.as_str() {
+            "deny" => crate::policy::PolicyMode::DenyByDefault,
+            _ => crate::policy::PolicyMode::AllowByDefault,
+        }
+    }
+}
+
 impl Config {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
@@ -107,7 +145,9 @@ impl Config {
                 name: "main".to_string(),
                 persona: None,
                 trust_level: "standard".to_string(),
+                policy_mode: default_policy_mode(),
                 llm: LlmConfig::default(),
+                embedding: EmbeddingConfig::default(),
             }],
             channels: ChannelsConfig::default(),
         }
@@ -123,6 +163,22 @@ impl Config {
 
     pub fn metadata_db_path(&self) -> PathBuf {
         self.data_dir.join("metadata.db")
+    }
+
+    pub fn models_dir(&self) -> PathBuf {
+        self.data_dir.join("models")
+    }
+}
+
+impl EmbeddingConfig {
+    /// Resolve the model file path. If `model_path` is set, use it directly.
+    /// Otherwise, derive from the model name inside the given models directory.
+    pub fn resolve_model_path(&self, models_dir: &Path) -> PathBuf {
+        if let Some(p) = &self.model_path {
+            PathBuf::from(p)
+        } else {
+            models_dir.join(format!("{}.gguf", self.model))
+        }
     }
 }
 
@@ -141,7 +197,19 @@ impl Default for LlmConfig {
         Self {
             provider: default_provider(),
             model: None,
-            embedding_model: None,
+            api_base: None,
+            api_key: None,
+        }
+    }
+}
+
+impl Default for EmbeddingConfig {
+    fn default() -> Self {
+        Self {
+            provider: default_embedding_provider(),
+            model: default_embedding_model(),
+            model_path: None,
+            dimensions: default_embedding_dimensions(),
             api_base: None,
             api_key: None,
         }
@@ -184,7 +252,23 @@ fn default_trust_level() -> String {
 }
 
 fn default_provider() -> String {
+    "anthropic".to_string()
+}
+
+fn default_policy_mode() -> String {
+    "allow".to_string()
+}
+
+fn default_embedding_provider() -> String {
     "local".to_string()
+}
+
+fn default_embedding_model() -> String {
+    "nomic-embed-text-v1.5".to_string()
+}
+
+fn default_embedding_dimensions() -> usize {
+    768
 }
 
 fn default_true() -> bool {

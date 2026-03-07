@@ -1,143 +1,181 @@
 # Moneypenny
 
-**The autonomous AI agent where the database is the runtime.**
+**Enterprise-grade local-first AI agent platform.**
 
-Moneypenny is an open-source, local-first AI agent platform built on SQLite. Unlike conventional agent frameworks that bolt persistence onto an orchestration layer, Moneypenny inverts the stack: inference, memory, search, sync, policy, and tool execution all happen inside the same transactional boundary. The result is an agent that never forgets, never leaks, and works everywhere — including offline.
-
-#### focus less on tech, more on what it does, why, differentiation, value props. It's Enterprise-grade Local-first OpenClaw
----
-
-## Why another agent?
-
-Every major open-source agent today — OpenClaw, LangChain, CrewAI, AutoGen — follows the same pattern: a Node.js or Python orchestrator that calls LLM APIs, dispatches tools, and writes state to disconnected storage (files, Redis, Postgres, etc.). 
-
-This architecture has fundamental problems:
-
-- **No transactional guarantees.** If the agent crashes mid-task, you get orphaned state — partial memory writes, lost audit entries, half-executed tool chains.
-- **No governance.** Nothing prevents the agent from dropping a production table, leaking a secret into a transcript, or running the same destructive query in a retry loop.
-- **No permissions engine.** 
-- **Cloud-dependent.** Most agents require API keys for inference and embedding. No network, no agent.
-- **No built-in sync.** Each agent instance is an island. You can hack around this with git or shared databases, but there's no automatic, conflict-free knowledge propagation between agents.
-
-Moneypenny solves these by making the database the agent's runtime — not just its storage.
-
-
+Moneypenny is an open-source agent platform with state-of-the-art memory, context optimization, and retrieval — plus the enterprise features no other framework has: offline execution, ACID transactions, policy governance, secret redaction, encrypted storage, and selective multi-agent knowledge sync. All from a single portable file.
 
 ---
 
-## Architecture
+## The Problem
 
+Open-source AI agents today are built the same way: a Python or Node orchestrator calls cloud APIs, dispatches tools, and scatters state across files, Redis, and Postgres. This works for demos. It breaks for anything real.
+
+- **No crash recovery.** Agent dies mid-task and you get orphaned state, partial memory writes, and lost audit entries. No rollback.
+- **No secret redaction.** API keys, tokens, and credentials end up in transcripts and logs with nothing to stop them.
+- **No guardrails.** Nothing stands between the LLM and your infrastructure. One bad tool call drops a production table.
+- **No offline mode.** No network, no agent. Full stop.
+- **No knowledge sharing.** Each agent is an island. Syncing what they learn is your problem to solve.
+- **No context optimization.** Everything gets stuffed into the context window with no compression or prioritization.
+
+These characteristics make open-source agents unusable for anything an enterprise would trust.
+
+---
+
+## What Makes Moneypenny Different
+
+### Memory that compounds, not just persists
+
+Most agent memory is a flat append log — dump everything into context and hope the LLM sorts it out. Moneypenny's memory is structured, compressed, self-curating, and graph-linked.
+
+After every conversation turn, an async extraction pipeline distills new knowledge into curated facts — deciding what to **add**, **update**, **delete**, or **ignore** based on what the agent already knows. No manual saving. Facts evolve over time as they're validated across conversations. Confidence increases when the same fact is independently re-extracted; stale knowledge decays with configurable half-life.
+
+Every fact is stored at three compression levels: full detail, summary, and a 2–5 word pointer. The agent loads *all* its knowledge as pointers in every prompt — 500 facts cost ~2K tokens — then auto-expands the relevant ones and pulls full detail on demand. Conversations are incrementally summarized so long sessions stay sharp without blowing the context window.
+
+Facts link to related facts in a traversable graph. Ask "what do I know about ORDERS?" and the agent follows the edges — soft deletes, indexing strategies, migration history — without needing each fact to be independently retrieved.
+
+Retrieval combines vector similarity with full-text search via Reciprocal Rank Fusion — semantic meaning and exact tokens (error codes, function names, UUIDs) both work. Results are deduplicated across stores, diversity-ranked via MMR, and policy-filtered at the SQL level before they reach the LLM. Store weights shift automatically by intent: more facts for "what do I know about X," more knowledge for "how do I do X," more history for "when did we discuss X."
+
+The extraction model can be a small, cheap local model (3B parameters is sufficient) even when the conversational model is Claude or GPT-4. Memory management stays fast and nearly free.
+
+### Your data never leaves your machine
+
+Moneypenny runs full agent capabilities — inference, embeddings, memory, search — with zero network connectivity. Local models via GGUF. No cloud API required. No "degraded mode." Offline *is* the mode. Cloud is an optional upgrade, not a dependency.
+
+The default setup uses Anthropic for generation and local GGUF for embeddings — cloud intelligence with local privacy for all vector operations. Embeddings never leave your machine. Switch to fully local GGUF inference for zero-network operation.
+
+### Every action is governed
+
+A built-in policy engine evaluates every tool call, SQL query, memory write, fact extraction, and agent delegation before it executes. One universal model governs everything: `allow(actor, action, resource)`.
+
+**Static rules** block destructive operations, require WHERE clauses on DELETE, restrict tools by agent trust level, and scope access by channel. **Behavioral rules** go further: rate-limit shell access per time window, detect and break retry loops, enforce per-session token budgets, restrict operations to specific hours via cron.
+
+Eighteen regex patterns scrub secrets — API keys, JWTs, PEM keys, connection strings, database URIs — before anything touches disk. Always on. Not optional.
+
+Policy denials don't crash the agent — they're returned as context. The agent sees "destructive shell operations are blocked by policy" and adapts its approach. Stuck detection catches retry loops, error clusters, and context thrashing, injecting diagnostic prompts to break the cycle.
+
+Every decision is logged to a queryable audit trail. "Why was this tool call denied?" "How many policy violations this week?" "Which agent triggers the most audits?" All answerable with a SQL query.
+
+### Nothing is ever half-done
+
+When the agent processes a message, the entire operation — memory retrieval, policy check, tool execution, audit logging, embedding generation, secret redaction — happens inside a single ACID transaction. If anything fails, everything rolls back. No orphaned state. No partial writes. No lost audit entries.
+
+In local mode, the agent loop runs entirely inside SQLite — goal evaluation, tool selection, MCP execution, result processing — as a single transaction. In cloud mode, the Rust orchestrator wraps each turn in a transaction. Either way, crash mid-task means WAL rollback to the last consistent state.
+
+This guarantee is architecturally impossible in frameworks that bolt persistence onto an orchestrator.
+
+### Agents get smarter together
+
+Multiple agents share a synchronized knowledge mesh via conflict-free replication (CRDTs). Agent A discovers a pattern on one machine — that knowledge automatically propagates to Agent B on another. No central server. No cloud dependency. No manual sharing.
+
+Shared knowledge is scoped: facts start `private` by default, get promoted to `shared` when the extraction pipeline detects project-level knowledge, when multiple agents independently converge on the same fact, or when an admin promotes explicitly. `Protected` scope restricts to trusted agents. Scope is enforced at the SQL level — agents physically cannot query facts outside their authorization.
+
+Facts, knowledge, skills, policies, jobs, and job run history all sync. Conversation logs and scratch stay local. Governance rules propagate fleet-wide automatically.
+
+### Skills that learn and propagate
+
+Skills are more than static tool definitions. They're living capabilities with usage tracking, success rates, and automatic promotion. High-performing skills surface more readily in retrieval. Skills sync across agents — Agent A learns a new capability and every agent in the mesh inherits it.
+
+Agents discover tools by intent, not by static registration. Describe what you need and hybrid search surfaces relevant tools from any source — built-in, MCP-discovered, or user-defined JavaScript functions stored in the database. The agent works with an unbounded tool surface.
+
+### One file. Runs everywhere.
+
+The entire agent — memory, embeddings, policies, audit trail, sync metadata, skills, job schedules — lives in a single portable SQLite file. Anything that can open a SQLite database can host a Moneypenny agent: mobile apps, desktop apps, IoT devices, browsers (via WASM + OPFS), CLI tools, server processes.
+
+Back it up by copying a file. Inspect it with any SQLite client. Move it to another machine and it just works.
+
+### Encrypted at rest
+
+Every agent database is encrypted via SQLCipher. Keys are stored in your OS keychain (macOS Keychain, Linux kernel keyring, Windows Credential Manager) — never written to disk in plaintext. A lost device means zero leaked agent memory. Sync transport uses TLS; data at rest on each endpoint is encrypted independently.
+
+---
+
+## Quick Start
+
+```bash
+git clone --recurse-submodules https://github.com/jacobprall/moneypenny.git
+cd moneypenny && cargo build
+
+mp init       # creates config + downloads local embedding model
+mp start      # starts agent with CLI chat
+
+> hello
+> remember that our team standup is at 9:15am Pacific
+> what time is standup?
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  Channels (Slack, Discord, CLI, Web, Telegram, API, ...)        │
-│  Thin adapters — message in, response out                       │
-├─────────────────────────────────────────────────────────────────┤
-│  Orchestrator                                                   │
-│  Conversation management · Tool dispatch · Streaming            │
-│  Heartbeat scheduler · Session lifecycle                        │
-├─────────────────────────────────────────────────────────────────┤
-│  Moneypenny Core (SQLite + extensions)                           │
-│                                                                 │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────┐   │
-│  │sqlite-ai │ │sqlite-   │ │sqlite-   │ │sqlite-agent      │   │
-│  │          │ │vector    │ │memory    │ │                  │   │
-│  │ Inference│ │          │ │          │ │ Autonomous tool  │   │
-│  │ Embed    │ │ Vector   │ │ Hybrid   │ │ use via MCP      │   │
-│  │ Chat     │ │ search   │ │ search   │ │ Table extraction │   │
-│  │ Audio    │ │ SIMD     │ │ Chunking │ │ Auto-embeddings  │   │
-│  │ Vision   │ │ Quantize │ │ FTS5+vec │ │                  │   │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────────────┘   │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────┐   │
-│  │sqlite-js │ │sqlite-   │ │sqlite-   │ │Policy engine     │   │
-│  │          │ │sync      │ │rag       │ │                  │   │
-│  │ Custom   │ │          │ │          │ │ Audit trail      │   │
-│  │ JS funcs │ │ CRDTs    │ │ Hybrid   │ │ Secret redaction │   │
-│  │ in SQL   │ │ Offline  │ │ RRF      │ │ Rule enforcement │   │
-│  │          │ │ Multi-   │ │ Multi-   │ │ Query governance │   │
-│  │          │ │ device   │ │ format   │ │                  │   │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────────────┘   │
-│                                                                 │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ SQLite (single file, encrypted at rest)                  │   │
-│  │ Sessions · Messages · Memory · Embeddings · Policies     │   │
-│  │ Audit log · Contexts · Tool calls · Sync metadata        │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-```
 
-Everything below the orchestrator is **a single SQLite database** with loaded extensions. Everything above it is a thin message adapter. The orchestrator itself is a small loop: receive message → retrieve context → check policy → call LLM → dispatch tools → store results → respond. The intelligence lives in the data layer.
+Three commands to a working agent with persistent memory. No Docker. No database setup. Embeddings run locally out of the box.
 
 ---
 
-## Differentiators
+## How It Works
 
-### Everything is a transaction
+Moneypenny inverts the typical agent architecture. Instead of an orchestrator with persistence bolted on, the database *is* the runtime. Inference, memory, search, sync, policy, and tool execution all happen inside the same transactional boundary. The orchestrator is a thin loop on top.
 
-When a Moneypenny agent processes a message, the entire operation — memory retrieval, policy check, tool execution, audit logging, embedding generation, secret redaction — happens inside a single SQLite transaction. If anything fails, everything rolls back. No orphaned state. No partial writes. No lost audit entries.
+**Four memory stores, one search interface.** Curated facts, conversation history, ingested knowledge, and session scratch — all searchable through a single hybrid retrieval layer. Smart token budgeting dynamically allocates context across stores based on the query, the session depth, and what the agent is working on.
 
-No other agent framework can make this claim.
+**Tools from anywhere.** Built-in tools, MCP-discovered tools, and user-defined JavaScript functions all go through the same policy-governed lifecycle. JS tools persist in the database, survive restarts, and sync across agents.
 
-### Offline-first, for real
+**Multi-agent delegation.** Agents delegate tasks to each other through a governed internal channel. Policy controls who can delegate to whom, with depth limits to prevent infinite chains and token budgets to cap costs. The delegated agent processes the task through its own full loop — its own memory, tools, and policies — and returns results.
 
-Moneypenny runs full agent capabilities with zero network connectivity. Inference runs on-device via GGUF models through `sqlite-ai`. Embeddings are generated locally. Search is local. Memory is local. There is no degraded mode — offline *is* the mode. Network is an optimization, not a requirement.
+**Scheduled autonomy.** A SQLite-native job scheduler runs cron tasks, multi-step pipelines, prompted self-reflection, and custom JS functions — governed by the same policy engine as everything else. Jobs sync across agents: define once, propagate fleet-wide.
 
-### Governed by default
+**Channels.** Thin bidirectional adapters for CLI, HTTP API, Slack, Discord, and more. Channel-specific features (threads, reactions, file uploads, streaming) are progressive enhancements. The agent loop doesn't change regardless of where the message comes from.
 
-Every tool call passes through a configurable policy engine before execution. Block destructive SQL. Require WHERE clauses on DELETE. Log all DDL. Deny operations on production tables. Eighteen regex patterns scrub secrets (API keys, tokens, PEM keys, connection strings) before any data touches disk. A complete audit trail records every query, tool call, and policy decision.
-
-This is table stakes for enterprise use. No other open-source agent has it.
-
-### Multi-agent memory mesh
-
-`sqlite-sync` enables something no other agent platform offers: multiple agent instances sharing a synchronized memory database across devices, with offline-first CRDT conflict resolution. Agent A discovers a pattern on one machine. That knowledge propagates to Agent B on another machine — no central server, no cloud dependency, no manual sharing. Each agent gets smarter as the mesh grows.
-
-### Embeddable everywhere
-
-The entire agent runtime is a stack of SQLite extensions. Anything that can load a SQLite extension can host a Moneypenny agent: mobile apps (iOS, Android), desktop apps, IoT devices, browsers (via WASM + OPFS), CLI tools, server processes. One portable `.db` file contains the complete agent state — memory, embeddings, audit history, policies, sync metadata.
-
-### Hybrid search with Reciprocal Rank Fusion
-
-Memory retrieval combines vector similarity search with FTS5 full-text search, merged via Reciprocal Rank Fusion. Vector search handles semantic similarity ("find notes about deployment issues" matches "CI/CD pipeline failures"). Full-text search handles exact tokens (error codes, variable names, UUIDs). RRF merges both ranking signals without requiring score calibration.
+**Observable.** Prometheus-compatible metrics, structured JSON logging, health check endpoints, and the queryable audit trail. You can always answer: what is the agent doing, why did it do that, and is it healthy.
 
 ---
 
-## What exists today
+## Built On Battle-Tested Infrastructure
 
-Moneypenny is built on a mature extension ecosystem. These are not prototypes — they ship with cross-platform binaries, package manager distribution (npm, pip, pub, Maven, Swift PM), and test coverage:
+Moneypenny is assembled from a mature ecosystem of SQLite extensions that ship today with cross-platform binaries and package manager distribution:
 
-| Component | Status | What it does |
-|---|---|---|
-| `sqlite-ai` | Shipping | On-device inference, embeddings, chat, audio transcription, vision via GGUF |
-| `sqlite-vector` | Shipping | Vector search with SIMD, quantization, 6 distance metrics, 6 vector types |
-| `sqlite-memory` | Shipping | Persistent agent memory with hybrid search, markdown-aware chunking |
-| `sqlite-rag` | Shipping | Hybrid search engine with RRF, multi-format document processing |
-| `sqlite-sync` | Shipping | CRDT-based offline-first sync with row-level security |
-| `sqlite-agent` | Shipping | Autonomous agents inside SQLite with MCP tool integration |
-| `sqlite-js` | Shipping | User-defined JavaScript functions, aggregates, window functions |
-| `sqlite-wasm` | Shipping | Browser runtime with OPFS persistence |
-| Policy engine | In coco-db | Rule evaluation, audit, enforcement, secret redaction |
-
-## What needs to be built
-
-| Component | Description |
+| Component | What it does |
 |---|---|
-| Orchestrator | Thin agent loop: message → context → policy → LLM → tools → store → respond |
-| Channel adapters | Message ingress/egress for Slack, Discord, Telegram, CLI, Web, API |
-| Heartbeat scheduler | Autonomous task execution on configurable intervals |
-| Configuration system | Agent config as SQL tables, synced across devices via CRDTs |
-| Web UI | Conversation interface, memory browser, audit viewer, policy editor |
+| `sqlite-ai` | On-device LLM inference, embeddings, chat, audio, vision via GGUF |
+| `sqlite-vector` | Vector search with SIMD optimization, quantization, 6 distance metrics |
+| `sqlite-memory` | Persistent agent memory with hybrid search and markdown-aware chunking |
+| `sqlite-rag` | Hybrid search engine with RRF, multi-format document processing |
+| `sqlite-sync` | CRDT-based offline-first sync with row-level security |
+| `sqlite-agent` | Autonomous agent execution inside SQLite with MCP tool integration |
+| `sqlite-js` | User-defined JavaScript functions, aggregates, and window functions |
+| `sqlite-wasm` | Browser runtime with OPFS persistence |
 
-The hard infrastructure — the data layer — is done. What remains is the orchestration shell and channel adapters. These are the *easy* parts of an agent system.
+
+Everything compiles into a **single Rust binary** with all extensions statically linked. No runtime dependencies. No dynamic libraries. No downloads at runtime.
 
 ---
 
-## Vision
+## Why SQLite?
 
-A world where AI agents are as reliable, auditable, and portable as the databases they run on. Where "works offline" isn't a footnote but the default. Where a team's collective knowledge lives in a synchronized, governed, encrypted data layer — not scattered across Markdown files and API call logs. Where you can embed a full-capability agent into a mobile app, a CLI tool, or a browser tab with a single SQLite file.
+It's the only architecture that delivers all of these simultaneously:
 
-Moneypenny: the agent that remembers everything, leaks nothing, and runs anywhere.
+- **ACID transactions** across the full agent state (memory + tools + audit + policy)
+- **Zero infrastructure** — no Postgres, no Redis, no Docker, no cloud
+- **Single-file portability** — back up, move, inspect, embed
+- **Offline-first** — works identically with or without a network
+- **Embeddable** — runs inside any app on any platform
+- **Encrypted at rest** — opaque without the key
 
-#### focus less on tech, more on what it does, why, differentiation, value props. It's Enterprise-grade Local-first Agents, cheap, efficient, offline, shared, auditable, governed intelligence layer. it currently reads as a this is how i used sqlite to do these things. let's lead with the Differentiated Benefit: Differntiated Feature -> Differentiated capability. We cna reference its like OpenClaw, but... and then all the crazy things we've built.
+Every other agent framework requires you to *choose* between these properties. Moneypenny gets them for free from its foundation.
 
+---
 
-#### focus less on tech, more on what it does, why, differentiation, value props. It's Enterprise-grade Local-first Agents, cheap, efficient, offline, shared, auditable, governed intelligence layer. it currently reads as a this is how i used sqlite to do these things. let's lead with the Differentiated Benefit: Differntiated Feature -> Differentiated capability. We cna reference its like OpenClaw, but... and then all the crazy things we've built.
+## Documentation
+
+| Document | Description |
+|---|---|
+| [SPEC.md](./SPEC.md) | Full technical specification — architecture, schemas, algorithms |
+| [PLAN.md](./PLAN.md) | Implementation roadmap with milestones and dependency graph |
+| [TASKS.md](./TASKS.md) | Current development status and active work |
+
+---
+
+## Design Values
+
+- **Rock-solid.** ACID transactions. Deny-by-default policies. Secret redaction always on. Full audit trail. Crash recovery via WAL.
+- **Simple.** Few moving parts. Convention over configuration. Three commands to a working agent.
+- **Governed.** Every action is auditable. Every resource is policy-controlled. Every secret is redacted. Trust is earned through visibility.
+- **Seamless.** No seams between memory, search, policy, tools, and sync. Everything works together inside one transactional boundary.
+- **Observable.** Health checks, metrics, structured logs, audit trail. You can always answer: what happened and why.
+
+**Moneypenny: remembers everything, leaks nothing, runs anywhere.**

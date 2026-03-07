@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/mp", "crates/mp-core", "crates/mp-llm", "crates/mp-ext"]
+exclude = ["vendor"]
 resolver = "2"
 
 [workspace.package]

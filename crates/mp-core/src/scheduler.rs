@@ -585,7 +585,11 @@ mod tests {
     #[test]
     fn dispatch_denied_by_policy() {
         let conn = setup();
-        // No allow-all → deny-by-default
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, message, created_at)
+             VALUES ('deny-all', 'deny-all', 100, 'deny', '*', '*', '*', 'blocked', 1)",
+            [],
+        ).unwrap();
         let id = create_job(&conn, &NewJob { next_run_at: 500, ..sample_job() }).unwrap();
         let job = get_job(&conn, &id).unwrap().unwrap();
 

@@ -1,30 +1,63 @@
 pub mod types;
 pub mod provider;
+pub mod anthropic;
 pub mod http;
+pub mod local_embed;
 pub mod sqlite_ai;
 
-use provider::LlmProvider;
+use provider::{LlmProvider, EmbeddingProvider};
 
-/// Build an LlmProvider from configuration values.
+/// Build an LlmProvider for generation from configuration values.
 pub fn build_provider(
     provider_type: &str,
     api_base: Option<&str>,
     api_key: Option<&str>,
     model: Option<&str>,
-    embedding_model: Option<&str>,
 ) -> anyhow::Result<Box<dyn LlmProvider>> {
     match provider_type {
+        "anthropic" => Ok(Box::new(anthropic::AnthropicProvider::from_config(
+            api_base, api_key, model,
+        ))),
         "http" => Ok(Box::new(http::HttpProvider::from_config(
-            api_base, api_key, model, embedding_model,
+            api_base, api_key, model,
         ))),
         "local" => {
             let model_path = model
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|| std::path::PathBuf::from("models/default.gguf"));
-            let embed_path = embedding_model.map(std::path::PathBuf::from);
-            Ok(Box::new(sqlite_ai::SqliteAiProvider::new(model_path, embed_path)))
+            Ok(Box::new(sqlite_ai::SqliteAiProvider::new(model_path, None)))
         }
-        other => anyhow::bail!("Unknown LLM provider: {other}. Use 'http' or 'local'."),
+        other => anyhow::bail!("Unknown LLM provider: {other}. Use 'anthropic', 'http', or 'local'."),
+    }
+}
+
+/// Build an EmbeddingProvider from configuration values.
+///
+/// Defaults to local GGUF inference with nomic-embed-text-v1.5.
+/// Falls back to HTTP for remote embedding APIs (OpenAI-compatible).
+pub fn build_embedding_provider(
+    provider_type: &str,
+    model_name: &str,
+    model_path: &std::path::Path,
+    dimensions: usize,
+    api_base: Option<&str>,
+    api_key: Option<&str>,
+) -> anyhow::Result<Box<dyn EmbeddingProvider>> {
+    match provider_type {
+        "local" => Ok(Box::new(local_embed::LocalEmbeddingProvider::new(
+            model_path.to_path_buf(),
+            model_name.to_string(),
+            dimensions,
+        ))),
+        "http" => Ok(Box::new(local_embed::HttpEmbeddingProvider::new(
+            api_base.unwrap_or("https://api.openai.com/v1"),
+            api_key.map(String::from),
+            model_name,
+            dimensions,
+        ))),
+        other => anyhow::bail!(
+            "Unknown embedding provider: {other}. Use 'local' or 'http'."
+        ),
     }
 }
 
@@ -130,8 +163,15 @@ mod tests {
     }
 
     #[test]
+    fn anthropic_provider_metadata() {
+        let p = anthropic::AnthropicProvider::from_config(None, None, None);
+        assert_eq!(p.name(), "anthropic");
+        assert!(p.supports_streaming());
+    }
+
+    #[test]
     fn http_provider_metadata() {
-        let p = http::HttpProvider::from_config(None, None, None, None);
+        let p = http::HttpProvider::from_config(None, None, None);
         assert_eq!(p.name(), "http");
         assert!(p.supports_streaming());
     }
@@ -148,22 +188,40 @@ mod tests {
     // ========================================================================
 
     #[test]
+    fn build_anthropic_provider() {
+        let p = build_provider("anthropic", None, None, None).unwrap();
+        assert_eq!(p.name(), "anthropic");
+        assert!(p.supports_streaming());
+    }
+
+    #[test]
+    fn build_anthropic_with_custom_config() {
+        let p = build_provider(
+            "anthropic",
+            Some("https://api.anthropic.com"),
+            Some("sk-ant-test"),
+            Some("claude-sonnet-4-20250514"),
+        ).unwrap();
+        assert_eq!(p.name(), "anthropic");
+    }
+
+    #[test]
     fn build_http_provider() {
-        let p = build_provider("http", None, None, None, None).unwrap();
+        let p = build_provider("http", None, None, None).unwrap();
         assert_eq!(p.name(), "http");
         assert!(p.supports_streaming());
     }
 
     #[test]
     fn build_local_provider() {
-        let p = build_provider("local", None, None, None, None).unwrap();
+        let p = build_provider("local", None, None, None).unwrap();
         assert_eq!(p.name(), "sqlite-ai");
         assert!(!p.supports_streaming());
     }
 
     #[test]
     fn build_unknown_provider_fails() {
-        let result = build_provider("magic", None, None, None, None);
+        let result = build_provider("magic", None, None, None);
         match result {
             Ok(_) => panic!("expected error for unknown provider"),
             Err(e) => assert!(e.to_string().contains("Unknown LLM provider: magic")),
@@ -177,9 +235,60 @@ mod tests {
             Some("http://localhost:11434/v1"),
             Some("sk-test"),
             Some("llama3"),
-            Some("nomic-embed"),
         ).unwrap();
         assert_eq!(p.name(), "http");
+    }
+
+    // ========================================================================
+    // Embedding provider factory tests
+    // ========================================================================
+
+    #[test]
+    fn embedding_trait_is_object_safe() {
+        fn _accepts_boxed(_p: Box<dyn provider::EmbeddingProvider>) {}
+    }
+
+    #[test]
+    fn build_local_embedding_provider() {
+        let p = build_embedding_provider(
+            "local", "nomic-embed-text-v1.5",
+            std::path::Path::new("/tmp/models/nomic.gguf"),
+            768, None, None,
+        ).unwrap();
+        assert_eq!(p.name(), "local");
+        assert_eq!(p.dimensions(), 768);
+    }
+
+    #[test]
+    fn build_http_embedding_provider() {
+        let p = build_embedding_provider(
+            "http", "text-embedding-3-small",
+            std::path::Path::new(""),
+            1536, Some("https://api.openai.com/v1"), Some("sk-test"),
+        ).unwrap();
+        assert_eq!(p.name(), "http");
+        assert_eq!(p.dimensions(), 1536);
+    }
+
+    #[test]
+    fn build_unknown_embedding_provider_fails() {
+        let result = build_embedding_provider(
+            "magic", "model", std::path::Path::new(""), 768, None, None,
+        );
+        match result {
+            Ok(_) => panic!("expected error for unknown embedding provider"),
+            Err(e) => assert!(e.to_string().contains("Unknown embedding provider")),
+        }
+    }
+
+    #[tokio::test]
+    async fn local_embedding_returns_stub_error() {
+        let p = local_embed::LocalEmbeddingProvider::new(
+            "/tmp/model.gguf".into(), "nomic-embed-text-v1.5".into(), 768,
+        );
+        let result = p.embed("hello").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("sqlite-ai extension"));
     }
 
     // ========================================================================
@@ -331,5 +440,239 @@ mod tests {
         let raw = serde_json::json!({ "choices": [] });
         let result = http::tests::try_parse_response_test(raw);
         assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // Anthropic provider: request building
+    // ========================================================================
+
+    #[test]
+    fn anthropic_request_basic() {
+        let body = anthropic::tests::build_request_test(
+            "claude-sonnet-4-20250514",
+            &[Message::system("You are helpful"), Message::user("Hi")],
+            &[],
+            &GenerateConfig { max_tokens: Some(1024), temperature: Some(0.5), stop: vec![] },
+            false,
+        );
+        assert_eq!(body["model"], "claude-sonnet-4-20250514");
+        assert_eq!(body["max_tokens"], 1024);
+        assert_eq!(body["system"], "You are helpful");
+        assert_eq!(body["temperature"], 0.5);
+        assert!(body.get("stream").is_none());
+
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["role"], "user");
+        assert_eq!(msgs[0]["content"], "Hi");
+    }
+
+    #[test]
+    fn anthropic_request_system_not_in_messages() {
+        let body = anthropic::tests::build_request_test(
+            "claude-sonnet-4-20250514",
+            &[Message::system("Be concise"), Message::system("No emojis"), Message::user("Hello")],
+            &[],
+            &GenerateConfig::default(),
+            false,
+        );
+        assert_eq!(body["system"], "Be concise\n\nNo emojis");
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert!(msgs.iter().all(|m| m["role"] != "system"));
+    }
+
+    #[test]
+    fn anthropic_request_max_tokens_default() {
+        let body = anthropic::tests::build_request_test(
+            "claude-sonnet-4-20250514",
+            &[Message::user("Hi")],
+            &[],
+            &GenerateConfig::default(),
+            false,
+        );
+        assert_eq!(body["max_tokens"], 8192);
+    }
+
+    #[test]
+    fn anthropic_request_with_tools() {
+        let tools = vec![ToolDef {
+            name: "get_weather".into(),
+            description: "Get weather".into(),
+            parameters: serde_json::json!({"type": "object", "properties": {"city": {"type": "string"}}}),
+        }];
+        let body = anthropic::tests::build_request_test(
+            "claude-sonnet-4-20250514",
+            &[Message::user("weather?")],
+            &tools,
+            &GenerateConfig::default(),
+            false,
+        );
+        let api_tools = body["tools"].as_array().unwrap();
+        assert_eq!(api_tools.len(), 1);
+        assert_eq!(api_tools[0]["name"], "get_weather");
+        assert_eq!(api_tools[0]["input_schema"]["type"], "object");
+        assert!(api_tools[0].get("type").is_none());
+    }
+
+    #[test]
+    fn anthropic_request_streaming() {
+        let body = anthropic::tests::build_request_test(
+            "claude-sonnet-4-20250514",
+            &[Message::user("Hi")],
+            &[],
+            &GenerateConfig::default(),
+            true,
+        );
+        assert_eq!(body["stream"], true);
+    }
+
+    #[test]
+    fn anthropic_request_tool_results_as_user_message() {
+        let body = anthropic::tests::build_request_test(
+            "claude-sonnet-4-20250514",
+            &[
+                Message::user("What's the weather?"),
+                Message::assistant_with_tool_calls(None, vec![ToolCall {
+                    id: "toolu_1".into(),
+                    name: "get_weather".into(),
+                    arguments: r#"{"city":"SF"}"#.into(),
+                }]),
+                Message::tool("72F and sunny", "toolu_1"),
+            ],
+            &[],
+            &GenerateConfig::default(),
+            false,
+        );
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 3);
+
+        // Assistant message has tool_use content block
+        let asst = &msgs[1];
+        assert_eq!(asst["role"], "assistant");
+        let content = asst["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "tool_use");
+        assert_eq!(content[0]["name"], "get_weather");
+        assert_eq!(content[0]["input"]["city"], "SF");
+
+        // Tool result is in a user message
+        let tool_msg = &msgs[2];
+        assert_eq!(tool_msg["role"], "user");
+        let tool_content = tool_msg["content"].as_array().unwrap();
+        assert_eq!(tool_content[0]["type"], "tool_result");
+        assert_eq!(tool_content[0]["tool_use_id"], "toolu_1");
+        assert_eq!(tool_content[0]["content"], "72F and sunny");
+    }
+
+    #[test]
+    fn anthropic_request_multiple_tool_results_merged() {
+        let body = anthropic::tests::build_request_test(
+            "claude-sonnet-4-20250514",
+            &[
+                Message::user("weather in SF and NYC?"),
+                Message::assistant_with_tool_calls(None, vec![
+                    ToolCall { id: "t1".into(), name: "get_weather".into(), arguments: r#"{"city":"SF"}"#.into() },
+                    ToolCall { id: "t2".into(), name: "get_weather".into(), arguments: r#"{"city":"NYC"}"#.into() },
+                ]),
+                Message::tool("72F", "t1"),
+                Message::tool("55F", "t2"),
+            ],
+            &[],
+            &GenerateConfig::default(),
+            false,
+        );
+        let msgs = body["messages"].as_array().unwrap();
+        // user, assistant, user (merged tool results) = 3 messages, not 4
+        assert_eq!(msgs.len(), 3);
+        let tool_msg = &msgs[2];
+        let tool_content = tool_msg["content"].as_array().unwrap();
+        assert_eq!(tool_content.len(), 2);
+        assert_eq!(tool_content[0]["tool_use_id"], "t1");
+        assert_eq!(tool_content[1]["tool_use_id"], "t2");
+    }
+
+    // ========================================================================
+    // Anthropic provider: response parsing
+    // ========================================================================
+
+    #[test]
+    fn anthropic_parse_text_response() {
+        let raw = serde_json::json!({
+            "content": [{"type": "text", "text": "Hello! How can I help?"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 8}
+        });
+        let resp = anthropic::tests::parse_response_test(raw);
+        assert_eq!(resp.content.as_deref(), Some("Hello! How can I help?"));
+        assert!(resp.tool_calls.is_empty());
+        assert_eq!(resp.usage.prompt_tokens, 10);
+        assert_eq!(resp.usage.completion_tokens, 8);
+        assert_eq!(resp.usage.total_tokens, 18);
+    }
+
+    #[test]
+    fn anthropic_parse_tool_use_response() {
+        let raw = serde_json::json!({
+            "content": [
+                {"type": "tool_use", "id": "toolu_abc", "name": "get_weather", "input": {"city": "SF"}}
+            ],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 15, "output_tokens": 20}
+        });
+        let resp = anthropic::tests::parse_response_test(raw);
+        assert!(resp.content.is_none());
+        assert_eq!(resp.tool_calls.len(), 1);
+        assert_eq!(resp.tool_calls[0].id, "toolu_abc");
+        assert_eq!(resp.tool_calls[0].name, "get_weather");
+        let args: serde_json::Value = serde_json::from_str(&resp.tool_calls[0].arguments).unwrap();
+        assert_eq!(args["city"], "SF");
+    }
+
+    #[test]
+    fn anthropic_parse_mixed_response() {
+        let raw = serde_json::json!({
+            "content": [
+                {"type": "text", "text": "Let me check the weather."},
+                {"type": "tool_use", "id": "toolu_1", "name": "get_weather", "input": {"city": "SF"}}
+            ],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 20, "output_tokens": 30}
+        });
+        let resp = anthropic::tests::parse_response_test(raw);
+        assert_eq!(resp.content.as_deref(), Some("Let me check the weather."));
+        assert_eq!(resp.tool_calls.len(), 1);
+        assert_eq!(resp.tool_calls[0].name, "get_weather");
+    }
+
+    #[test]
+    fn anthropic_parse_no_usage() {
+        let raw = serde_json::json!({
+            "content": [{"type": "text", "text": "ok"}],
+            "stop_reason": "end_turn"
+        });
+        let resp = anthropic::tests::parse_response_test(raw);
+        assert_eq!(resp.content.as_deref(), Some("ok"));
+        assert_eq!(resp.usage.total_tokens, 0);
+    }
+
+    #[test]
+    fn anthropic_parse_empty_content() {
+        let raw = serde_json::json!({
+            "content": [],
+            "stop_reason": "end_turn"
+        });
+        let result = anthropic::tests::try_parse_response_test(raw);
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert!(resp.content.is_none());
+        assert!(resp.tool_calls.is_empty());
+    }
+
+    #[tokio::test]
+    async fn anthropic_embed_returns_unsupported_error() {
+        let p = anthropic::AnthropicProvider::from_config(None, None, None);
+        let result = p.embed("hello").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("does not provide an embeddings API"));
     }
 }

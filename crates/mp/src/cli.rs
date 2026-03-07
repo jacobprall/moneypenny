@@ -97,6 +97,14 @@ pub enum Command {
 
     /// Show system health
     Health,
+
+    /// Internal: run as an agent worker process (used by `mp start`)
+    #[command(hide = true)]
+    Worker {
+        /// Agent name this worker serves
+        #[arg(long)]
+        agent: String,
+    },
 }
 
 // -- Agent subcommands --

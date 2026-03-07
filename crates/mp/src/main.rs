@@ -4,6 +4,8 @@ use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Command};
 use mp_core::config::Config;
+use mp_llm::provider::LlmProvider;
+use std::io::Write;
 use std::path::Path;
 use tracing_subscriber::{EnvFilter, fmt};
 
@@ -43,6 +45,7 @@ async fn main() -> Result<()> {
         Command::Sync(cmd) => cmd_sync(&config, cmd).await,
         Command::Db(cmd) => cmd_db(&config, cmd).await,
         Command::Health => cmd_health(&config).await,
+        Command::Worker { agent } => cmd_worker(&config, &agent).await,
     }
 }
 
@@ -72,6 +75,335 @@ fn open_agent_db(config: &Config, agent_name: &str) -> Result<rusqlite::Connecti
     Ok(conn)
 }
 
+fn build_provider(agent: &mp_core::config::AgentConfig) -> Result<Box<dyn LlmProvider>> {
+    mp_llm::build_provider(
+        &agent.llm.provider,
+        agent.llm.api_base.as_deref(),
+        agent.llm.api_key.as_deref(),
+        agent.llm.model.as_deref(),
+    )
+}
+
+fn build_embedding_provider(
+    config: &Config,
+    agent: &mp_core::config::AgentConfig,
+) -> Result<Box<dyn mp_llm::provider::EmbeddingProvider>> {
+    let model_path = agent.embedding.resolve_model_path(&config.models_dir());
+    mp_llm::build_embedding_provider(
+        &agent.embedding.provider,
+        &agent.embedding.model,
+        &model_path,
+        agent.embedding.dimensions,
+        agent.embedding.api_base.as_deref(),
+        agent.embedding.api_key.as_deref(),
+    )
+}
+
+fn build_llm_tools() -> Vec<mp_llm::types::ToolDef> {
+    vec![
+        mp_llm::types::ToolDef {
+            name: "memory_search".into(),
+            description: "Search the agent's memory across facts, conversation history, and knowledge base.".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Natural language search query" },
+                    "limit": { "type": "integer", "description": "Max results", "default": 10 }
+                },
+                "required": ["query"]
+            }),
+        },
+        mp_llm::types::ToolDef {
+            name: "fact_add".into(),
+            description: "Store a new fact in long-term memory. Use when the user tells you something important to remember.".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "content": { "type": "string", "description": "The full fact text" },
+                    "summary": { "type": "string", "description": "A shorter version for quick scanning" },
+                    "pointer": { "type": "string", "description": "A one-line label (2-5 words)" },
+                    "keywords": { "type": "string", "description": "Space-separated keywords for search" },
+                    "confidence": { "type": "number", "description": "Confidence 0.0-1.0", "default": 1.0 }
+                },
+                "required": ["content"]
+            }),
+        },
+        mp_llm::types::ToolDef {
+            name: "fact_update".into(),
+            description: "Update an existing fact when information has changed or been refined.".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "The fact ID" },
+                    "content": { "type": "string", "description": "Updated fact text" },
+                    "summary": { "type": "string", "description": "Updated short summary" },
+                    "pointer": { "type": "string", "description": "Updated one-line label" }
+                },
+                "required": ["id", "content"]
+            }),
+        },
+        mp_llm::types::ToolDef {
+            name: "fact_list".into(),
+            description: "List all active facts in memory for review or audit.".into(),
+            parameters: serde_json::json!({ "type": "object", "properties": {} }),
+        },
+        mp_llm::types::ToolDef {
+            name: "scratch_set".into(),
+            description: "Save a value to session working memory for intermediate results and plans. Ephemeral — only lasts this session.".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "key": { "type": "string", "description": "Short label (e.g. 'plan', 'findings')" },
+                    "content": { "type": "string", "description": "The value to store" }
+                },
+                "required": ["key", "content"]
+            }),
+        },
+        mp_llm::types::ToolDef {
+            name: "scratch_get".into(),
+            description: "Retrieve a value from session working memory.".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "key": { "type": "string", "description": "The key to look up" }
+                },
+                "required": ["key"]
+            }),
+        },
+        mp_llm::types::ToolDef {
+            name: "knowledge_ingest".into(),
+            description: "Ingest a document into the knowledge base. Automatically chunks and indexes for search.".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "content": { "type": "string", "description": "Full document text (markdown supported)" },
+                    "title": { "type": "string", "description": "Document title" },
+                    "path": { "type": "string", "description": "Source file path" }
+                },
+                "required": ["content"]
+            }),
+        },
+        mp_llm::types::ToolDef {
+            name: "knowledge_list".into(),
+            description: "List all documents in the knowledge base.".into(),
+            parameters: serde_json::json!({ "type": "object", "properties": {} }),
+        },
+        mp_llm::types::ToolDef {
+            name: "job_create".into(),
+            description: "Schedule a recurring task with a cron expression.".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Human-readable job name" },
+                    "schedule": { "type": "string", "description": "Cron expression (e.g. '0 9 * * *' for daily at 9am)" },
+                    "job_type": { "type": "string", "enum": ["prompt", "tool", "js", "pipeline"], "default": "prompt" },
+                    "payload": { "type": "string", "description": "JSON payload", "default": "{}" },
+                    "description": { "type": "string", "description": "What this job does" }
+                },
+                "required": ["name", "schedule"]
+            }),
+        },
+        mp_llm::types::ToolDef {
+            name: "job_list".into(),
+            description: "List all scheduled jobs and their status.".into(),
+            parameters: serde_json::json!({ "type": "object", "properties": {} }),
+        },
+        mp_llm::types::ToolDef {
+            name: "file_read".into(),
+            description: "Read contents of a file from the filesystem.".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "File path to read" }
+                },
+                "required": ["path"]
+            }),
+        },
+        mp_llm::types::ToolDef {
+            name: "shell_exec".into(),
+            description: "Execute a shell command and return output.".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "command": { "type": "string", "description": "Shell command to execute" },
+                    "timeout_ms": { "type": "integer", "description": "Timeout in milliseconds", "default": 30000 }
+                },
+                "required": ["command"]
+            }),
+        },
+    ]
+}
+
+async fn agent_turn(
+    conn: &rusqlite::Connection,
+    provider: &dyn LlmProvider,
+    agent_id: &str,
+    session_id: &str,
+    persona: Option<&str>,
+    user_message: &str,
+    policy_mode: mp_core::policy::PolicyMode,
+) -> Result<String> {
+    mp_core::store::log::append_message(conn, session_id, "user", user_message)?;
+
+    let budget = mp_core::context::TokenBudget::new(128_000);
+    let segments = mp_core::context::assemble(
+        conn, agent_id, session_id, persona, user_message, &budget, None,
+    )?;
+
+    let mut messages: Vec<mp_llm::types::Message> = Vec::new();
+    for seg in &segments {
+        match seg.label {
+            "current_message" => messages.push(mp_llm::types::Message::user(&seg.content)),
+            _ => messages.push(mp_llm::types::Message::system(&seg.content)),
+        }
+    }
+
+    let msg_policy = mp_core::policy::PolicyRequest {
+        actor: agent_id,
+        action: "respond",
+        resource: "conversation",
+        sql_content: Some(user_message),
+        channel: None,
+    };
+    let decision = mp_core::policy::evaluate_with_mode(conn, &msg_policy, policy_mode)?;
+    if matches!(decision.effect, mp_core::policy::Effect::Deny) {
+        let denial = format!(
+            "I'm unable to respond to that: {}",
+            decision.reason.as_deref().unwrap_or("blocked by policy")
+        );
+        mp_core::store::log::append_message(conn, session_id, "assistant", &denial)?;
+        return Ok(denial);
+    }
+
+    let tools = build_llm_tools();
+    let config = mp_llm::types::GenerateConfig::default();
+    let max_rounds = 10;
+
+    for _ in 0..max_rounds {
+        let response = provider.generate(&messages, &tools, &config).await?;
+
+        if response.tool_calls.is_empty() {
+            let text = response.content.unwrap_or_default();
+            let redacted = mp_core::store::redact::redact(&text);
+            mp_core::store::log::append_message(conn, session_id, "assistant", &redacted)?;
+            return Ok(redacted);
+        }
+
+        messages.push(mp_llm::types::Message::assistant_with_tool_calls(
+            response.content.clone(),
+            response.tool_calls.iter().map(|tc| mp_llm::types::ToolCall {
+                id: tc.id.clone(),
+                name: tc.name.clone(),
+                arguments: tc.arguments.clone(),
+            }).collect(),
+        ));
+
+        for tc in &response.tool_calls {
+            let msg_id = mp_core::store::log::append_message(
+                conn, session_id, "assistant",
+                &format!("[tool: {}]", tc.name),
+            )?;
+
+            let result = mp_core::tools::registry::execute(
+                conn, agent_id, session_id, &msg_id,
+                &tc.name, &tc.arguments,
+                &|name, args| mp_core::tools::builtins::dispatch(name, args),
+            )?;
+
+            tracing::info!(tool = %tc.name, success = result.success, "tool call");
+            messages.push(mp_llm::types::Message::tool(&result.output, &tc.id));
+        }
+    }
+
+    let fallback = "I was unable to complete the response after multiple tool call rounds.";
+    mp_core::store::log::append_message(conn, session_id, "assistant", fallback)?;
+    Ok(fallback.into())
+}
+
+// =========================================================================
+// Extraction — the agent's learning brain
+// =========================================================================
+
+const EXTRACTION_PROMPT: &str = "\
+You are a fact extraction system for an AI agent's long-term memory. \
+Analyze the conversation below and extract durable facts worth remembering across sessions.
+
+Rules:
+- Extract ONLY facts that are worth remembering in future conversations.
+- Each fact must be a self-contained statement — not a sentence fragment.
+- Include actionable details (column names, exact values, specific conventions).
+- Do NOT extract greetings, pleasantries, or meta-conversation.
+- Do NOT extract facts that are already in the existing facts list.
+- If nothing is worth extracting, output an empty JSON array: []
+
+Output a JSON array (no markdown fences, no explanation) where each element has:
+  {\"content\": \"full fact text\", \"summary\": \"shorter version\", \
+\"pointer\": \"2-5 word label\", \"keywords\": \"space separated terms\", \
+\"confidence\": 0.0 to 1.0}";
+
+async fn extract_facts(
+    conn: &rusqlite::Connection,
+    provider: &dyn LlmProvider,
+    agent_id: &str,
+    session_id: &str,
+) -> Result<usize> {
+    let recent = mp_core::store::log::get_recent_messages(conn, session_id, 6)?;
+    if recent.is_empty() {
+        return Ok(0);
+    }
+
+    let new_messages: Vec<String> = recent.iter()
+        .map(|m| format!("{}: {}", m.role, m.content))
+        .collect();
+
+    let extraction_ctx = mp_core::extraction::assemble_extraction_context(
+        conn, agent_id, session_id, &new_messages, 30,
+    )?;
+
+    let messages = vec![
+        mp_llm::types::Message::system(EXTRACTION_PROMPT),
+        mp_llm::types::Message::user(&extraction_ctx),
+    ];
+
+    let config = mp_llm::types::GenerateConfig {
+        temperature: Some(0.2),
+        max_tokens: Some(2000),
+        stop: Vec::new(),
+    };
+
+    let response = provider.generate(&messages, &[], &config).await?;
+    let text = response.content.unwrap_or_default();
+
+    let json_text = text.trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+
+    let candidates = match mp_core::extraction::parse_candidates(json_text) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("extraction parse failed: {e}");
+            return Ok(0);
+        }
+    };
+
+    if candidates.is_empty() {
+        return Ok(0);
+    }
+
+    let last_msg_id = recent.last().map(|m| m.id.as_str());
+    let outcomes = mp_core::extraction::run_pipeline(
+        conn, agent_id, session_id, &candidates, last_msg_id,
+    )?;
+
+    let extracted = outcomes.iter().filter(|o| o.policy_allowed).count();
+    if extracted > 0 {
+        tracing::info!(count = extracted, "facts extracted");
+    }
+    Ok(extracted)
+}
+
 // =========================================================================
 // Init
 // =========================================================================
@@ -87,6 +419,7 @@ async fn cmd_init(config_path: &str) -> Result<()> {
 
     std::fs::write(path, &toml_str)?;
     std::fs::create_dir_all(&config.data_dir)?;
+    std::fs::create_dir_all(config.models_dir())?;
 
     let meta_path = config.metadata_db_path();
     let meta_conn = mp_core::db::open(&meta_path)?;
@@ -123,8 +456,16 @@ async fn cmd_init(config_path: &str) -> Result<()> {
     println!();
     println!("  \u{2713} Created {config_path}");
     println!("  \u{2713} Created data directory");
+    println!("  \u{2713} Created models directory");
     for agent in &config.agents {
         println!("  \u{2713} Initialized agent \"{}\"", agent.name);
+        println!("      LLM:       {} ({})",
+            agent.llm.provider,
+            agent.llm.model.as_deref().unwrap_or("default"));
+        println!("      Embedding: {} ({}, {}D)",
+            agent.embedding.provider,
+            agent.embedding.model,
+            agent.embedding.dimensions);
     }
     println!();
     println!("  Ready. Run `mp start` to begin.");
@@ -141,20 +482,264 @@ async fn cmd_start(config: &Config) -> Result<()> {
     println!();
     println!("  Moneypenny v{}", env!("CARGO_PKG_VERSION"));
     println!();
-    println!("  Starting gateway on {}:{}", config.gateway.host, config.gateway.port);
+
+    let shutdown = tokio::sync::broadcast::channel::<()>(1).0;
+
+    // Spawn one worker subprocess per agent
+    let mut workers: Vec<WorkerHandle> = Vec::new();
     for agent in &config.agents {
-        println!("  Starting agent \"{}\"...", agent.name);
+        let handle = spawn_worker(config, &agent.name)?;
+        println!("  Worker \"{}\" started (pid {})", agent.name, handle.pid);
+        workers.push(handle);
     }
+
+    // Spawn the scheduler loop
+    let sched_config = config.clone();
+    let mut sched_shutdown = shutdown.subscribe();
+    let scheduler_handle = tokio::spawn(async move {
+        run_scheduler(&sched_config, &mut sched_shutdown).await
+    });
+
     println!();
-    println!("  [Gateway loop not yet implemented — requires M13]");
+    println!("  Gateway ready. {} agent(s) running.", config.agents.len());
+    println!("  Press Ctrl-C to shut down.");
     println!();
+
+    // If CLI channel is enabled, run interactive chat on the default agent
+    if config.channels.cli {
+        let default_agent = config.agents.first()
+            .map(|a| a.name.clone())
+            .unwrap_or_else(|| "main".into());
+        let ag = resolve_agent(config, Some(&default_agent))?;
+        let conn = open_agent_db(config, &ag.name)?;
+        let provider = build_provider(ag)?;
+        let sid = mp_core::store::log::create_session(&conn, &ag.name, Some("cli"))?;
+
+        println!("  CLI channel active — agent: {}", ag.name);
+        println!("  Type /help for commands, Ctrl-C to shut down.");
+        println!();
+
+        let stdin = std::io::stdin();
+        let mut shutdown_rx = shutdown.subscribe();
+
+        loop {
+            print!("  > ");
+            std::io::stdout().flush()?;
+
+            let mut line = String::new();
+            let read = tokio::select! {
+                r = tokio::task::spawn_blocking({
+                    let stdin_lock = stdin.lock();
+                    drop(stdin_lock);
+                    let line_ref = &mut line as *mut String;
+                    move || unsafe { (*line_ref).clear(); std::io::stdin().read_line(&mut *line_ref) }
+                }) => r??,
+                _ = shutdown_rx.recv() => break,
+            };
+
+            if read == 0 { break; }
+            let trimmed = line.trim();
+            if trimmed.is_empty() { continue; }
+            if trimmed == "/quit" || trimmed == "/exit" { break; }
+
+            if trimmed == "/help" {
+                println!("  /facts    — list stored facts");
+                println!("  /scratch  — list scratch entries");
+                println!("  /quit     — exit");
+                println!();
+                continue;
+            }
+            if trimmed == "/facts" {
+                let facts = mp_core::store::facts::list_active(&conn, &ag.name)?;
+                if facts.is_empty() {
+                    println!("  No facts stored.");
+                } else {
+                    for f in &facts { println!("  [{:.1}] {}", f.confidence, f.pointer); }
+                }
+                println!();
+                continue;
+            }
+
+            match agent_turn(&conn, provider.as_ref(), &ag.name, &sid, ag.persona.as_deref(), trimmed, ag.policy_mode()).await {
+                Ok(response) => {
+                    println!();
+                    for l in response.lines() { println!("  {l}"); }
+                    println!();
+                    if let Ok(n) = extract_facts(&conn, provider.as_ref(), &ag.name, &sid).await {
+                        if n > 0 { println!("  ({n} fact{} learned)\n", if n == 1 { "" } else { "s" }); }
+                    }
+                }
+                Err(e) => { eprintln!("  Error: {e}\n"); }
+            }
+        }
+    } else {
+        // No CLI channel — just wait for Ctrl-C
+        tokio::signal::ctrl_c().await?;
+    }
+
+    // Graceful shutdown
+    println!("\n  Shutting down...");
+    let _ = shutdown.send(());
+    scheduler_handle.abort();
+
+    for mut w in workers {
+        w.shutdown();
+    }
+
+    println!("  Goodbye.");
     Ok(())
 }
 
 async fn cmd_stop(_config: &Config) -> Result<()> {
     println!("  Sending shutdown signal...");
-    println!("  [not yet implemented]");
+    println!("  (In production, this would signal the running gateway via PID file or socket.)");
     Ok(())
+}
+
+// =========================================================================
+// Worker subprocess
+// =========================================================================
+
+struct WorkerHandle {
+    pid: u32,
+    child: std::process::Child,
+    agent_name: String,
+}
+
+impl WorkerHandle {
+    fn shutdown(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        tracing::info!(agent = %self.agent_name, pid = self.pid, "worker stopped");
+    }
+}
+
+fn spawn_worker(config: &Config, agent_name: &str) -> Result<WorkerHandle> {
+    let exe = std::env::current_exe()?;
+    let child = std::process::Command::new(&exe)
+        .arg("--config")
+        .arg(config.data_dir.parent().unwrap_or(Path::new(".")).join("moneypenny.toml"))
+        .arg("worker")
+        .arg("--agent")
+        .arg(agent_name)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()?;
+
+    let pid = child.id();
+    Ok(WorkerHandle { pid, child, agent_name: agent_name.to_string() })
+}
+
+/// Worker process: owns one agent's DB, processes messages from stdin.
+/// Each line on stdin is a JSON message; each response is a JSON line on stdout.
+async fn cmd_worker(config: &Config, agent_name: &str) -> Result<()> {
+    let agent = resolve_agent(config, Some(agent_name))?;
+    let conn = open_agent_db(config, &agent.name)?;
+    let provider = build_provider(agent)?;
+
+    tracing::info!(agent = agent_name, "worker started");
+
+    let stdin = tokio::io::stdin();
+    let reader = tokio::io::BufReader::new(stdin);
+    let mut lines = tokio::io::AsyncBufReadExt::lines(reader);
+    let mut stdout = tokio::io::stdout();
+
+    while let Ok(Some(line)) = lines.next_line().await {
+        let request: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(e) => {
+                let err = serde_json::json!({"error": e.to_string()});
+                tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{err}\n").as_bytes()).await?;
+                continue;
+            }
+        };
+
+        let msg = request["message"].as_str().unwrap_or("");
+        let session_id = request["session_id"].as_str();
+
+        let sid = if let Some(s) = session_id {
+            s.to_string()
+        } else {
+            mp_core::store::log::create_session(&conn, &agent.name, Some("gateway"))?
+        };
+
+        let response = match agent_turn(
+            &conn, provider.as_ref(), &agent.name, &sid,
+            agent.persona.as_deref(), msg, agent.policy_mode(),
+        ).await {
+            Ok(r) => serde_json::json!({"response": r, "session_id": sid}),
+            Err(e) => serde_json::json!({"error": e.to_string(), "session_id": sid}),
+        };
+
+        tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{response}\n").as_bytes()).await?;
+        tokio::io::AsyncWriteExt::flush(&mut stdout).await?;
+
+        // Post-response extraction
+        let _ = extract_facts(&conn, provider.as_ref(), &agent.name, &sid).await;
+    }
+
+    tracing::info!(agent = agent_name, "worker exiting");
+    Ok(())
+}
+
+// =========================================================================
+// Scheduler
+// =========================================================================
+
+async fn run_scheduler(
+    config: &Config,
+    shutdown: &mut tokio::sync::broadcast::Receiver<()>,
+) {
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
+            _ = shutdown.recv() => {
+                tracing::info!("scheduler shutting down");
+                return;
+            }
+        }
+
+        for agent in &config.agents {
+            let conn = match open_agent_db(config, &agent.name) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(agent = %agent.name, error = %e, "scheduler: failed to open db");
+                    continue;
+                }
+            };
+
+            let now = chrono::Utc::now().timestamp();
+            let due_jobs = match mp_core::scheduler::poll_due_jobs(&conn, now) {
+                Ok(jobs) => jobs,
+                Err(e) => {
+                    tracing::warn!(agent = %agent.name, error = %e, "scheduler: poll failed");
+                    continue;
+                }
+            };
+
+            for job in &due_jobs {
+                tracing::info!(agent = %agent.name, job = %job.name, "scheduler: dispatching");
+                let result = mp_core::scheduler::dispatch_job(&conn, job, &|j| {
+                    Ok(format!("Scheduled execution of job '{}'", j.name))
+                });
+                match result {
+                    Ok(run) => {
+                        tracing::info!(
+                            agent = %agent.name, job = %job.name,
+                            status = %run.status, "scheduler: job completed"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            agent = %agent.name, job = %job.name,
+                            error = %e, "scheduler: dispatch failed"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 // =========================================================================
@@ -199,7 +784,8 @@ async fn cmd_agent(config: &Config, cmd: cli::AgentCommand) -> Result<()> {
             println!();
             println!("  Agent: {}", agent.name);
             println!("  Trust: {}", agent.trust_level);
-            println!("  LLM:   {} ({})", agent.llm.provider, agent.llm.model.as_deref().unwrap_or("default"));
+            println!("  LLM:       {} ({})", agent.llm.provider, agent.llm.model.as_deref().unwrap_or("default"));
+            println!("  Embedding: {} ({}, {}D)", agent.embedding.provider, agent.embedding.model, agent.embedding.dimensions);
             println!();
             println!("  Facts:     {fact_count}");
             println!("  Sessions:  {session_count}");
@@ -218,27 +804,130 @@ async fn cmd_agent(config: &Config, cmd: cli::AgentCommand) -> Result<()> {
 // Chat & Send
 // =========================================================================
 
-async fn cmd_chat(_config: &Config, agent: Option<String>) -> Result<()> {
-    let name = agent.as_deref().unwrap_or("main");
+async fn cmd_chat(config: &Config, agent: Option<String>) -> Result<()> {
+    let ag = resolve_agent(config, agent.as_deref())?;
+    let conn = open_agent_db(config, &ag.name)?;
+    let provider = build_provider(ag)?;
+    let sid = mp_core::store::log::create_session(&conn, &ag.name, Some("cli"))?;
+
     println!();
-    println!("  Moneypenny chat — agent: {name}");
+    println!("  Moneypenny v{} — agent: {}", env!("CARGO_PKG_VERSION"), ag.name);
+    println!("  LLM:       {} ({})", ag.llm.provider, ag.llm.model.as_deref().unwrap_or("default"));
+    println!("  Embedding: {} ({}, {}D)", ag.embedding.provider, ag.embedding.model, ag.embedding.dimensions);
     println!("  Type /help for commands, Ctrl-C to exit.");
-    println!("  [Interactive chat requires async LLM integration — M10 agent loop is ready]");
     println!();
+
+    let stdin = std::io::stdin();
+    loop {
+        print!("  > ");
+        std::io::stdout().flush()?;
+
+        let mut line = String::new();
+        if stdin.read_line(&mut line)? == 0 {
+            break;
+        }
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        match line {
+            "/quit" | "/exit" => break,
+            "/help" => {
+                println!("  /facts    — list stored facts");
+                println!("  /scratch  — list scratch entries");
+                println!("  /session  — show session info");
+                println!("  /quit     — exit chat");
+                println!();
+                continue;
+            }
+            "/facts" => {
+                let facts = mp_core::store::facts::list_active(&conn, &ag.name)?;
+                if facts.is_empty() {
+                    println!("  No facts stored.");
+                } else {
+                    for f in &facts {
+                        println!("  [{:.1}] {}", f.confidence, f.pointer);
+                    }
+                }
+                println!();
+                continue;
+            }
+            "/scratch" => {
+                let entries = mp_core::store::scratch::list(&conn, &sid)?;
+                if entries.is_empty() {
+                    println!("  Scratch is empty.");
+                } else {
+                    for e in &entries {
+                        let preview: String = e.content.chars().take(60).collect();
+                        println!("  [{}] {}", e.key, preview);
+                    }
+                }
+                println!();
+                continue;
+            }
+            "/session" => {
+                let msgs = mp_core::store::log::get_messages(&conn, &sid)?;
+                println!("  Session: {sid}");
+                println!("  Messages: {}", msgs.len());
+                println!();
+                continue;
+            }
+            _ => {}
+        }
+
+        match agent_turn(&conn, provider.as_ref(), &ag.name, &sid, ag.persona.as_deref(), line, ag.policy_mode()).await {
+            Ok(response) => {
+                println!();
+                for resp_line in response.lines() {
+                    println!("  {resp_line}");
+                }
+                println!();
+
+                match extract_facts(&conn, provider.as_ref(), &ag.name, &sid).await {
+                    Ok(n) if n > 0 => {
+                        println!("  ({n} fact{} learned)", if n == 1 { "" } else { "s" });
+                        println!();
+                    }
+                    Err(e) => tracing::debug!("extraction error: {e}"),
+                    _ => {}
+                }
+            }
+            Err(e) => {
+                eprintln!("  Error: {e}");
+                eprintln!();
+            }
+        }
+    }
+
+    println!("  Session {sid} ended.");
     Ok(())
 }
 
 async fn cmd_send(config: &Config, agent_name: &str, message: &str) -> Result<()> {
     let agent = resolve_agent(config, Some(agent_name))?;
     let conn = open_agent_db(config, &agent.name)?;
-
+    let provider = build_provider(agent)?;
     let sid = mp_core::store::log::create_session(&conn, &agent.name, Some("cli"))?;
-    mp_core::store::log::append_message(&conn, &sid, "user", message)?;
+
+    let response = agent_turn(
+        &conn, provider.as_ref(), &agent.name, &sid,
+        agent.persona.as_deref(), message, agent.policy_mode(),
+    ).await?;
 
     println!();
-    println!("  Message stored in session {sid}");
-    println!("  [LLM response requires provider connection — agent loop is ready in mp-core]");
+    for line in response.lines() {
+        println!("  {line}");
+    }
     println!();
+
+    if let Ok(n) = extract_facts(&conn, provider.as_ref(), &agent.name, &sid).await {
+        if n > 0 {
+            println!("  ({n} fact{} learned)", if n == 1 { "" } else { "s" });
+            println!();
+        }
+    }
+
     Ok(())
 }
 

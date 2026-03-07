@@ -10,7 +10,6 @@ pub struct HttpProvider {
     api_base: String,
     api_key: Option<String>,
     model: String,
-    embedding_model: String,
 }
 
 impl HttpProvider {
@@ -18,14 +17,12 @@ impl HttpProvider {
         api_base: impl Into<String>,
         api_key: Option<String>,
         model: impl Into<String>,
-        embedding_model: Option<String>,
     ) -> Self {
         Self {
             client: Client::new(),
             api_base: api_base.into(),
             api_key,
             model: model.into(),
-            embedding_model: embedding_model.unwrap_or_else(|| "text-embedding-3-small".into()),
         }
     }
 }
@@ -87,34 +84,11 @@ impl LlmProvider for HttpProvider {
         Ok(Box::pin(stream))
     }
 
-    async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
-        let body = serde_json::json!({
-            "model": self.embedding_model,
-            "input": text,
-        });
-
-        let mut req = self.client
-            .post(format!("{}/embeddings", self.api_base))
-            .json(&body);
-
-        if let Some(key) = &self.api_key {
-            req = req.bearer_auth(key);
-        }
-
-        let resp = req.send().await?;
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("Embedding API error {status}: {body}");
-        }
-
-        let api_resp: EmbeddingResponse = resp.json().await?;
-        api_resp
-            .data
-            .into_iter()
-            .next()
-            .map(|d| d.embedding)
-            .ok_or_else(|| anyhow::anyhow!("No embedding returned"))
+    async fn embed(&self, _text: &str) -> anyhow::Result<Vec<f32>> {
+        anyhow::bail!(
+            "Use the dedicated EmbeddingProvider for embeddings. \
+             HttpProvider is for generation only. Configure [embedding] in moneypenny.toml."
+        )
     }
 
     fn supports_streaming(&self) -> bool {
@@ -146,6 +120,18 @@ fn build_chat_request(
             });
             if let Some(id) = &m.tool_call_id {
                 msg["tool_call_id"] = serde_json::json!(id);
+            }
+            if !m.tool_calls.is_empty() {
+                msg["tool_calls"] = serde_json::json!(
+                    m.tool_calls.iter().map(|tc| serde_json::json!({
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": tc.arguments,
+                        }
+                    })).collect::<Vec<_>>()
+                );
             }
             msg
         })
@@ -226,16 +212,6 @@ struct ApiUsage {
     prompt_tokens: u32,
     completion_tokens: u32,
     total_tokens: u32,
-}
-
-#[derive(Debug, Deserialize)]
-struct EmbeddingResponse {
-    data: Vec<EmbeddingData>,
-}
-
-#[derive(Debug, Deserialize)]
-struct EmbeddingData {
-    embedding: Vec<f32>,
 }
 
 fn parse_chat_response(resp: ChatCompletionResponse) -> anyhow::Result<GenerateResponse> {
@@ -407,13 +383,11 @@ impl HttpProvider {
         api_base: Option<&str>,
         api_key: Option<&str>,
         model: Option<&str>,
-        embedding_model: Option<&str>,
     ) -> Self {
         Self::new(
             api_base.unwrap_or("https://api.openai.com/v1"),
             api_key.map(String::from),
             model.unwrap_or("gpt-4o-mini"),
-            embedding_model.map(String::from),
         )
     }
 }

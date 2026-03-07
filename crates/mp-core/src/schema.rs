@@ -6,18 +6,22 @@
 
 use rusqlite::Connection;
 
-const AGENT_SCHEMA_VERSION: i64 = 1;
+const AGENT_SCHEMA_VERSION: i64 = 2;
 const METADATA_SCHEMA_VERSION: i64 = 1;
 
 pub fn init_agent_db(conn: &Connection) -> anyhow::Result<()> {
     let current = get_schema_version(conn);
-    if current >= AGENT_SCHEMA_VERSION {
-        return Ok(());
+
+    if current < 1 {
+        conn.execute_batch(AGENT_SCHEMA_V1)?;
+        set_schema_version(conn, 1)?;
     }
 
-    conn.execute_batch(AGENT_SCHEMA_V1)?;
+    if current < 2 {
+        conn.execute_batch(AGENT_SCHEMA_V2)?;
+        set_schema_version(conn, 2)?;
+    }
 
-    set_schema_version(conn, AGENT_SCHEMA_VERSION)?;
     Ok(())
 }
 
@@ -251,6 +255,15 @@ CREATE TABLE IF NOT EXISTS job_runs (
     retry_count         INTEGER DEFAULT 0,
     created_at          INTEGER NOT NULL
 );
+";
+
+// ---------------------------------------------------------------------------
+// Agent database — v2: behavioral policy rules
+// ---------------------------------------------------------------------------
+
+const AGENT_SCHEMA_V2: &str = "
+ALTER TABLE policies ADD COLUMN rule_type TEXT;
+ALTER TABLE policies ADD COLUMN rule_config TEXT;
 ";
 
 // ---------------------------------------------------------------------------
@@ -721,6 +734,7 @@ mod tests {
             "sql_pattern", "argument_pattern",
             "agent_id", "channel_pattern", "schedule",
             "message", "enabled", "created_at",
+            "rule_type", "rule_config",
         ];
         for col in &expected {
             assert!(has_column(&conn, "policies", col), "policies missing column: {col}");

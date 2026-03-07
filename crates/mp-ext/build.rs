@@ -1,28 +1,34 @@
 use std::path::PathBuf;
 
 fn main() {
-    let monorepo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let vendor = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent() // crates/
         .unwrap()
         .parent() // moneypenny/
         .unwrap()
-        .parent() // coco-db/
-        .unwrap()
-        .to_path_buf();
+        .join("vendor");
+
+    if !vendor.exists() {
+        panic!(
+            "vendor/ directory not found at {}. \
+             Run `git submodule update --init --recursive` to fetch extension sources.",
+            vendor.display()
+        );
+    }
 
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
 
-    build_sqlite_vector(&monorepo);
-    build_sqlite_js(&monorepo);
-    build_sqlite_sync(&monorepo, &target_os);
-    build_sqlite_memory(&monorepo);
-    build_sqlite_mcp(&monorepo);
-    build_sqlite_ai(&monorepo, &target_os);
-    build_sqlite_agent(&monorepo);
+    build_sqlite_vector(&vendor);
+    build_sqlite_js(&vendor);
+    build_sqlite_sync(&vendor, &target_os);
+    build_sqlite_memory(&vendor);
+    build_sqlite_mcp(&vendor);
+    build_sqlite_ai(&vendor, &target_os);
+    build_sqlite_agent(&vendor);
 }
 
-fn build_sqlite_vector(monorepo: &PathBuf) {
-    let ext = monorepo.join("sqlite-vector");
+fn build_sqlite_vector(vendor: &PathBuf) {
+    let ext = vendor.join("sqlite-vector");
     let src = ext.join("src");
     let libs = ext.join("libs");
 
@@ -45,8 +51,8 @@ fn build_sqlite_vector(monorepo: &PathBuf) {
         .compile("sqlite_vector");
 }
 
-fn build_sqlite_js(monorepo: &PathBuf) {
-    let ext = monorepo.join("sqlite-js");
+fn build_sqlite_js(vendor: &PathBuf) {
+    let ext = vendor.join("sqlite-js");
     let src = ext.join("src");
     let libs = ext.join("libs");
 
@@ -62,8 +68,8 @@ fn build_sqlite_js(monorepo: &PathBuf) {
         .compile("sqlite_js");
 }
 
-fn build_sqlite_sync(monorepo: &PathBuf, target_os: &str) {
-    let ext = monorepo.join("sqlite-sync");
+fn build_sqlite_sync(vendor: &PathBuf, target_os: &str) {
+    let ext = vendor.join("sqlite-sync");
     let src = ext.join("src");
 
     let mut build = cc::Build::new();
@@ -94,8 +100,8 @@ fn build_sqlite_sync(monorepo: &PathBuf, target_os: &str) {
     build.compile("sqlite_sync");
 }
 
-fn build_sqlite_memory(monorepo: &PathBuf) {
-    let ext = monorepo.join("sqlite-memory");
+fn build_sqlite_memory(vendor: &PathBuf) {
+    let ext = vendor.join("sqlite-memory");
     let src = ext.join("src");
 
     cc::Build::new()
@@ -113,8 +119,8 @@ fn build_sqlite_memory(monorepo: &PathBuf) {
         .compile("sqlite_memory");
 }
 
-fn build_sqlite_mcp(monorepo: &PathBuf) {
-    let ext = monorepo.join("sqlite-mcp");
+fn build_sqlite_mcp(vendor: &PathBuf) {
+    let ext = vendor.join("sqlite-mcp");
     let src = ext.join("src");
     let libs = ext.join("libs");
 
@@ -132,13 +138,13 @@ fn build_sqlite_mcp(monorepo: &PathBuf) {
         .compile("sqlite_mcp");
 }
 
-fn build_sqlite_ai(monorepo: &PathBuf, target_os: &str) {
-    let ext = monorepo.join("sqlite-ai");
+fn build_sqlite_ai(vendor: &PathBuf, target_os: &str) {
+    let ext = vendor.join("sqlite-ai");
     let src = ext.join("src");
     let llama_dir = ext.join("modules/llama.cpp");
     let whisper_dir = ext.join("modules/whisper.cpp");
     let miniaudio_dir = ext.join("modules/miniaudio");
-    let fp16_dir = monorepo.join("sqlite-vector/libs/fp16");
+    let fp16_dir = vendor.join("sqlite-vector/libs/fp16");
 
     // 1. Build llama.cpp via CMake
     let llama_build = cmake::Config::new(&llama_dir)
@@ -245,8 +251,8 @@ fn build_sqlite_ai(monorepo: &PathBuf, target_os: &str) {
         .compile("sqlite_ai");
 }
 
-fn build_sqlite_agent(monorepo: &PathBuf) {
-    let ext = monorepo.join("sqlite-agent");
+fn build_sqlite_agent(vendor: &PathBuf) {
+    let ext = vendor.join("sqlite-agent");
     let src = ext.join("src");
     let libs = ext.join("libs");
 

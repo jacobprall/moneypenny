@@ -463,7 +463,11 @@ mod tests {
     #[test]
     fn pipeline_denies_by_policy() {
         let conn = setup();
-        // No allow-all policy → deny-by-default
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, message, created_at)
+             VALUES ('deny-all', 'deny-all', 100, 'deny', '*', '*', '*', 'blocked', 1)",
+            [],
+        ).unwrap();
         let sid = store::log::create_session(&conn, "a", None).unwrap();
 
         let candidates = vec![CandidateFact {

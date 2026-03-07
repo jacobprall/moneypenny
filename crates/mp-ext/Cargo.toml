@@ -7,7 +7,7 @@ edition.workspace = true
 rusqlite.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
-mcp-ffi = { path = "../../../sqlite-mcp" }
+mcp-ffi = { path = "../../vendor/sqlite-mcp" }
 
 [build-dependencies]
 cc = "1"

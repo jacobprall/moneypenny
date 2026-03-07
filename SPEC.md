@@ -19,7 +19,7 @@ The architectural bet: every other agent framework is orchestration-first with p
 
 **Decision:** Rust.
 
-**Reasoning:** Single binary distribution. Native SQLite extension loading without FFI wrappers. Memory safety without GC pauses. The `oso` policy engine crate is Rust-native. Aligns with the "rock-solid" design goal. The trade-off is slower iteration speed vs TypeScript/Python, but the core loop is small — most complexity lives in the SQLite extensions (C) which already exist.
+**Reasoning:** Single binary distribution. Native SQLite extension loading without FFI wrappers. Memory safety without GC pauses. Aligns with the "rock-solid" design goal. The trade-off is slower iteration speed vs TypeScript/Python, but the core loop is small — most complexity lives in the SQLite extensions (C) which already exist.
 
 ### 2.2 Agent loop model
 
@@ -28,24 +28,41 @@ The architectural bet: every other agent framework is orchestration-first with p
 **Reasoning:** Option B (sqlite-agent runs the loop inside SQLite) is the radical, differentiating choice — it makes "everything is a transaction" literally true. Option A (orchestrator calls external LLMs) is necessary for cloud model support (Claude, GPT-4, Gemini). Both modes share the same state layer, policy engine, and memory stores. The agent doesn't know or care which mode it's in.
 
 - **Local mode:** `sqlite-ai` loads a GGUF model. `sqlite-agent` runs the full agent loop (goal → tool selection → MCP execution → result → iterate) inside SQLite. The entire operation is a single transaction.
-- **Cloud mode:** The Rust orchestrator calls an external LLM via HTTP, parses tool calls, executes them against the SQLite extensions, feeds results back. State management is still transactional — the orchestrator wraps each turn in a SQLite transaction.
+- **Cloud mode:** The Rust orchestrator calls an external LLM (Anthropic by default) via HTTP, parses tool calls, executes them against the SQLite extensions, feeds results back. State management is still transactional — the orchestrator wraps each turn in a SQLite transaction.
 
 ### 2.3 LLM provider interface
 
-**Decision:** Pluggable trait. Local-first by default, cloud as a swap.
+**Decision:** Pluggable traits. Generation and embedding are separate concerns with independent providers.
+
+**Generation** (cloud by default):
 
 ```
 trait LlmProvider {
     fn generate(&self, messages, tools, config) -> Result<Response>;
-    fn embed(&self, text) -> Result<Vec<f32>>;
     fn supports_streaming(&self) -> bool;
 }
 ```
 
 Implementations:
-- `SqliteAiProvider` — on-device GGUF via `sqlite-ai`. No network. Default.
-- `HttpProvider` — OpenAI-compatible API. Works with OpenAI, Anthropic (via proxy), Ollama, vLLM, any OpenAI-compatible endpoint.
-- Provider is configurable per-agent. An agent can use local inference for embeddings and cloud for generation.
+- `AnthropicProvider` — native Anthropic Messages API. Default cloud provider.
+- `HttpProvider` — OpenAI-compatible API. Works with OpenAI, Ollama, vLLM, any OpenAI-compatible endpoint.
+- `SqliteAiProvider` — on-device GGUF via `sqlite-ai`. No network.
+
+**Embedding** (local by default):
+
+```
+trait EmbeddingProvider {
+    fn embed(&self, text) -> Result<Vec<f32>>;
+    fn embed_batch(&self, texts) -> Result<Vec<Vec<f32>>>;
+    fn dimensions(&self) -> usize;
+}
+```
+
+Implementations:
+- `LocalEmbeddingProvider` — on-device GGUF via `sqlite-ai`. Ships with `nomic-embed-text-v1.5` (768-dim, ~274MB). Default. No network, no API keys. Embeddings never leave the machine.
+- `HttpEmbeddingProvider` — OpenAI-compatible `/embeddings` API. Opt-in for users who want cloud embeddings.
+
+Generation and embedding providers are configured independently per-agent. The default setup uses Anthropic for generation and local GGUF for embeddings — cloud intelligence with local privacy for vector search.
 
 ### 2.4 Process model
 
@@ -157,7 +174,7 @@ mp start                         # starts gateway + default agent + CLI channel
 > what language do I prefer?     # agent recalls from Facts
 ```
 
-Three commands to a working agent with persistent memory. No API keys required (local GGUF inference). No config files to edit. No Docker. No database setup.
+Three commands to a working agent with persistent memory. Embeddings run locally out of the box (nomic-embed-text-v1.5, no API key needed). Cloud generation requires an Anthropic API key — or switch to local GGUF for fully offline operation. No config files to edit. No Docker. No database setup.
 
 ---
 
@@ -201,7 +218,7 @@ Three commands to a working agent with persistent memory. No API keys required (
 │  └────────────────────────────────────────────────────────┘│
 │                                                            │
 │  ┌────────────────────────────────────────────────────────┐│
-│  │ Policy Engine (Oso-powered, deny-by-default)           ││
+│  │ Policy Engine (configurable default, behavioral rules)  ││
 │  │ Governs: tools, memory access, fact writes, channels   ││
 │  └────────────────────────────────────────────────────────┘│
 └───────────────────────────────────────────────────────────┘
@@ -508,7 +525,7 @@ Message arrives
                     COMMIT;
 ```
 
-**Extraction model:** The extraction LLM can be a different (smaller, cheaper) model than the conversational LLM. A 3B parameter local model is sufficient for fact extraction, even if the conversational model is Claude or GPT-4. This keeps extraction fast and cheap.
+**Extraction model:** The extraction LLM can be a different (smaller, cheaper) model than the conversational LLM. A 3B parameter local model is sufficient for fact extraction, even if the conversational model is Claude Sonnet. This keeps extraction fast and cheap.
 
 **Revisiting compressed facts:** When the agent expands a Level 2 pointer to Level 0, the full fact content re-enters the extraction pipeline context. This means revisiting old facts can trigger UPDATEs — the fact evolves, its confidence changes, its links update. Facts are living knowledge, not static records.
 
@@ -518,43 +535,36 @@ Message arrives
 
 ### 4.1 Design principles
 
-- Deny-by-default. If no rule matches, the answer is "no."
+- Configurable default. The fallthrough when no rule matches is configurable per-agent: `allow` for development, `deny` for production governance.
 - Policies are data. Stored as SQL rows, synced via CRDTs, queryable.
 - One model for everything. The same `allow(actor, action, resource)` predicate governs tools, memory, facts, channels, SQL execution.
-- Extensible. Simple rules via SQL rows. Complex rules via Polar files. Custom types via Rust registration.
+- Behavioral awareness. Rules can evaluate patterns over time — rate limits, retry loops, token budgets, time windows — not just static properties.
 
 ### 4.2 Architecture
 
-**Evaluation engine:** Oso (embedded Rust crate, Apache-2.0). In-process, no external service. Battle-tested by Spotify, Verizon, and others.
+**Evaluation engine:** Custom Rust implementation. In-process, no external dependencies. Two-layer design: static pattern rules (Layer 1) and behavioral rules (Layer 2) that evaluate patterns over time.
 
-**Three-layer interface:**
+**Two-layer interface:**
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  Layer 1: SQL rows (simple rules, anyone)        │
+│  Layer 1: SQL rows (static rules)                │
 │  INSERT INTO policies VALUES (...)               │
+│  Glob patterns, regex, priority ordering.        │
 │  Synced via CRDTs. Edited via CLI or API.        │
 ├─────────────────────────────────────────────────┤
-│  Layer 2: Polar files (complex rules, power)     │
-│  allow(agent, action, resource) if ...           │
-│  Full Oso expressiveness. Version-controlled.    │
-├─────────────────────────────────────────────────┤
-│  Layer 3: Custom types (developers, Rust)        │
-│  oso.register_class(MyResource::get_polar_class) │
-│  Extend the type system for new resource kinds.  │
+│  Layer 2: Behavioral rules (dynamic state)       │
+│  rule_type: rate_limit, retry_loop,              │
+│             token_budget, time_window            │
+│  rule_config: JSON parameters per type           │
+│  Evaluates by querying tool_calls + audit tables │
 └──────────────────────┬──────────────────────────┘
                        │
                        ▼
               ┌────────────────┐
-              │ Policy Compiler │  SQL rows → Polar rules
-              │                │  .polar files → loaded directly
-              └───────┬────────┘
-                      │
-                      ▼
-              ┌────────────────┐
-              │  Oso Engine     │  In-process Rust evaluation
-              │  (embedded)     │  Deny-by-default
-              │                │  Returns: allow/deny + reason
+              │  Rule Evaluator │  Pattern match + behavioral check
+              │  (in-process)   │  Configurable default (allow/deny)
+              │                │  Returns: allow/deny/audit + reason
               └───────┬────────┘
                       │
                       ▼
@@ -563,6 +573,8 @@ Message arrives
               │  Generator      │  policy → WHERE clause
               └────────────────┘
 ```
+
+**Future — Layer 3: Rule DSL.** A lightweight Polar-inspired domain-specific language for expressing complex conditional rules. Deferred until the SQL-based layers prove insufficient for real-world use cases.
 
 ### 4.3 The universal predicate
 
@@ -632,29 +644,54 @@ VALUES ('no-shell', 'No shell for untrusted', 100, 'deny', 'agent:untrusted-*',
         'tool:shell_*', 'Untrusted agents cannot execute shell commands.');
 ```
 
-### 4.5 Polar for complex rules
+### 4.5 Behavioral rules
 
-Power users can write `.polar` files for logic that SQL rows can't express:
+Behavioral rules extend static pattern matching with dynamic state evaluation. They use `rule_type` and `rule_config` columns on the policies table.
 
-```polar
-# Rate limiting: deny if too many tool calls in a window
-allow(agent: Agent, "call", tool: Tool) if
-    agent.tool_call_count_5m < 50;
+When a policy row matches on its static patterns (actor, action, resource) AND has a `rule_type`, the engine evaluates the behavioral condition by querying recent history from the `tool_calls` and `policy_audit` tables. If the behavioral condition is not triggered, the rule is skipped and evaluation continues to lower-priority rules.
 
-# Relationship-based: agents can read facts they own or that are shared
-allow(agent: Agent, "read", fact: Fact) if
-    fact.scope = "shared" or
-    fact.agent_id = agent.id;
+**Rule types:**
 
-# Conditional: allow SQL only if it doesn't reference production tables
-allow(agent: Agent, "execute", query: SqlQuery) if
-    not query.references_table("production.users") and
-    not query.references_table("production.payments");
+**`rate_limit`** — Deny if too many matching actions in a time window.
 
-# Time-based: allow DDL only during maintenance windows
-allow(agent: Agent, "execute", query: SqlQuery) if
-    query.is_ddl and
-    current_time_in_range("02:00", "06:00");
+```sql
+INSERT INTO policies (id, name, priority, effect, action_pattern, resource_pattern,
+                      rule_type, rule_config, message)
+VALUES ('rate-limit-shell', 'Shell rate limit', 90, 'deny',
+        'call', 'tool:shell_*',
+        'rate_limit', '{"max": 10, "window_seconds": 300}',
+        'Rate limit exceeded: max 10 shell commands per 5 minutes.');
+```
+
+**`retry_loop`** — Deny if the same tool is called with the same arguments repeatedly.
+
+```sql
+INSERT INTO policies (id, name, priority, effect,
+                      rule_type, rule_config, message)
+VALUES ('no-retry-loops', 'Detect retry loops', 85, 'deny',
+        'retry_loop', '{"same_tool_same_args": 3, "window_seconds": 60}',
+        'Retry loop detected. Try a different approach or ask the user.');
+```
+
+**`token_budget`** — Deny if session token usage exceeds a limit.
+
+```sql
+INSERT INTO policies (id, name, priority, effect,
+                      rule_type, rule_config, message)
+VALUES ('token-budget', 'Session token budget', 70, 'deny',
+        'token_budget', '{"max_tokens_per_session": 500000}',
+        'Session token budget exceeded.');
+```
+
+**`time_window`** — Only active during specific hours (uses the `schedule` column as a cron expression for when the rule is in effect).
+
+```sql
+INSERT INTO policies (id, name, priority, effect, actor_pattern, resource_pattern,
+                      rule_type, rule_config, schedule, message)
+VALUES ('no-prod-jobs-daytime', 'No prod jobs 9-5', 80, 'deny',
+        'agent:prod-*', 'job:*',
+        'time_window', '{}', '0 9-17 * * 1-5',
+        'Production agents cannot run jobs during business hours.');
 ```
 
 ### 4.6 SQL filter generation
@@ -1052,7 +1089,7 @@ These ship today as cross-platform binaries with package manager distribution:
 | Memory stores | Facts, Log, Knowledge, Scratch — schema + CRUD + search | sqlite-vector, sqlite-memory |
 | Extraction pipeline | Async fact extraction with ADD/UPDATE/DELETE/NOOP | LLM trait |
 | Progressive compression | Three-level fact compression + expansion | Extraction pipeline |
-| Policy engine | Oso integration, SQL→Polar compiler, SQL filter gen | oso crate |
+| Policy engine | Custom rule engine, behavioral rules, SQL filter gen | — |
 | Job scheduler | SQLite-native cron. Jobs table, job types, dispatch loop | Agent loop, policy engine |
 | sqlite-js job logic | User-defined job functions, persisted + syncable | sqlite-js |
 | CLI channel | Interactive terminal, the first channel | Agent loop |
@@ -1091,7 +1128,7 @@ These ship today as cross-platform binaries with package manager distribution:
 | **A-Mem** | Zettelkasten-style atomic notes. Dynamic linking. Memory evolution. 85-93% token reduction. | Fact linking via SQL edges. Revisiting facts triggers re-extraction and evolution. |
 | **OpenClaw** | Markdown-as-source-of-truth. Hybrid search. Temporal decay. 272K GitHub stars prove demand. | Database-native, not file-based. Transactional. Multi-agent sync. Governed. |
 | **ctx (ctxpipe.ai)** | Four memory types: working/episodic/semantic/procedural + temporal dimension. "Context window is limited; what gets retrieved is the whole game." Fleet-scale governance. | Local-first, not centralized graph. Same insights, SQLite-native implementation. Scratch = working memory. Skills = procedural memory. |
-| **Oso** | `allow(actor, action, resource)` as universal predicate. Deny-by-default. Polar DSL. SQL constraint generation. Embeddable Rust crate. | Hybrid interface: SQL rows for simple, Polar for complex. Policies sync via CRDTs. Applied to agent governance, not just data access. |
+| **Oso (design influence)** | `allow(actor, action, resource)` as universal predicate. SQL constraint generation. Embeddable evaluation. | Custom Rust engine — no external dependency. SQL rows for static rules, behavioral rules for dynamic state. Policies sync via CRDTs. Applied to agent governance, not just data access. |
 | **coco-db** | Policy engine, secret redaction, session memory, hybrid search with RRF, progressive disclosure in RAG, auto-capture via hooks. | Generalized from Snowflake-specific to universal agent platform. Same patterns, broader scope. |
 
 ---
@@ -1482,7 +1519,7 @@ mp policy list                          List all active policies
 mp policy add --name "..." ...          Add a policy rule
 mp policy test "DROP TABLE foo"         Dry-run: would this be allowed?
 mp policy violations [--last 7d]        Show recent violations
-mp policy load <file>                   Load policies from JSON/Polar file
+mp policy load <file>                   Load policies from JSON file
 
 Jobs:
 mp job list [agent]                     List scheduled jobs
@@ -1514,13 +1551,15 @@ $ mp init
 
   Moneypenny v0.1.0
 
-  Creating project in ./moneypenny-data
+  Creating project in ./mp-data
 
   ✓ Created moneypenny.toml
   ✓ Created data directory
-  ✓ Initialized default agent "main"
-  ✓ Downloaded embedding model (nomic-embed-text, 270MB)
-  ✓ Downloaded inference model (qwen2.5-3b, 1.8GB)
+  ✓ Created models directory
+  ✓ Initialized agent "main"
+      LLM:       anthropic (claude-sonnet-4-20250514)
+      Embedding: local (nomic-embed-text-v1.5, 768D)
+  ✓ Downloaded embedding model (nomic-embed-text-v1.5, 274MB)
 
   Ready. Run `mp start` to begin.
 
@@ -1535,9 +1574,8 @@ $ mp start
   Type a message to begin, or /help for commands.
 
   > hello
-  Hello! I'm your Moneypenny agent. I'm running entirely on your
-  machine — no cloud APIs, no data leaving your device. How can
-  I help?
+  Hello! I'm your Moneypenny agent. My memory and search run
+  locally — embeddings never leave your machine. How can I help?
 
   > remember that our team standup is at 9:15am Pacific
   Got it — I'll remember that.
@@ -1567,8 +1605,8 @@ GET /health (HTTP API channel, when enabled)
             "sessions": 38,
             "db_size_bytes": 52428800,
             "last_sync": "2026-03-06T22:15:00Z",
-            "llm_provider": "local",
-            "llm_model": "qwen2.5-3b"
+            "llm_provider": "anthropic",
+            "llm_model": "claude-sonnet-4-20250514"
         }
     ],
     "jobs": { "active": 3, "last_failure": null },
@@ -1615,7 +1653,7 @@ $ mp health
     Facts:     142 (138 private, 4 shared)
     Sessions:  38 (current: active, 12 messages)
     DB size:   50.0 MB
-    LLM:       local / qwen2.5-3b
+    LLM:       anthropic / claude-sonnet-4-20250514
     Sync:      connected, 0 pending
     Jobs:      3 active, 0 failed (last 24h)
     Policies:  12 rules, 3 violations (last 24h)

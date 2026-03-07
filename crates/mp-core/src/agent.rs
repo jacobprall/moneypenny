@@ -268,7 +268,11 @@ mod tests {
     #[test]
     fn turn_denies_by_policy() {
         let conn = setup();
-        // No allow-all → deny-by-default
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, message, created_at)
+             VALUES ('deny-all', 'deny-all', 100, 'deny', '*', '*', '*', 'blocked by policy', 1)",
+            [],
+        ).unwrap();
         let sid = store::log::create_session(&conn, "a", None).unwrap();
 
         let llm = MockLlm { response: "shouldn't see this".into() };
