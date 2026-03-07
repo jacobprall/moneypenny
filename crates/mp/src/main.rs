@@ -67,7 +67,9 @@ fn resolve_agent<'a>(config: &'a Config, name: Option<&str>) -> Result<&'a mp_co
 
 fn open_agent_db(config: &Config, agent_name: &str) -> Result<rusqlite::Connection> {
     let db_path = config.agent_db_path(agent_name);
-    mp_core::db::open(&db_path)
+    let conn = mp_core::db::open(&db_path)?;
+    mp_ext::init_all_extensions(&conn)?;
+    Ok(conn)
 }
 
 // =========================================================================
@@ -93,6 +95,7 @@ async fn cmd_init(config_path: &str) -> Result<()> {
     for agent in &config.agents {
         let db_path = config.agent_db_path(&agent.name);
         let agent_conn = mp_core::db::open(&db_path)?;
+        mp_ext::init_all_extensions(&agent_conn)?;
         mp_core::schema::init_agent_db(&agent_conn)?;
 
         // Register built-in tools and runtime skills

@@ -1,0 +1,14 @@
+[package]
+name = "mp-ext"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rusqlite.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+mcp-ffi = { path = "../../../sqlite-mcp" }
+
+[build-dependencies]
+cc = "1"
+cmake = "0.1"

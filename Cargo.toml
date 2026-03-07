@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/mp", "crates/mp-core", "crates/mp-llm"]
+members = ["crates/mp", "crates/mp-core", "crates/mp-llm", "crates/mp-ext"]
 resolver = "2"
 
 [workspace.package]
@@ -11,6 +11,7 @@ repository = "https://github.com/nicholasgasior/moneypenny"
 [workspace.dependencies]
 mp-core = { path = "crates/mp-core" }
 mp-llm = { path = "crates/mp-llm" }
+mp-ext = { path = "crates/mp-ext" }
 anyhow = "1"
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }

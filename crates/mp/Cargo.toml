@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 mp-core.workspace = true
+mp-ext.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
