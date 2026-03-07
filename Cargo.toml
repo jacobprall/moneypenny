@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/mp", "crates/mp-core"]
+members = ["crates/mp", "crates/mp-core", "crates/mp-llm"]
 resolver = "2"
 
 [workspace.package]
@@ -10,12 +10,17 @@ repository = "https://github.com/nicholasgasior/moneypenny"
 
 [workspace.dependencies]
 mp-core = { path = "crates/mp-core" }
+mp-llm = { path = "crates/mp-llm" }
 anyhow = "1"
+async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 toml = "0.8"
 rusqlite = { version = "0.35", features = ["bundled", "load_extension"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 uuid = { version = "1", features = ["v4"] }

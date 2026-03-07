@@ -4,6 +4,7 @@
 
 Moneypenny is an open-source, local-first AI agent platform built on SQLite. Unlike conventional agent frameworks that bolt persistence onto an orchestration layer, Moneypenny inverts the stack: inference, memory, search, sync, policy, and tool execution all happen inside the same transactional boundary. The result is an agent that never forgets, never leaks, and works everywhere — including offline.
 
+#### focus less on tech, more on what it does, why, differentiation, value props. It's Enterprise-grade Local-first OpenClaw
 ---
 
 ## Why another agent?
@@ -135,3 +136,8 @@ The hard infrastructure — the data layer — is done. What remains is the orch
 A world where AI agents are as reliable, auditable, and portable as the databases they run on. Where "works offline" isn't a footnote but the default. Where a team's collective knowledge lives in a synchronized, governed, encrypted data layer — not scattered across Markdown files and API call logs. Where you can embed a full-capability agent into a mobile app, a CLI tool, or a browser tab with a single SQLite file.
 
 Moneypenny: the agent that remembers everything, leaks nothing, and runs anywhere.
+
+#### focus less on tech, more on what it does, why, differentiation, value props. It's Enterprise-grade Local-first Agents, cheap, efficient, offline, shared, auditable, governed intelligence layer. it currently reads as a this is how i used sqlite to do these things. let's lead with the Differentiated Benefit: Differntiated Feature -> Differentiated capability. We cna reference its like OpenClaw, but... and then all the crazy things we've built.
+
+
+#### focus less on tech, more on what it does, why, differentiation, value props. It's Enterprise-grade Local-first Agents, cheap, efficient, offline, shared, auditable, governed intelligence layer. it currently reads as a this is how i used sqlite to do these things. let's lead with the Differentiated Benefit: Differntiated Feature -> Differentiated capability. We cna reference its like OpenClaw, but... and then all the crazy things we've built.

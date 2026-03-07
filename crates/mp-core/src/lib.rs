@@ -1,3 +1,15 @@
+pub mod agent;
+pub mod channel;
 pub mod config;
+pub mod context;
 pub mod db;
+pub mod encryption;
+pub mod extraction;
+pub mod gateway;
+pub mod observability;
+pub mod policy;
+pub mod scheduler;
 pub mod schema;
+pub mod search;
+pub mod store;
+pub mod tools;
