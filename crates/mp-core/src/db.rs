@@ -27,10 +27,3 @@ fn configure(conn: &Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Load a SQLite extension by path. The entry point is auto-detected.
-pub fn load_extension(conn: &Connection, path: &Path) -> anyhow::Result<()> {
-    unsafe {
-        conn.load_extension(path, None)?;
-    }
-    Ok(())
-}
