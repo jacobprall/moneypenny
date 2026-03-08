@@ -41,7 +41,7 @@ Embeddings are generated locally by default. Optional Web UI: build `web-ui` and
 - **Three compression levels.** Full detail, summary, and 2–5 word pointers. The agent loads all knowledge as pointers (~2K tokens for 500 facts), then auto-expands only what’s relevant.
 - **Graph-linked facts.** Traversable edges between related facts. “What do I know about X?” follows the graph without independent retrieval.
 - **Hybrid retrieval.** Vector similarity + full-text via Reciprocal Rank Fusion. Results deduplicated, MMR diversity-ranked, policy-filtered at SQL. Store weights adapt by intent (facts vs knowledge vs history).
-- **Cheap extraction.** A small local model (e.g. 3B) can run extraction while the main conversation uses Claude or GPT-4. Memory management stays fast and local.
+- **Cheap extraction.** A small local model (e.g. 3B) can run extraction while the main conversation uses Claude or GPT. Memory management stays fast and local.
 
 ### Your data never leaves your machine
 
@@ -101,8 +101,6 @@ __In short: Moneypenny becomes the layer that makes OpenClaw outputs compounding
 
 - **OpenClaw** is the execution/control plane (channels, nodes, browser automation, webhooks, device actions).
 - **Moneypenny** is the intelligence/data plane (durable memory, policy governance, audit analytics, cross-session retrieval, and sync).
-
-OpenClaw handles breadth of interfaces and action routing; Moneypenny turns logs and events into governed, queryable long-term intelligence.
 
 
 ## Built On
