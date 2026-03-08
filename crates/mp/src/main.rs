@@ -1756,11 +1756,27 @@ async fn cmd_agent(config: &Config, cmd: cli::AgentCommand) -> Result<()> {
     match cmd {
         cli::AgentCommand::List => {
             println!();
-            println!("  {:20} {:15} {:15}", "NAME", "TRUST", "LLM");
-            println!("  {:20} {:15} {:15}", "----", "-----", "---");
+            println!("  {:20} {:15} {:15} {:10}", "NAME", "TRUST", "LLM", "SOURCE");
+            println!("  {:20} {:15} {:15} {:10}", "----", "-----", "---", "------");
+            let mut listed: std::collections::HashSet<String> = std::collections::HashSet::new();
             for agent in &config.agents {
-                println!("  {:20} {:15} {:15}",
-                    agent.name, agent.trust_level, agent.llm.provider);
+                println!("  {:20} {:15} {:15} {:10}",
+                    agent.name, agent.trust_level, agent.llm.provider, "config");
+                listed.insert(agent.name.clone());
+            }
+            let meta_path = config.metadata_db_path();
+            if meta_path.exists() {
+                if let Ok(meta_conn) = mp_core::db::open(&meta_path) {
+                    if let Ok(db_agents) = mp_core::gateway::list_agents(&meta_conn) {
+                        for a in db_agents {
+                            if !listed.contains(&a.name) {
+                                println!("  {:20} {:15} {:15} {:10}",
+                                    a.name, a.trust_level, a.llm_provider, "runtime");
+                                listed.insert(a.name.clone());
+                            }
+                        }
+                    }
+                }
             }
             println!();
         }
@@ -3177,13 +3193,14 @@ async fn cmd_policy(config: &Config, cmd: cli::PolicyCommand) -> Result<()> {
             println!("  Policy \"{printed_name}\" added ({id}, priority={pri})");
         }
         cli::PolicyCommand::Test { input } => {
+            let resource = format!("sql:{input}");
             let req = op_request(
                 &ag.name,
                 "policy.explain",
                 serde_json::json!({
                     "actor": ag.name,
                     "action": "execute",
-                    "resource": "sql",
+                    "resource": resource,
                     "sql_content": input
                 }),
             );
