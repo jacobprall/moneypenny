@@ -1,5 +1,7 @@
 # Moneypenny
 
+### The intelligence layer for AI agents.
+
 Persistent memory, policy governance, and audit for AI agents — in a single SQLite file.
 
 Moneypenny sits between your agent and its LLM. After every turn it extracts and compresses knowledge into structured facts, enforces policy on every tool call, logs an auditable decision trail, and syncs state across agents via CRDTs. The entire agent state lives in one portable SQLite database. No Postgres, no Redis, no Docker.
