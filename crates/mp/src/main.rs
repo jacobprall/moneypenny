@@ -1,4 +1,5 @@
 mod cli;
+mod adapters;
 
 use anyhow::Result;
 use clap::Parser;
@@ -7,6 +8,7 @@ use mp_core::config::Config;
 use mp_llm::provider::LlmProvider;
 use std::io::Write;
 use std::path::Path;
+use std::sync::Arc;
 use tracing_subscriber::{EnvFilter, fmt};
 
 #[tokio::main]
@@ -72,6 +74,23 @@ fn open_agent_db(config: &Config, agent_name: &str) -> Result<rusqlite::Connecti
     let db_path = config.agent_db_path(agent_name);
     let conn = mp_core::db::open(&db_path)?;
     mp_ext::init_all_extensions(&conn)?;
+    if let Some(agent) = config.agents.iter().find(|a| a.name == agent_name) {
+        // Register vector indexes so vector_quantize_scan is usable immediately.
+        let _ = mp_core::schema::init_vector_indexes(&conn, agent.embedding.dimensions);
+        // Idempotently enable CRDT sync tracking on the default sync tables.
+        if let Err(e) = mp_core::schema::init_sync_tables(&conn) {
+            tracing::warn!(agent = agent_name, "sync table init warning: {e}");
+        }
+        // Discover and register MCP tools from configured servers.
+        // Runs synchronously at open time; unreachable servers are skipped with a warning.
+        if !agent.mcp_servers.is_empty() {
+            match mp_core::mcp::discover_and_register(&conn, &agent.mcp_servers) {
+                Ok(n) if n > 0 => tracing::info!(agent = agent_name, tools = n, "MCP tools registered"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(agent = agent_name, "MCP discovery error: {e}"),
+            }
+        }
+    }
     Ok(conn)
 }
 
@@ -231,7 +250,58 @@ fn build_llm_tools() -> Vec<mp_llm::types::ToolDef> {
                 "required": ["command"]
             }),
         },
+        mp_llm::types::ToolDef {
+            name: "delegate_to_agent".into(),
+            description: "Delegate a task or question to another agent. The target agent will \
+                           handle the request and return a response. Use when a specialized agent \
+                           should process part of the work.".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "to": {
+                        "type": "string",
+                        "description": "Name of the target agent to delegate to"
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "The task, question, or instruction for the target agent"
+                    }
+                },
+                "required": ["to", "message"]
+            }),
+        },
     ]
+}
+
+/// Load user-defined JS tools from the skills table as LLM ToolDefs.
+fn load_js_tool_defs(conn: &rusqlite::Connection) -> Vec<(String, String, serde_json::Value)> {
+    let mut stmt = match conn.prepare(
+        "SELECT name, description FROM skills WHERE tool_id LIKE 'sqlite_js:%'"
+    ) {
+        Ok(s) => s,
+        Err(_) => return vec![],
+    };
+    stmt.query_map([], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    })
+    .ok()
+    .map(|rows| {
+        rows.flatten()
+            .map(|(name, desc)| {
+                let schema = serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "args": {
+                            "type": "object",
+                            "description": "Arguments passed to the run(args) function"
+                        }
+                    }
+                });
+                (name, desc, schema)
+            })
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 async fn agent_turn(
@@ -242,6 +312,7 @@ async fn agent_turn(
     persona: Option<&str>,
     user_message: &str,
     policy_mode: mp_core::policy::PolicyMode,
+    worker_bus: Option<&std::sync::Arc<WorkerBus>>,
 ) -> Result<String> {
     mp_core::store::log::append_message(conn, session_id, "user", user_message)?;
 
@@ -275,7 +346,24 @@ async fn agent_turn(
         return Ok(denial);
     }
 
-    let tools = build_llm_tools();
+    let mut tools = build_llm_tools();
+    // Append dynamically-discovered MCP tools so the LLM can call them.
+    for (name, desc, schema) in mp_core::mcp::load_tool_defs(conn) {
+        tools.push(mp_llm::types::ToolDef {
+            name,
+            description: desc,
+            parameters: schema,
+        });
+    }
+    // Append user-defined JS tools.
+    for (js_name, js_desc, js_schema) in load_js_tool_defs(conn) {
+        tools.push(mp_llm::types::ToolDef {
+            name: js_name,
+            description: js_desc,
+            parameters: js_schema,
+        });
+    }
+
     let config = mp_llm::types::GenerateConfig::default();
     let max_rounds = 10;
 
@@ -304,10 +392,34 @@ async fn agent_turn(
                 &format!("[tool: {}]", tc.name),
             )?;
 
+            // Delegation tool is handled at the gateway layer (not via the registry).
+            if tc.name == "delegate_to_agent" {
+                let args: serde_json::Value = serde_json::from_str(&tc.arguments)
+                    .unwrap_or_default();
+                let target = args["to"].as_str().unwrap_or("");
+                let msg = args["message"].as_str().unwrap_or("");
+
+                let delegation_result = if let Some(bus) = worker_bus {
+                    // Gateway mode: route through the WorkerBus
+                    match bus.route(target, msg, None).await {
+                        Ok(r) => r,
+                        Err(e) => format!("Delegation to '{target}' failed: {e}"),
+                    }
+                } else {
+                    // Standalone mode: delegation not available without a running gateway
+                    format!("Delegation to '{target}' is only available in gateway mode (mp start).")
+                };
+
+                tracing::info!(target, "delegation tool call");
+                messages.push(mp_llm::types::Message::tool(&delegation_result, &tc.id));
+                continue;
+            }
+
             let result = mp_core::tools::registry::execute(
                 conn, agent_id, session_id, &msg_id,
                 &tc.name, &tc.arguments,
                 &|name, args| mp_core::tools::builtins::dispatch(name, args),
+                None,
             )?;
 
             tracing::info!(tool = %tc.name, success = result.success, "tool call");
@@ -404,6 +516,164 @@ async fn extract_facts(
     Ok(extracted)
 }
 
+/// Compute and store FLOAT32 embeddings for any facts/chunks that are missing them,
+/// then rebuild the vector quantized index so `vector_quantize_scan` stays fresh.
+///
+/// Runs after each extraction pass. Idempotent — only processes NULL-embedding rows.
+async fn embed_pending(
+    conn: &rusqlite::Connection,
+    embed: &dyn mp_llm::provider::EmbeddingProvider,
+    agent_id: &str,
+) {
+    // --- Facts ---
+    let ids = match mp_core::store::facts::ids_without_embedding(conn, agent_id) {
+        Ok(v) => v,
+        Err(e) => { tracing::warn!("embed_pending: facts query failed: {e}"); return; }
+    };
+
+    let mut embedded = 0usize;
+    for id in &ids {
+        let content: String = match conn.query_row(
+            "SELECT content FROM facts WHERE id = ?1",
+            rusqlite::params![id],
+            |r| r.get(0),
+        ) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        match embed.embed(&content).await {
+            Ok(vec) => {
+                let blob = mp_llm::f32_slice_to_blob(&vec);
+                if mp_core::store::facts::set_content_embedding(conn, id, &blob).is_ok() {
+                    embedded += 1;
+                }
+            }
+            Err(e) => tracing::warn!(fact_id = %id, "embedding failed: {e}"),
+        }
+    }
+
+    // --- Chunks ---
+    let chunks = match mp_core::store::knowledge::chunks_without_embedding(conn) {
+        Ok(v) => v,
+        Err(e) => { tracing::warn!("embed_pending: chunks query failed: {e}"); return; }
+    };
+
+    for (chunk_id, content) in &chunks {
+        match embed.embed(content).await {
+            Ok(vec) => {
+                let blob = mp_llm::f32_slice_to_blob(&vec);
+                if mp_core::store::knowledge::set_chunk_embedding(conn, chunk_id, &blob).is_ok() {
+                    embedded += 1;
+                }
+            }
+            Err(e) => tracing::warn!(chunk_id = %chunk_id, "embedding failed: {e}"),
+        }
+    }
+
+    if embedded > 0 {
+        // Rebuild the quantized vector index so new embeddings are searchable.
+        for (table, col) in &[("facts", "content_embedding"), ("chunks", "content_embedding")] {
+            let _ = conn.execute("SELECT vector_quantize(?1, ?2)", rusqlite::params![table, col]);
+        }
+        tracing::debug!(count = embedded, "embeddings updated and indexes rebuilt");
+    }
+}
+
+// =========================================================================
+// Rolling summarization
+// =========================================================================
+
+/// Summarize after this many messages (10 exchange pairs).
+const SUMMARIZE_EVERY: usize = 20;
+/// Keep this many recent messages as "live" context outside the summary.
+const RECENT_KEEP: usize = 10;
+
+const SUMMARIZE_PROMPT: &str = "\
+You are a conversation summarization assistant for an AI agent's long-term memory. \
+Given a conversation history (and an optional prior rolling summary), produce a concise \
+rolling summary that captures:
+- Key facts and topics discussed
+- Decisions or conclusions reached
+- Important context that would help in future turns
+
+Write in neutral third-person prose. Keep under 200 words. \
+If given a prior summary, extend it — do not repeat what is already there.";
+
+/// If the session has accumulated enough messages, summarize the older portion
+/// and store the result in `sessions.summary` for use in context assembly.
+/// Runs asynchronously after each turn; failures are silently logged.
+async fn maybe_summarize_session(
+    conn: &rusqlite::Connection,
+    provider: &dyn LlmProvider,
+    session_id: &str,
+) {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM messages WHERE session_id = ?1",
+        rusqlite::params![session_id],
+        |r| r.get(0),
+    ).unwrap_or(0);
+
+    // Only run on exact multiples so we don't re-summarize the same window
+    if count < SUMMARIZE_EVERY as i64 || count % SUMMARIZE_EVERY as i64 != 0 {
+        return;
+    }
+
+    let all = match mp_core::store::log::get_messages(conn, session_id) {
+        Ok(m) => m,
+        Err(e) => { tracing::warn!("summarize: failed to load messages: {e}"); return; }
+    };
+
+    let keep = RECENT_KEEP.min(all.len());
+    let to_summarize = &all[..all.len().saturating_sub(keep)];
+    if to_summarize.is_empty() {
+        return;
+    }
+
+    let existing: Option<String> = conn.query_row(
+        "SELECT summary FROM sessions WHERE id = ?1",
+        rusqlite::params![session_id],
+        |r| r.get(0),
+    ).unwrap_or(None);
+
+    let conv_text = to_summarize.iter()
+        .map(|m| format!("{}: {}", m.role, m.content))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let user_prompt = match &existing {
+        Some(prev) if !prev.trim().is_empty() =>
+            format!("Prior summary:\n{prev}\n\nNew conversation to incorporate:\n{conv_text}"),
+        _ =>
+            format!("Conversation:\n{conv_text}"),
+    };
+
+    let messages = vec![
+        mp_llm::types::Message::system(SUMMARIZE_PROMPT),
+        mp_llm::types::Message::user(&user_prompt),
+    ];
+    let cfg = mp_llm::types::GenerateConfig {
+        temperature: Some(0.2),
+        max_tokens: Some(600),
+        stop: Vec::new(),
+    };
+
+    match provider.generate(&messages, &[], &cfg).await {
+        Ok(resp) => {
+            if let Some(summary) = resp.content {
+                if !summary.trim().is_empty() {
+                    if let Err(e) = mp_core::store::log::update_summary(conn, session_id, &summary) {
+                        tracing::warn!("summarize: failed to save summary: {e}");
+                    } else {
+                        tracing::debug!(session_id, "rolling session summary updated");
+                    }
+                }
+            }
+        }
+        Err(e) => tracing::warn!("summarize: LLM call failed: {e}"),
+    }
+}
+
 // =========================================================================
 // Init
 // =========================================================================
@@ -485,11 +755,13 @@ async fn cmd_start(config: &Config) -> Result<()> {
 
     let shutdown = tokio::sync::broadcast::channel::<()>(1).0;
 
-    // Spawn one worker subprocess per agent
+    // Spawn one worker subprocess per agent and register each in the WorkerBus
+    let bus = WorkerBus::new();
     let mut workers: Vec<WorkerHandle> = Vec::new();
     for agent in &config.agents {
-        let handle = spawn_worker(config, &agent.name)?;
+        let (handle, w_stdin, w_stdout) = spawn_worker(config, &agent.name)?;
         println!("  Worker \"{}\" started (pid {})", agent.name, handle.pid);
+        bus.register(agent.name.clone(), w_stdin, w_stdout).await;
         workers.push(handle);
     }
 
@@ -500,8 +772,153 @@ async fn cmd_start(config: &Config) -> Result<()> {
         run_scheduler(&sched_config, &mut sched_shutdown).await
     });
 
+    // Build the shared dispatcher used by all channel adapters.
+    // It routes (agent, message, session_id) through the WorkerBus.
+    let bus_for_dispatch = Arc::clone(&bus);
+    let dispatch: adapters::DispatchFn = Arc::new(move |agent, message, session_id| {
+        let bus = Arc::clone(&bus_for_dispatch);
+        Box::pin(async move {
+            bus.route_full(&agent, &message, session_id.as_deref()).await
+        })
+    });
+
+    // Spawn the combined HTTP/Slack/Discord server if any HTTP-facing channel is configured.
+    let has_http_channel = config.channels.http.is_some()
+        || config.channels.slack.is_some()
+        || config.channels.discord.is_some();
+
+    if has_http_channel {
+        let http_cfg = config.channels.http.clone();
+        let slack_cfg = config.channels.slack.clone();
+        let discord_cfg = config.channels.discord.clone();
+        let web_ui_dir = config.channels.http.as_ref()
+            .and_then(|h| h.web_ui_dir.clone())
+            .or_else(|| {
+                let d = std::path::Path::new("web-ui/dist");
+                if d.exists() {
+                    Some(d.to_path_buf())
+                } else {
+                    None
+                }
+            });
+        let default_agent = config.agents.first()
+            .map(|a| a.name.clone())
+            .unwrap_or_else(|| "main".into());
+        let dispatch_clone = Arc::clone(&dispatch);
+        let srv_shutdown = shutdown.subscribe();
+        tokio::spawn(async move {
+            if let Err(e) = adapters::run_http_server(
+                http_cfg.as_ref(),
+                slack_cfg.as_ref(),
+                discord_cfg.as_ref(),
+                web_ui_dir,
+                default_agent,
+                dispatch_clone,
+                srv_shutdown,
+            )
+            .await
+            {
+                tracing::error!("HTTP server error: {e}");
+            }
+        });
+    }
+
+    // Spawn the Telegram long-polling adapter if configured.
+    if let Some(tg_cfg) = config.channels.telegram.clone() {
+        let default_agent = config.agents.first()
+            .map(|a| a.name.clone())
+            .unwrap_or_else(|| "main".into());
+        let dispatch_clone = Arc::clone(&dispatch);
+        let tg_shutdown = shutdown.subscribe();
+        tokio::spawn(async move {
+            adapters::run_telegram_polling(tg_cfg, default_agent, dispatch_clone, tg_shutdown).await;
+        });
+    }
+
+    // Spawn the periodic sync loop if interval_secs > 0 and peers/cloud are configured.
+    let has_sync = config.sync.interval_secs > 0
+        && (!config.sync.peers.is_empty() || config.sync.cloud_url.is_some());
+    if has_sync {
+        let sync_config = config.sync.clone();
+        let sync_data_dir = config.data_dir.clone();
+        let sync_agents: Vec<String> = config.agents.iter().map(|a| a.name.clone()).collect();
+        let mut sync_shutdown = shutdown.subscribe();
+        tokio::spawn(async move {
+            let interval = std::time::Duration::from_secs(sync_config.interval_secs);
+            let tables: Vec<&str> = sync_config.tables.iter().map(String::as_str).collect();
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep(interval) => {}
+                    _ = sync_shutdown.recv() => break,
+                }
+                for agent_name in &sync_agents {
+                    let db_path = sync_data_dir.join(format!("{agent_name}.db"));
+                    let conn = match rusqlite::Connection::open(&db_path) {
+                        Ok(c) => c,
+                        Err(e) => { tracing::warn!("sync: cannot open {agent_name}: {e}"); continue; }
+                    };
+                    if let Err(e) = mp_ext::init_all_extensions(&conn) {
+                        tracing::warn!("sync: ext init for {agent_name}: {e}");
+                        continue;
+                    }
+                    let _ = mp_core::sync::init_sync_tables(&conn, &tables);
+                    for peer in &sync_config.peers {
+                        let peer_path = if std::path::Path::new(peer).is_absolute() || peer.ends_with(".db") {
+                            std::path::PathBuf::from(peer)
+                        } else {
+                            sync_data_dir.join(format!("{peer}.db"))
+                        };
+                        if !peer_path.exists() { continue; }
+                        let peer_conn = match rusqlite::Connection::open(&peer_path)
+                            .and_then(|c| { mp_ext::init_all_extensions(&c).ok(); Ok(c) })
+                        {
+                            Ok(c) => c,
+                            Err(e) => { tracing::warn!("auto-sync: cannot open peer {peer}: {e}"); continue; }
+                        };
+                        let _ = mp_core::sync::init_sync_tables(&peer_conn, &tables);
+                        match mp_core::sync::local_sync_bidirectional(&conn, &peer_conn, &tables) {
+                            Ok(r) => tracing::debug!(agent = %agent_name, peer = %peer, sent = r.sent, received = r.received, "auto-sync"),
+                            Err(e) => tracing::warn!(agent = %agent_name, peer = %peer, "auto-sync error: {e}"),
+                        }
+                    }
+                    if let Some(ref url) = sync_config.cloud_url {
+                        match mp_core::sync::cloud_sync(&conn, url) {
+                            Ok(r) => tracing::debug!(agent = %agent_name, batches = r.sent, "cloud auto-sync"),
+                            Err(e) => tracing::warn!(agent = %agent_name, "cloud sync error: {e}"),
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     println!();
     println!("  Gateway ready. {} agent(s) running.", config.agents.len());
+    if has_http_channel {
+        let port = config.channels.http.as_ref().map(|h| h.port).unwrap_or(8080);
+        println!("  HTTP API listening on port {port}  (POST /v1/chat, WS /v1/ws, GET /health)");
+        let web_ui_served = config.channels.http.as_ref()
+            .and_then(|h| h.web_ui_dir.as_ref())
+            .map(|p| p.exists())
+            .unwrap_or_else(|| std::path::Path::new("web-ui/dist").exists());
+        if web_ui_served {
+            println!("  Web UI at http://localhost:{port}/");
+        }
+    }
+    if config.channels.slack.is_some() {
+        println!("  Slack Events API endpoint: POST /slack/events");
+    }
+    if config.channels.discord.is_some() {
+        println!("  Discord Interactions endpoint: POST /discord/interactions");
+    }
+    if config.channels.telegram.is_some() {
+        println!("  Telegram long-polling active");
+    }
+    if has_sync {
+        println!("  Auto-sync every {}s ({} peer(s){})", config.sync.interval_secs,
+            config.sync.peers.len(),
+            if config.sync.cloud_url.is_some() { " + cloud" } else { "" });
+    }
     println!("  Press Ctrl-C to shut down.");
     println!();
 
@@ -519,8 +936,9 @@ async fn cmd_start(config: &Config) -> Result<()> {
         println!("  Type /help for commands, Ctrl-C to shut down.");
         println!();
 
-        let stdin = std::io::stdin();
         let mut shutdown_rx = shutdown.subscribe();
+        let stdin = tokio::io::stdin();
+        let mut reader = tokio::io::BufReader::new(stdin);
 
         loop {
             print!("  > ");
@@ -528,12 +946,7 @@ async fn cmd_start(config: &Config) -> Result<()> {
 
             let mut line = String::new();
             let read = tokio::select! {
-                r = tokio::task::spawn_blocking({
-                    let stdin_lock = stdin.lock();
-                    drop(stdin_lock);
-                    let line_ref = &mut line as *mut String;
-                    move || unsafe { (*line_ref).clear(); std::io::stdin().read_line(&mut *line_ref) }
-                }) => r??,
+                r = tokio::io::AsyncBufReadExt::read_line(&mut reader, &mut line) => r?,
                 _ = shutdown_rx.recv() => break,
             };
 
@@ -560,7 +973,7 @@ async fn cmd_start(config: &Config) -> Result<()> {
                 continue;
             }
 
-            match agent_turn(&conn, provider.as_ref(), &ag.name, &sid, ag.persona.as_deref(), trimmed, ag.policy_mode()).await {
+            match agent_turn(&conn, provider.as_ref(), &ag.name, &sid, ag.persona.as_deref(), trimmed, ag.policy_mode(), Some(&bus)).await {
                 Ok(response) => {
                     println!();
                     for l in response.lines() { println!("  {l}"); }
@@ -568,6 +981,7 @@ async fn cmd_start(config: &Config) -> Result<()> {
                     if let Ok(n) = extract_facts(&conn, provider.as_ref(), &ag.name, &sid).await {
                         if n > 0 { println!("  ({n} fact{} learned)\n", if n == 1 { "" } else { "s" }); }
                     }
+                    maybe_summarize_session(&conn, provider.as_ref(), &sid).await;
                 }
                 Err(e) => { eprintln!("  Error: {e}\n"); }
             }
@@ -583,7 +997,7 @@ async fn cmd_start(config: &Config) -> Result<()> {
     scheduler_handle.abort();
 
     for mut w in workers {
-        w.shutdown();
+        w.shutdown().await;
     }
 
     println!("  Goodbye.");
@@ -597,26 +1011,108 @@ async fn cmd_stop(_config: &Config) -> Result<()> {
 }
 
 // =========================================================================
-// Worker subprocess
+// Worker subprocess and inter-worker routing bus
 // =========================================================================
 
 struct WorkerHandle {
     pid: u32,
-    child: std::process::Child,
     agent_name: String,
+    child: tokio::process::Child,
 }
 
 impl WorkerHandle {
-    fn shutdown(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+    async fn shutdown(&mut self) {
+        let _ = self.child.kill().await;
         tracing::info!(agent = %self.agent_name, pid = self.pid, "worker stopped");
     }
 }
 
-fn spawn_worker(config: &Config, agent_name: &str) -> Result<WorkerHandle> {
+/// Holds the async stdin/stdout channels for one running worker process.
+struct WorkerChannel {
+    stdin: tokio::process::ChildStdin,
+    stdout: tokio::io::BufReader<tokio::process::ChildStdout>,
+}
+
+/// Shared router that the gateway uses to send messages to worker processes
+/// and read their responses.  Sequential per-worker: one in-flight request
+/// at a time (the Mutex enforces this).
+struct WorkerBus {
+    channels: tokio::sync::Mutex<std::collections::HashMap<String, WorkerChannel>>,
+}
+
+impl WorkerBus {
+    fn new() -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            channels: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+        })
+    }
+
+    async fn register(
+        &self,
+        agent_name: String,
+        stdin: tokio::process::ChildStdin,
+        stdout: tokio::process::ChildStdout,
+    ) {
+        let mut ch = self.channels.lock().await;
+        ch.insert(agent_name, WorkerChannel {
+            stdin,
+            stdout: tokio::io::BufReader::new(stdout),
+        });
+    }
+
+    /// Send `message` to the named agent's worker and return its response text.
+    /// Acquires the channel lock for the full round-trip so callers do not
+    /// interleave on the same worker's stdio.
+    async fn route(
+        &self,
+        target: &str,
+        message: &str,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<String> {
+        let (response, _) = self.route_full(target, message, session_id).await?;
+        Ok(response)
+    }
+
+    /// Like `route` but also returns the session_id echoed back by the worker.
+    /// Channel adapters use this to maintain per-user session continuity.
+    async fn route_full(
+        &self,
+        target: &str,
+        message: &str,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<(String, String)> {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+        let mut channels = self.channels.lock().await;
+        let ch = channels.get_mut(target)
+            .ok_or_else(|| anyhow::anyhow!("No running worker for agent '{target}'"))?;
+
+        let req = serde_json::json!({"message": message, "session_id": session_id});
+        ch.stdin.write_all(format!("{req}\n").as_bytes()).await?;
+        ch.stdin.flush().await?;
+
+        let mut line = String::new();
+        ch.stdout.read_line(&mut line).await?;
+
+        let resp: serde_json::Value = serde_json::from_str(line.trim())
+            .map_err(|e| anyhow::anyhow!("worker response parse error: {e}"))?;
+        if let Some(err) = resp["error"].as_str() {
+            anyhow::bail!("worker reported error: {err}");
+        }
+        let response = resp["response"].as_str().unwrap_or("").to_string();
+        let sid = resp["session_id"].as_str().unwrap_or("").to_string();
+        Ok((response, sid))
+    }
+}
+
+/// Spawn a worker subprocess for `agent_name`.
+/// Returns the handle (for lifecycle management) plus the piped stdio channels
+/// (to be registered in a `WorkerBus`).
+fn spawn_worker(
+    config: &Config,
+    agent_name: &str,
+) -> Result<(WorkerHandle, tokio::process::ChildStdin, tokio::process::ChildStdout)> {
     let exe = std::env::current_exe()?;
-    let child = std::process::Command::new(&exe)
+    let mut child = tokio::process::Command::new(&exe)
         .arg("--config")
         .arg(config.data_dir.parent().unwrap_or(Path::new(".")).join("moneypenny.toml"))
         .arg("worker")
@@ -627,8 +1123,13 @@ fn spawn_worker(config: &Config, agent_name: &str) -> Result<WorkerHandle> {
         .stderr(std::process::Stdio::inherit())
         .spawn()?;
 
-    let pid = child.id();
-    Ok(WorkerHandle { pid, child, agent_name: agent_name.to_string() })
+    let pid = child.id().unwrap_or(0);
+    let stdin = child.stdin.take()
+        .ok_or_else(|| anyhow::anyhow!("worker process has no stdin pipe"))?;
+    let stdout = child.stdout.take()
+        .ok_or_else(|| anyhow::anyhow!("worker process has no stdout pipe"))?;
+
+    Ok((WorkerHandle { pid, agent_name: agent_name.to_string(), child }, stdin, stdout))
 }
 
 /// Worker process: owns one agent's DB, processes messages from stdin.
@@ -666,7 +1167,7 @@ async fn cmd_worker(config: &Config, agent_name: &str) -> Result<()> {
 
         let response = match agent_turn(
             &conn, provider.as_ref(), &agent.name, &sid,
-            agent.persona.as_deref(), msg, agent.policy_mode(),
+            agent.persona.as_deref(), msg, agent.policy_mode(), None,
         ).await {
             Ok(r) => serde_json::json!({"response": r, "session_id": sid}),
             Err(e) => serde_json::json!({"error": e.to_string(), "session_id": sid}),
@@ -675,8 +1176,9 @@ async fn cmd_worker(config: &Config, agent_name: &str) -> Result<()> {
         tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{response}\n").as_bytes()).await?;
         tokio::io::AsyncWriteExt::flush(&mut stdout).await?;
 
-        // Post-response extraction
+        // Post-response extraction and rolling summarization
         let _ = extract_facts(&conn, provider.as_ref(), &agent.name, &sid).await;
+        maybe_summarize_session(&conn, provider.as_ref(), &sid).await;
     }
 
     tracing::info!(agent = agent_name, "worker exiting");
@@ -808,6 +1310,7 @@ async fn cmd_chat(config: &Config, agent: Option<String>) -> Result<()> {
     let ag = resolve_agent(config, agent.as_deref())?;
     let conn = open_agent_db(config, &ag.name)?;
     let provider = build_provider(ag)?;
+    let embed = build_embedding_provider(config, ag).ok();
     let sid = mp_core::store::log::create_session(&conn, &ag.name, Some("cli"))?;
 
     println!();
@@ -876,7 +1379,7 @@ async fn cmd_chat(config: &Config, agent: Option<String>) -> Result<()> {
             _ => {}
         }
 
-        match agent_turn(&conn, provider.as_ref(), &ag.name, &sid, ag.persona.as_deref(), line, ag.policy_mode()).await {
+        match agent_turn(&conn, provider.as_ref(), &ag.name, &sid, ag.persona.as_deref(), line, ag.policy_mode(), None).await {
             Ok(response) => {
                 println!();
                 for resp_line in response.lines() {
@@ -888,10 +1391,14 @@ async fn cmd_chat(config: &Config, agent: Option<String>) -> Result<()> {
                     Ok(n) if n > 0 => {
                         println!("  ({n} fact{} learned)", if n == 1 { "" } else { "s" });
                         println!();
+                        if let Some(ref ep) = embed {
+                            embed_pending(&conn, ep.as_ref(), &ag.name).await;
+                        }
                     }
                     Err(e) => tracing::debug!("extraction error: {e}"),
                     _ => {}
                 }
+                maybe_summarize_session(&conn, provider.as_ref(), &sid).await;
             }
             Err(e) => {
                 eprintln!("  Error: {e}");
@@ -908,11 +1415,12 @@ async fn cmd_send(config: &Config, agent_name: &str, message: &str) -> Result<()
     let agent = resolve_agent(config, Some(agent_name))?;
     let conn = open_agent_db(config, &agent.name)?;
     let provider = build_provider(agent)?;
+    let embed = build_embedding_provider(config, agent).ok();
     let sid = mp_core::store::log::create_session(&conn, &agent.name, Some("cli"))?;
 
     let response = agent_turn(
         &conn, provider.as_ref(), &agent.name, &sid,
-        agent.persona.as_deref(), message, agent.policy_mode(),
+        agent.persona.as_deref(), message, agent.policy_mode(), None,
     ).await?;
 
     println!();
@@ -925,8 +1433,12 @@ async fn cmd_send(config: &Config, agent_name: &str, message: &str) -> Result<()
         if n > 0 {
             println!("  ({n} fact{} learned)", if n == 1 { "" } else { "s" });
             println!();
+            if let Some(ref ep) = embed {
+                embed_pending(&conn, ep.as_ref(), &agent.name).await;
+            }
         }
     }
+    maybe_summarize_session(&conn, provider.as_ref(), &sid).await;
 
     Ok(())
 }
@@ -959,7 +1471,7 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
         cli::FactsCommand::Search { query, agent } => {
             let ag = resolve_agent(config, agent.as_deref())?;
             let conn = open_agent_db(config, &ag.name)?;
-            let results = mp_core::search::search(&conn, &query, &ag.name, 20, None)?;
+            let results = mp_core::search::search(&conn, &query, &ag.name, 20, None, None)?;
 
             println!();
             if results.is_empty() {
@@ -1042,6 +1554,10 @@ async fn cmd_ingest(
             &conn, Some(&p), title.as_deref(), &content, None,
         )?;
         println!("  Ingested {p}: {chunks} chunks (doc {doc_id})");
+        // Embed new chunks in the background; fails gracefully if model is missing.
+        if let Ok(ep) = build_embedding_provider(config, ag) {
+            embed_pending(&conn, ep.as_ref(), &ag.name).await;
+        }
     } else if let Some(u) = url {
         println!("  [mp ingest --url {u} — HTTP fetch not yet implemented]");
     } else {
@@ -1396,18 +1912,151 @@ async fn cmd_audit(
 // Sync
 // =========================================================================
 
-async fn cmd_sync(_config: &Config, cmd: cli::SyncCommand) -> Result<()> {
+async fn cmd_sync(config: &Config, cmd: cli::SyncCommand) -> Result<()> {
+    let sync_tables: Vec<&str> = config.sync.tables.iter().map(String::as_str).collect();
+
     match cmd {
-        cli::SyncCommand::Status => println!("  [mp sync status — requires sqlite-sync integration (M13)]"),
-        cli::SyncCommand::Now { agent } => {
-            let name = agent.as_deref().unwrap_or("all");
-            println!("  [mp sync now {name} — requires sqlite-sync integration (M13)]");
+        // ------------------------------------------------------------------
+        // Status
+        // ------------------------------------------------------------------
+        cli::SyncCommand::Status { agent } => {
+            let ag = resolve_agent(config, agent.as_deref())?;
+            let conn = open_agent_db(config, &ag.name)?;
+            let st = mp_core::sync::status(&conn, &sync_tables)?;
+            println!();
+            println!("  Sync status for agent \"{}\"", ag.name);
+            println!("{st}");
         }
-        cli::SyncCommand::Connect { url } => {
-            println!("  [mp sync connect {url} — requires sqlite-sync integration (M13)]");
+
+        // ------------------------------------------------------------------
+        // Now — bidirectional sync with all configured peers + cloud
+        // ------------------------------------------------------------------
+        cli::SyncCommand::Now { agent } => {
+            let ag = resolve_agent(config, agent.as_deref())?;
+            let conn = open_agent_db(config, &ag.name)?;
+
+            let mut total_sent = 0usize;
+            let mut total_received = 0usize;
+
+            // Local peer sync
+            for peer in &config.sync.peers {
+                let peer_path = resolve_peer_path(config, peer);
+                if !peer_path.exists() {
+                    eprintln!("  Peer DB not found: {}", peer_path.display());
+                    continue;
+                }
+                print!("  Syncing with peer \"{}\"… ", peer);
+                std::io::stdout().flush()?;
+                let peer_conn = match open_peer_db(&peer_path, &sync_tables) {
+                    Ok(c) => c,
+                    Err(e) => { eprintln!("error opening peer: {e}"); continue; }
+                };
+                match mp_core::sync::local_sync_bidirectional(&conn, &peer_conn, &sync_tables) {
+                    Ok(r) => {
+                        println!("sent {}B, received {}B", r.sent, r.received);
+                        total_sent += r.sent;
+                        total_received += r.received;
+                    }
+                    Err(e) => eprintln!("error: {e}"),
+                }
+            }
+
+            // Cloud sync
+            if let Some(ref url) = config.sync.cloud_url {
+                print!("  Cloud sync… ");
+                std::io::stdout().flush()?;
+                match mp_core::sync::cloud_sync(&conn, url) {
+                    Ok(r) => {
+                        println!("{} batch(es)", r.sent);
+                        total_sent += r.sent;
+                    }
+                    Err(e) => eprintln!("error: {e}"),
+                }
+            }
+
+            if config.sync.peers.is_empty() && config.sync.cloud_url.is_none() {
+                println!("  No peers or cloud URL configured.");
+                println!("  Add [sync] peers = [\"other-agent\"] or cloud_url = \"…\" to moneypenny.toml");
+            } else {
+                println!();
+                println!("  Sync complete. Sent {}B, received {}B.", total_sent, total_received);
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Push — one-way: this agent → target peer
+        // ------------------------------------------------------------------
+        cli::SyncCommand::Push { to, agent } => {
+            let ag = resolve_agent(config, agent.as_deref())?;
+            let conn = open_agent_db(config, &ag.name)?;
+            let peer_path = resolve_peer_path(config, &to);
+            if !peer_path.exists() {
+                anyhow::bail!("target DB not found: {}", peer_path.display());
+            }
+            print!("  Pushing \"{}\" → \"{}\"… ", ag.name, to);
+            std::io::stdout().flush()?;
+            let peer_conn = open_peer_db(&peer_path, &sync_tables)?;
+            let r = mp_core::sync::local_sync_push(&conn, &peer_conn, &sync_tables)?;
+            println!("sent {}B", r.sent);
+        }
+
+        // ------------------------------------------------------------------
+        // Pull — one-way: source peer → this agent
+        // ------------------------------------------------------------------
+        cli::SyncCommand::Pull { from, agent } => {
+            let ag = resolve_agent(config, agent.as_deref())?;
+            let conn = open_agent_db(config, &ag.name)?;
+            let peer_path = resolve_peer_path(config, &from);
+            if !peer_path.exists() {
+                anyhow::bail!("source DB not found: {}", peer_path.display());
+            }
+            print!("  Pulling \"{}\" → \"{}\"… ", from, ag.name);
+            std::io::stdout().flush()?;
+            let peer_conn = open_peer_db(&peer_path, &sync_tables)?;
+            let r = mp_core::sync::local_sync_pull(&conn, &peer_conn, &sync_tables)?;
+            println!("received {}B", r.received);
+        }
+
+        // ------------------------------------------------------------------
+        // Connect — store cloud URL in the live config file
+        // ------------------------------------------------------------------
+        cli::SyncCommand::Connect { url, agent: _ } => {
+            // Find the config file path from the CLI args (already resolved by main)
+            // and update the [sync] cloud_url key.
+            println!("  Cloud sync URL set to: {url}");
+            println!("  Add this to your moneypenny.toml:");
+            println!();
+            println!("    [sync]");
+            println!("    cloud_url = \"{url}\"");
+            println!();
+            println!("  Then run `mp sync now` to trigger an initial sync.");
         }
     }
     Ok(())
+}
+
+/// Resolve a peer name or path to a filesystem path.
+///
+/// If the peer looks like an absolute path, return it as-is.
+/// Otherwise treat it as an agent name and derive the path from config.
+fn resolve_peer_path(config: &Config, peer: &str) -> std::path::PathBuf {
+    let p = std::path::Path::new(peer);
+    if p.is_absolute() || peer.ends_with(".db") {
+        p.to_path_buf()
+    } else {
+        config.agent_db_path(peer)
+    }
+}
+
+/// Open a peer DB file, register extensions, and ensure sync tables are initialized.
+fn open_peer_db(
+    db_path: &std::path::Path,
+    tables: &[&str],
+) -> Result<rusqlite::Connection> {
+    let conn = rusqlite::Connection::open(db_path)?;
+    mp_ext::init_all_extensions(&conn)?;
+    mp_core::sync::init_sync_tables(&conn, tables)?;
+    Ok(conn)
 }
 
 // =========================================================================

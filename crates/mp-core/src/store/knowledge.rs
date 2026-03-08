@@ -207,6 +207,26 @@ pub fn promote_skill(conn: &Connection, skill_id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Write or overwrite the FLOAT32 content embedding for a knowledge chunk.
+pub fn set_chunk_embedding(conn: &Connection, chunk_id: &str, blob: &[u8]) -> anyhow::Result<()> {
+    conn.execute(
+        "UPDATE chunks SET content_embedding = ?1 WHERE id = ?2",
+        rusqlite::params![blob, chunk_id],
+    )?;
+    Ok(())
+}
+
+/// Return (id, content) for all chunks that have no content_embedding yet.
+pub fn chunks_without_embedding(conn: &Connection) -> anyhow::Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, content FROM chunks WHERE content_embedding IS NULL",
+    )?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 // -- Markdown-aware chunking --
 
 /// Split markdown into chunks of roughly CHUNK_MAX_CHARS, breaking at heading boundaries.

@@ -53,6 +53,16 @@ pub struct ToolResult {
     pub duration_ms: u64,
 }
 
+impl ToolResult {
+    pub fn success(output: impl Into<String>) -> Self {
+        Self { output: output.into(), success: true, duration_ms: 0 }
+    }
+
+    pub fn failure(output: impl Into<String>) -> Self {
+        Self { output: output.into(), success: false, duration_ms: 0 }
+    }
+}
+
 /// Register a tool in the skills table for RAG discoverability.
 pub fn register(conn: &Connection, tool: &ToolDef) -> anyhow::Result<String> {
     let id = uuid::Uuid::new_v4().to_string();
@@ -158,7 +168,17 @@ pub fn discover(conn: &Connection, intent: &str, limit: usize) -> anyhow::Result
     }).collect())
 }
 
-/// Execute a tool with policy gating, secret redaction, and audit logging.
+/// Execute a tool with policy gating, hook callbacks, secret redaction, and audit logging.
+///
+/// # Execution order
+///
+/// 1. **Policy check** — deny immediately if the policy engine blocks this call.
+/// 2. **Pre-hooks** — any hook that aborts produces an immediate denied-style result.
+///    A hook that overrides args substitutes them for this execution only.
+/// 3. **Tool dispatch** — runtime tools or the provided `executor` closure.
+/// 4. **Post-hooks** — may transform the output (e.g. truncate, reformat, enrich).
+/// 5. **Secret redaction** — scrubs known secret patterns from the output.
+/// 6. **Audit log** — appends to `tool_calls`.
 pub fn execute(
     conn: &Connection,
     agent_id: &str,
@@ -167,6 +187,7 @@ pub fn execute(
     tool_name: &str,
     arguments: &str,
     executor: &dyn Fn(&str, &str) -> anyhow::Result<ToolResult>,
+    hooks: Option<&super::hooks::ToolHooks>,
 ) -> anyhow::Result<ToolResult> {
     let start = std::time::Instant::now();
 
@@ -198,21 +219,72 @@ pub fn execute(
         return Ok(result);
     }
 
-    // 2. Execute — runtime tools get dispatched directly (they need the db connection)
-    let exec_result = if super::runtime::is_runtime_tool(tool_name) {
-        super::runtime::dispatch(conn, agent_id, session_id, tool_name, arguments)
+    // 2. Pre-hooks
+    let effective_args: std::borrow::Cow<str> = if let Some(h) = hooks {
+        let hook_ctx = super::hooks::HookContext {
+            tool_name: tool_name.into(),
+            agent_id: agent_id.into(),
+            session_id: session_id.into(),
+        };
+        match h.run_pre(&hook_ctx, arguments) {
+            Ok(None) => std::borrow::Cow::Borrowed(arguments),
+            Ok(Some(overridden)) => std::borrow::Cow::Owned(overridden),
+            Err(abort_msg) => {
+                let duration_ms = start.elapsed().as_millis() as u64;
+                let result = ToolResult {
+                    output: abort_msg.clone(),
+                    success: false,
+                    duration_ms,
+                };
+                crate::store::log::record_tool_call(
+                    conn, message_id, session_id, tool_name,
+                    Some(arguments), Some(&abort_msg),
+                    Some("hook_aborted"), Some("deny"),
+                    Some(duration_ms as i64),
+                )?;
+                return Ok(result);
+            }
+        }
     } else {
-        executor(tool_name, arguments)
+        std::borrow::Cow::Borrowed(arguments)
+    };
+
+    // 3. Execute — dispatch in priority order:
+    //    a) runtime tools (need the DB connection)
+    //    b) MCP tools (spawn the registered server subprocess)
+    //    c) sqlite-js tools (execute via node/deno)
+    //    d) built-in / external tools via the caller-supplied executor closure
+    let exec_result = if super::runtime::is_runtime_tool(tool_name) {
+        super::runtime::dispatch(conn, agent_id, session_id, tool_name, &effective_args)
+    } else if crate::mcp::is_mcp_tool(conn, tool_name) {
+        crate::mcp::dispatch(conn, tool_name, &effective_args)
+    } else if super::runtime::is_js_tool(conn, tool_name) {
+        super::runtime::dispatch_js(conn, tool_name, &effective_args)
+    } else {
+        executor(tool_name, &effective_args)
     };
     let duration_ms = start.elapsed().as_millis() as u64;
 
     match exec_result {
         Ok(mut result) => {
             result.duration_ms = duration_ms;
-            // 3. Redact secrets from output
+
+            // 4. Post-hooks
+            if let Some(h) = hooks {
+                let hook_ctx = super::hooks::HookContext {
+                    tool_name: tool_name.into(),
+                    agent_id: agent_id.into(),
+                    session_id: session_id.into(),
+                };
+                if let Some(overridden) = h.run_post(&hook_ctx, &result) {
+                    result.output = overridden;
+                }
+            }
+
+            // 5. Redact secrets from output
             result.output = crate::store::redact::redact(&result.output);
 
-            // 4. Audit log
+            // 6. Audit log
             let effect_str = format!("{:?}", decision.effect).to_lowercase();
             crate::store::log::record_tool_call(
                 conn, message_id, session_id, tool_name,
@@ -655,6 +727,71 @@ pub fn register_runtime_skills(conn: &Connection) -> anyhow::Result<()> {
             ).into()),
             enabled: true,
         },
+        // =================================================================
+        // JS tools
+        // =================================================================
+        ToolDef {
+            name: "js_tool_add".into(),
+            description: "Define and persist a custom JavaScript tool callable in future turns.".into(),
+            source: ToolSource::SqliteJs,
+            parameters_schema: Some(concat!(
+                "# js_tool_add\n\n",
+                "Persist a JavaScript function as a named tool. Once added, the tool can be called \n",
+                "by name in any future agent turn — it behaves exactly like a built-in tool.\n\n",
+                "## Script contract\n",
+                "The script must define a function named `run` that:\n",
+                "- Accepts one argument: `args` (the parsed JSON object passed when the tool is called)\n",
+                "- Returns a value that will be JSON-serialised and returned as the tool output\n\n",
+                "```js\n",
+                "function run(args) {\n",
+                "    return { result: args.a + args.b };\n",
+                "}\n",
+                "```\n\n",
+                "## Parameters\n",
+                "| Name        | Type   | Required | Description |\n",
+                "|-------------|--------|----------|-------------|\n",
+                "| name        | string | yes      | Tool name (letters, digits, underscores, hyphens) |\n",
+                "| description | string | no       | What this tool does |\n",
+                "| script      | string | yes      | JavaScript source containing a `run(args)` function |\n\n",
+                "## Example\n",
+                "Call: js_tool_add({\"name\": \"add_numbers\", \"description\": \"Add two numbers\", ",
+                "\"script\": \"function run(args) { return { result: args.a + args.b }; }\"})\n\n",
+                "## Notes\n",
+                "Requires Node.js (`node`) or Deno (`deno`) on PATH for execution. ",
+                "Calling the same name again overwrites the previous script."
+            ).into()),
+            enabled: true,
+        },
+        ToolDef {
+            name: "js_tool_list".into(),
+            description: "List all user-defined JavaScript tools.".into(),
+            source: ToolSource::SqliteJs,
+            parameters_schema: Some(concat!(
+                "# js_tool_list\n\n",
+                "Show all JavaScript tools that have been defined with js_tool_add.\n\n",
+                "## Parameters\n",
+                "None.\n\n",
+                "## Returns\n",
+                "A JSON array of {name, description, updated_at} objects."
+            ).into()),
+            enabled: true,
+        },
+        ToolDef {
+            name: "js_tool_delete".into(),
+            description: "Delete a user-defined JavaScript tool by name.".into(),
+            source: ToolSource::SqliteJs,
+            parameters_schema: Some(concat!(
+                "# js_tool_delete\n\n",
+                "Remove a JavaScript tool that was created with js_tool_add.\n\n",
+                "## Parameters\n",
+                "| Name | Type   | Required | Description |\n",
+                "|------|--------|----------|-------------|\n",
+                "| name | string | yes      | Name of the tool to delete |\n\n",
+                "## Example\n",
+                "Call: js_tool_delete({\"name\": \"add_numbers\"})"
+            ).into()),
+            enabled: true,
+        },
     ];
 
     for tool in &runtime_tools {
@@ -803,6 +940,7 @@ mod tests {
         let result = execute(
             &conn, "a", &sid, &mid, "shell_exec", r#"{"command":"echo hi"}"#,
             &|_name, _args| Ok(ToolResult { output: "hi\n".into(), success: true, duration_ms: 0 }),
+            None,
         ).unwrap();
 
         assert!(result.success);
@@ -831,6 +969,7 @@ mod tests {
         let result = execute(
             &conn, "a", &sid, &mid, "shell_exec", r#"{"command":"rm -rf /"}"#,
             &|_name, _args| panic!("should not be called"),
+            None,
         ).unwrap();
 
         assert!(!result.success);
@@ -855,6 +994,7 @@ mod tests {
                 success: true,
                 duration_ms: 0,
             }),
+            None,
         ).unwrap();
 
         assert!(result.success);
@@ -872,6 +1012,7 @@ mod tests {
         let result = execute(
             &conn, "a", &sid, &mid, "file_read", "{}",
             &|_name, _args| anyhow::bail!("file not found"),
+            None,
         ).unwrap();
 
         assert!(!result.success);
@@ -891,6 +1032,7 @@ mod tests {
         execute(
             &conn, "a", &sid, &mid, "sql_query", r#"{"query":"SELECT 1"}"#,
             &|_name, _args| Ok(ToolResult { output: "1".into(), success: true, duration_ms: 0 }),
+            None,
         ).unwrap();
 
         let calls = store::log::get_tool_calls(&conn, &sid).unwrap();
@@ -906,11 +1048,11 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn register_runtime_skills_creates_fourteen_tools() {
+    fn register_runtime_skills_creates_seventeen_tools() {
         let conn = setup();
         register_runtime_skills(&conn).unwrap();
         let tools = list_tools(&conn).unwrap();
-        assert_eq!(tools.len(), 14);
+        assert_eq!(tools.len(), 17);
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"memory_search"));
         assert!(names.contains(&"fact_add"));
@@ -926,6 +1068,9 @@ mod tests {
         assert!(names.contains(&"job_resume"));
         assert!(names.contains(&"policy_list"));
         assert!(names.contains(&"audit_query"));
+        assert!(names.contains(&"js_tool_add"));
+        assert!(names.contains(&"js_tool_list"));
+        assert!(names.contains(&"js_tool_delete"));
     }
 
     #[test]
@@ -942,7 +1087,7 @@ mod tests {
         register_builtins(&conn).unwrap();
         register_runtime_skills(&conn).unwrap();
         let tools = list_tools(&conn).unwrap();
-        assert_eq!(tools.len(), 19); // 5 builtins + 14 runtime
+        assert_eq!(tools.len(), 22); // 5 builtins + 17 runtime (14 + 3 JS tools)
     }
 
     #[test]
@@ -977,6 +1122,7 @@ mod tests {
             &conn, "agent-1", &sid, &mid, "fact_add",
             r#"{"content": "Test fact via execute", "summary": "test", "pointer": "test"}"#,
             &|_name, _args| panic!("runtime tools should not use the builtin executor"),
+            None,
         ).unwrap();
 
         assert!(result.success);
@@ -1006,6 +1152,7 @@ mod tests {
             &conn, "agent-1", &sid, &mid, "fact_add",
             r#"{"content": "should not persist"}"#,
             &|_name, _args| panic!("should not reach executor"),
+            None,
         ).unwrap();
 
         assert!(!result.success);
@@ -1027,8 +1174,96 @@ mod tests {
             &conn, "a", &sid, &mid, "memory_search",
             r#"{"query": "test"}"#,
             &|_name, _args| panic!("should not use builtin executor"),
+            None,
         ).unwrap();
 
         assert!(result.success);
+    }
+
+    // ========================================================================
+    // Hook integration
+    // ========================================================================
+
+    #[test]
+    fn pre_hook_abort_blocks_execution_in_execute() {
+        use super::super::hooks::{ToolHooks, PreOutcome};
+
+        let conn = setup();
+        insert_allow_all(&conn);
+        let sid = store::log::create_session(&conn, "a", None).unwrap();
+        let mid = store::log::append_message(&conn, &sid, "assistant", "tool").unwrap();
+
+        let mut hooks = ToolHooks::new();
+        hooks.add_pre("block-all", "*", |_, _| {
+            PreOutcome::Abort("pre-hook blocked this call".into())
+        });
+
+        let result = execute(
+            &conn, "a", &sid, &mid, "shell_exec", "{}",
+            &|_, _| panic!("should not reach executor"),
+            Some(&hooks),
+        ).unwrap();
+
+        assert!(!result.success);
+        assert!(result.output.contains("pre-hook blocked"));
+
+        let calls = store::log::get_tool_calls(&conn, &sid).unwrap();
+        assert_eq!(calls[0].status.as_deref(), Some("hook_aborted"));
+    }
+
+    #[test]
+    fn post_hook_transforms_output_in_execute() {
+        use super::super::hooks::{ToolHooks, PostOutcome};
+
+        let conn = setup();
+        insert_allow_all(&conn);
+        let sid = store::log::create_session(&conn, "a", None).unwrap();
+        let mid = store::log::append_message(&conn, &sid, "assistant", "tool").unwrap();
+
+        let mut hooks = ToolHooks::new();
+        hooks.add_post("upper", "*", |_, r| {
+            PostOutcome::OverrideOutput(r.output.to_uppercase())
+        });
+
+        let result = execute(
+            &conn, "a", &sid, &mid, "shell_exec", "{}",
+            &|_, _| Ok(ToolResult { output: "hello".into(), success: true, duration_ms: 0 }),
+            Some(&hooks),
+        ).unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.output, "HELLO");
+    }
+
+    #[test]
+    fn pre_hook_overrides_args_before_execution() {
+        use super::super::hooks::{ToolHooks, PreOutcome};
+        use std::sync::{Arc, Mutex};
+
+        let conn = setup();
+        insert_allow_all(&conn);
+        let sid = store::log::create_session(&conn, "a", None).unwrap();
+        let mid = store::log::append_message(&conn, &sid, "assistant", "tool").unwrap();
+
+        let mut hooks = ToolHooks::new();
+        hooks.add_pre("override-args", "*", |_, _| {
+            PreOutcome::Continue { args: Some(r#"{"command":"echo overridden"}"#.into()) }
+        });
+
+        let received_args: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+        let captured = Arc::clone(&received_args);
+
+        let result = execute(
+            &conn, "a", &sid, &mid, "shell_exec", r#"{"command":"original"}"#,
+            &|_, args| {
+                *captured.lock().unwrap() = args.to_string();
+                Ok(ToolResult { output: "ok".into(), success: true, duration_ms: 0 })
+            },
+            Some(&hooks),
+        ).unwrap();
+
+        assert!(result.success);
+        let seen = received_args.lock().unwrap().clone();
+        assert!(seen.contains("overridden"), "args should be overridden: {seen}");
     }
 }

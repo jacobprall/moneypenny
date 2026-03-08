@@ -25,6 +25,37 @@ pub fn init_agent_db(conn: &Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Initialize CRDT sync tracking on all default sync tables.
+///
+/// Must be called after `init_agent_db` and `mp_ext::init_all_extensions` so
+/// the cloudsync functions are available. Idempotent — tables that already
+/// have tracking enabled are silently skipped.
+pub fn init_sync_tables(conn: &Connection) -> anyhow::Result<()> {
+    crate::sync::init_sync_tables(conn, crate::sync::DEFAULT_SYNC_TABLES)?;
+    Ok(())
+}
+
+/// Register sqlite-vector indexes for all embedding columns.
+///
+/// Must be called after both `init_agent_db` and `mp_ext::init_all_extensions`
+/// so the sqlite-vector functions are available. Safe to call on every connection
+/// open — `vector_init` is idempotent for the same table/column/dimension.
+///
+/// `dims` should match the configured embedding model (e.g. 768 for nomic-embed-text-v1.5).
+pub fn init_vector_indexes(conn: &Connection, dims: usize) -> anyhow::Result<()> {
+    let opts = format!("type=FLOAT32,dimension={dims},distance=COSINE");
+    for (table, col) in &[
+        ("facts",  "content_embedding"),
+        ("chunks", "content_embedding"),
+    ] {
+        conn.execute(
+            "SELECT vector_init(?1, ?2, ?3)",
+            rusqlite::params![table, col, opts],
+        )?;
+    }
+    Ok(())
+}
+
 pub fn init_metadata_db(conn: &Connection) -> anyhow::Result<()> {
     let current = get_schema_version(conn);
     if current >= METADATA_SCHEMA_VERSION {

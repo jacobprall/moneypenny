@@ -361,19 +361,42 @@ pub enum AuditCommand {
 
 #[derive(Subcommand)]
 pub enum SyncCommand {
-    /// Show sync state per agent
-    Status,
-
-    /// Trigger immediate sync
-    Now {
-        /// Agent name (optional — all agents if omitted)
+    /// Show CRDT sync status (site ID, DB version, per-table enabled flag)
+    Status {
+        /// Agent name (defaults to first configured agent)
         agent: Option<String>,
     },
 
-    /// Configure SQLite Cloud connection
+    /// Bidirectional sync with all configured peers and/or cloud backend
+    Now {
+        /// Agent name (defaults to first configured agent)
+        agent: Option<String>,
+    },
+
+    /// Push this agent's changes to a peer agent (one-way)
+    Push {
+        /// Name or DB path of the target agent
+        #[arg(long, value_name = "AGENT")]
+        to: String,
+        /// Agent name to push from (defaults to first configured agent)
+        agent: Option<String>,
+    },
+
+    /// Pull changes from a peer agent into this one (one-way)
+    Pull {
+        /// Name or DB path of the source agent
+        #[arg(long, value_name = "AGENT")]
+        from: String,
+        /// Agent name to pull into (defaults to first configured agent)
+        agent: Option<String>,
+    },
+
+    /// Set (or update) the cloud sync URL for this agent
     Connect {
-        /// SQLite Cloud URL
+        /// SQLite Cloud connection string (include `?apikey=…`)
         url: String,
+        /// Agent name (defaults to first configured agent)
+        agent: Option<String>,
     },
 }
 

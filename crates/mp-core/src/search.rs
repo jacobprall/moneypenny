@@ -217,16 +217,75 @@ pub fn mmr_rerank(results: &[SearchResult], k: usize, lambda: Option<f64>) -> Ve
 }
 
 // ---------------------------------------------------------------------------
+// Vector (embedding) search via sqlite-vector
+// ---------------------------------------------------------------------------
+
+/// KNN search over facts.content_embedding using sqlite-vector.
+///
+/// Returns (id, distance) pairs sorted by ascending distance (closer = better).
+/// Silently returns empty if the vector index is not yet populated.
+pub fn vector_search_facts(
+    conn: &Connection,
+    query_blob: &[u8],
+    agent_id: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<(String, f64)>> {
+    // vector_quantize_scan('facts', 'content_embedding', blob, k) returns (rowid, distance).
+    // We join on facts.rowid to get the id string and apply agent_id filter.
+    let mut stmt = conn.prepare(
+        "SELECT f.id, v.distance
+         FROM facts AS f
+         JOIN vector_quantize_scan('facts', 'content_embedding', ?1, ?2) AS v
+           ON f.rowid = v.rowid
+         WHERE f.agent_id = ?3 AND f.superseded_at IS NULL
+         ORDER BY v.distance ASC",
+    )?;
+    let rows = stmt
+        .query_map(rusqlite::params![query_blob, limit, agent_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// KNN search over chunks.content_embedding using sqlite-vector.
+pub fn vector_search_knowledge(
+    conn: &Connection,
+    query_blob: &[u8],
+    limit: usize,
+) -> anyhow::Result<Vec<(String, f64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT c.id, v.distance
+         FROM chunks AS c
+         JOIN vector_quantize_scan('chunks', 'content_embedding', ?1, ?2) AS v
+           ON c.rowid = v.rowid
+         ORDER BY v.distance ASC",
+    )?;
+    let rows = stmt
+        .query_map(rusqlite::params![query_blob, limit], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+// ---------------------------------------------------------------------------
 // Cross-store search (unified)
 // ---------------------------------------------------------------------------
 
 /// Search across all stores, apply RRF fusion, store weighting, and MMR re-ranking.
+///
+/// When `query_embedding` is `Some`, the pre-computed FLOAT32 blob is used for
+/// vector KNN search (via sqlite-vector) alongside FTS5 text search.  Both
+/// signal sets are fused via RRF before weighting and MMR re-ranking.
+/// When `query_embedding` is `None` only FTS5/LIKE text search is used.
 pub fn search(
     conn: &Connection,
     query: &str,
     agent_id: &str,
     limit: usize,
     weights: Option<StoreWeights>,
+    query_embedding: Option<&[u8]>,
 ) -> anyhow::Result<Vec<SearchResult>> {
     let weights = weights.unwrap_or_else(|| detect_intent(query));
 
@@ -236,14 +295,41 @@ pub fn search(
     let msg_results = fts5_search_messages(conn, query, agent_id, per_store_limit)?;
     let knowledge_results = fts5_search_knowledge(conn, query, per_store_limit)?;
 
-    // Build ranked lists for RRF
+    // Build ranked lists for RRF — text signals
     let fact_ranked: Vec<(String, f64)> = fact_results.iter().map(|(id, _, s)| (id.clone(), *s)).collect();
     let msg_ranked: Vec<(String, f64)> = msg_results.iter().map(|(id, _, s)| (id.clone(), *s)).collect();
     let know_ranked: Vec<(String, f64)> = knowledge_results.iter().map(|(id, _, s)| (id.clone(), *s)).collect();
 
-    let fused = rrf_fuse(&[fact_ranked, msg_ranked, know_ranked]);
+    // Optional vector search signals
+    let (vec_fact_ranked, vec_know_ranked): (Vec<(String, f64)>, Vec<(String, f64)>) =
+        if let Some(blob) = query_embedding {
+            // Invert distance: smaller distance = higher score for RRF rank ordering.
+            let vf = vector_search_facts(conn, blob, agent_id, per_store_limit)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(id, d)| (id, 1.0 / (1.0 + d)))  // proximity score
+                .collect();
+            let vk = vector_search_knowledge(conn, blob, per_store_limit)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(id, d)| (id, 1.0 / (1.0 + d)))
+                .collect();
+            (vf, vk)
+        } else {
+            (vec![], vec![])
+        };
 
-    // Build content lookup
+    let mut all_ranked = vec![fact_ranked, msg_ranked, know_ranked];
+    if !vec_fact_ranked.is_empty() {
+        all_ranked.push(vec_fact_ranked);
+    }
+    if !vec_know_ranked.is_empty() {
+        all_ranked.push(vec_know_ranked);
+    }
+
+    let fused = rrf_fuse(&all_ranked);
+
+    // Build content lookup from text search results
     let mut content_map: HashMap<String, (String, Store)> = HashMap::new();
     for (id, content, _) in &fact_results {
         content_map.insert(id.clone(), (content.clone(), Store::Facts));
@@ -253,6 +339,27 @@ pub fn search(
     }
     for (id, content, _) in &knowledge_results {
         content_map.insert(id.clone(), (content.clone(), Store::Knowledge));
+    }
+
+    // Vector search may surface IDs not found by text search — fetch their content.
+    for (id, _) in fused.iter() {
+        if content_map.contains_key(id) {
+            continue;
+        }
+        // Try facts first, then chunks
+        if let Ok(Some(row)) = conn.query_row(
+            "SELECT content FROM facts WHERE id = ?1 AND superseded_at IS NULL",
+            rusqlite::params![id],
+            |r| r.get::<_, String>(0),
+        ).map(Some).or_else(|_| Ok::<_, anyhow::Error>(None)) {
+            content_map.insert(id.clone(), (row, Store::Facts));
+        } else if let Ok(Some(row)) = conn.query_row(
+            "SELECT content FROM chunks WHERE id = ?1",
+            rusqlite::params![id],
+            |r| r.get::<_, String>(0),
+        ).map(Some).or_else(|_| Ok::<_, anyhow::Error>(None)) {
+            content_map.insert(id.clone(), (row, Store::Knowledge));
+        }
     }
 
     // Apply store weights to fused scores
@@ -474,7 +581,7 @@ mod tests {
         // Seed knowledge
         store::knowledge::ingest(&conn, None, None, "Soft deletes use a deleted_at column", None).unwrap();
 
-        let results = search(&conn, "soft deletes", "a", 10, None).unwrap();
+        let results = search(&conn, "soft deletes", "a", 10, None, None).unwrap();
         assert!(!results.is_empty(), "should find results across stores");
 
         let stores: HashSet<Store> = results.iter().map(|r| r.store).collect();
@@ -484,7 +591,7 @@ mod tests {
     #[test]
     fn search_returns_empty_for_no_match() {
         let conn = setup();
-        let results = search(&conn, "quantum entanglement", "a", 10, None).unwrap();
+        let results = search(&conn, "quantum entanglement", "a", 10, None, None).unwrap();
         assert!(results.is_empty());
     }
 
@@ -502,7 +609,7 @@ mod tests {
                 confidence: 1.0,
             }, None).unwrap();
         }
-        let results = search(&conn, "topic", "a", 5, None).unwrap();
+        let results = search(&conn, "topic", "a", 5, None, None).unwrap();
         assert!(results.len() <= 5);
     }
 

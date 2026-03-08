@@ -165,6 +165,23 @@ pub fn assemble(
         });
     }
 
+    // 2.5. Rolling session summary (accumulated from previous turns)
+    let session_summary: Option<String> = conn.query_row(
+        "SELECT summary FROM sessions WHERE id = ?1",
+        [session_id],
+        |r| r.get(0),
+    ).unwrap_or(None);
+    if let Some(ref s) = session_summary {
+        if !s.trim().is_empty() {
+            let text = format!("[Conversation history summary]\n{s}");
+            segments.push(ContextSegment {
+                label: "session_summary",
+                content: text.clone(),
+                token_estimate: estimate_tokens(&text),
+            });
+        }
+    }
+
     // 3. ALL fact pointers (Level 2)
     let pointers = crate::store::facts::all_pointers(conn, agent_id)?;
     if !pointers.is_empty() {
@@ -486,6 +503,23 @@ mod tests {
 
         let labels: Vec<&str> = segments.iter().map(|s| s.label).collect();
         assert!(labels.contains(&"knowledge"));
+    }
+
+    #[test]
+    fn assemble_includes_session_summary_when_present() {
+        let conn = setup();
+        let sid = store::log::create_session(&conn, "a", None).unwrap();
+        store::log::update_summary(&conn, &sid, "User asked about Rust async patterns.").unwrap();
+
+        let segments = assemble(
+            &conn, "a", &sid, None, "continue",
+            &TokenBudget::new(128_000), None,
+        ).unwrap();
+
+        let labels: Vec<&str> = segments.iter().map(|s| s.label).collect();
+        assert!(labels.contains(&"session_summary"), "should include session_summary");
+        let sum_seg = segments.iter().find(|s| s.label == "session_summary").unwrap();
+        assert!(sum_seg.content.contains("Rust async"), "summary content should be present");
     }
 
     #[test]

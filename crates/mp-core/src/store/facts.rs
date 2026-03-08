@@ -262,6 +262,29 @@ pub fn bump_confidence(conn: &Connection, fact_id: &str, amount: f64) -> anyhow:
     Ok(())
 }
 
+/// Write or overwrite the FLOAT32 content embedding for a fact.
+///
+/// Called from the async agent layer after `embed()` returns so that the
+/// synchronous store layer never has to touch async code.
+pub fn set_content_embedding(conn: &Connection, fact_id: &str, blob: &[u8]) -> anyhow::Result<()> {
+    conn.execute(
+        "UPDATE facts SET content_embedding = ?1 WHERE id = ?2",
+        params![blob, fact_id],
+    )?;
+    Ok(())
+}
+
+/// Return IDs of all active facts that have no content_embedding yet.
+pub fn ids_without_embedding(conn: &Connection, agent_id: &str) -> anyhow::Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT id FROM facts WHERE agent_id = ?1 AND superseded_at IS NULL AND content_embedding IS NULL",
+    )?;
+    let ids = stmt
+        .query_map(params![agent_id], |r| r.get(0))?
+        .collect::<Result<Vec<String>, _>>()?;
+    Ok(ids)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

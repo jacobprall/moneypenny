@@ -7,6 +7,8 @@ pub mod sqlite_ai;
 
 use provider::{LlmProvider, EmbeddingProvider};
 
+pub use local_embed::{f32_slice_to_blob, parse_f32_blob};
+
 /// Build an LlmProvider for generation from configuration values.
 pub fn build_provider(
     provider_type: &str,
@@ -48,7 +50,7 @@ pub fn build_embedding_provider(
             model_path.to_path_buf(),
             model_name.to_string(),
             dimensions,
-        ))),
+        )?)),
         "http" => Ok(Box::new(local_embed::HttpEmbeddingProvider::new(
             api_base.unwrap_or("https://api.openai.com/v1"),
             api_key.map(String::from),
@@ -282,13 +284,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn local_embedding_returns_stub_error() {
+    async fn local_embedding_returns_model_not_found_error() {
         let p = local_embed::LocalEmbeddingProvider::new(
-            "/tmp/model.gguf".into(), "nomic-embed-text-v1.5".into(), 768,
-        );
-        let result = p.embed("hello").await;
+            "/tmp/nonexistent-model.gguf".into(), "nomic-embed-text-v1.5".into(), 768,
+        ).expect("provider construction should succeed even without model file");
+        let result: anyhow::Result<Vec<f32>> = p.embed("hello").await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("sqlite-ai extension"));
+        assert!(result.unwrap_err().to_string().contains("not found"));
     }
 
     // ========================================================================

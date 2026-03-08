@@ -110,6 +110,7 @@ pub fn turn(
             conn, &config.agent_id, session_id, &resp_id,
             tool_name, tool_args,
             &|name, args| crate::tools::builtins::dispatch(name, args),
+            None,
         )?;
 
         tool_results.push((tool_name.clone(), result));

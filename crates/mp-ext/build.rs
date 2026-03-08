@@ -16,18 +16,25 @@ fn main() {
         );
     }
 
+    // rusqlite's libsqlite3-sys exports this via `cargo:include=...`.
+    // It points to the bundled SQLite 3.49.1 headers — all extensions MUST
+    // compile against these instead of any system or vendored copy so that
+    // the header declarations match the symbols in the linked library.
+    let sqlite_include = std::env::var("DEP_SQLITE3_INCLUDE")
+        .expect("DEP_SQLITE3_INCLUDE not set. rusqlite with the 'bundled' feature is required.");
+
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
 
-    build_sqlite_vector(&vendor);
-    build_sqlite_js(&vendor);
-    build_sqlite_sync(&vendor, &target_os);
-    build_sqlite_memory(&vendor);
-    build_sqlite_mcp(&vendor);
-    build_sqlite_ai(&vendor, &target_os);
-    build_sqlite_agent(&vendor);
+    build_sqlite_vector(&vendor, &sqlite_include);
+    build_sqlite_js(&vendor, &sqlite_include);
+    build_sqlite_sync(&vendor, &target_os, &sqlite_include);
+    build_sqlite_memory(&vendor, &sqlite_include);
+    build_sqlite_mcp(&vendor, &sqlite_include);
+    build_sqlite_ai(&vendor, &target_os, &sqlite_include);
+    build_sqlite_agent(&vendor, &sqlite_include);
 }
 
-fn build_sqlite_vector(vendor: &PathBuf) {
+fn build_sqlite_vector(vendor: &PathBuf, sqlite_include: &str) {
     let ext = vendor.join("sqlite-vector");
     let src = ext.join("src");
     let libs = ext.join("libs");
@@ -42,6 +49,7 @@ fn build_sqlite_vector(vendor: &PathBuf) {
             src.join("distance-avx512.c"),
             src.join("distance-rvv.c"),
         ])
+        .include(sqlite_include)
         .include(&src)
         .include(&libs)
         .include(libs.join("fp16"))
@@ -51,7 +59,7 @@ fn build_sqlite_vector(vendor: &PathBuf) {
         .compile("sqlite_vector");
 }
 
-fn build_sqlite_js(vendor: &PathBuf) {
+fn build_sqlite_js(vendor: &PathBuf, sqlite_include: &str) {
     let ext = vendor.join("sqlite-js");
     let src = ext.join("src");
     let libs = ext.join("libs");
@@ -59,6 +67,7 @@ fn build_sqlite_js(vendor: &PathBuf) {
     cc::Build::new()
         .file(libs.join("quickjs.c"))
         .file(src.join("sqlitejs.c"))
+        .include(sqlite_include)
         .include(&src)
         .include(&libs)
         .define("SQLITE_CORE", None)
@@ -68,7 +77,7 @@ fn build_sqlite_js(vendor: &PathBuf) {
         .compile("sqlite_js");
 }
 
-fn build_sqlite_sync(vendor: &PathBuf, target_os: &str) {
+fn build_sqlite_sync(vendor: &PathBuf, target_os: &str, sqlite_include: &str) {
     let ext = vendor.join("sqlite-sync");
     let src = ext.join("src");
 
@@ -80,6 +89,7 @@ fn build_sqlite_sync(vendor: &PathBuf, target_os: &str) {
         .file(src.join("pk.c"))
         .file(src.join("vtab.c"))
         .file(src.join("utils.c"))
+        .include(sqlite_include)
         .include(&src)
         .define("SQLITE_CORE", None)
         .opt_level(2)
@@ -100,7 +110,7 @@ fn build_sqlite_sync(vendor: &PathBuf, target_os: &str) {
     build.compile("sqlite_sync");
 }
 
-fn build_sqlite_memory(vendor: &PathBuf) {
+fn build_sqlite_memory(vendor: &PathBuf, sqlite_include: &str) {
     let ext = vendor.join("sqlite-memory");
     let src = ext.join("src");
 
@@ -110,6 +120,7 @@ fn build_sqlite_memory(vendor: &PathBuf) {
         .file(src.join("dbmem-parser.c"))
         .file(src.join("dbmem-search.c"))
         .file(src.join("md4c.c"))
+        .include(sqlite_include)
         .include(&src)
         .define("SQLITE_CORE", None)
         .define("DBMEM_OMIT_LOCAL_ENGINE", None)
@@ -119,15 +130,14 @@ fn build_sqlite_memory(vendor: &PathBuf) {
         .compile("sqlite_memory");
 }
 
-fn build_sqlite_mcp(vendor: &PathBuf) {
+fn build_sqlite_mcp(vendor: &PathBuf, sqlite_include: &str) {
     let ext = vendor.join("sqlite-mcp");
     let src = ext.join("src");
     let libs = ext.join("libs");
 
-    // sqlite-mcp.c uses SQLITE_EXTENSION_INIT1 unconditionally —
-    // force-include sqlite3ext.h which defines it as a no-op when SQLITE_CORE is set.
     cc::Build::new()
         .file(src.join("sqlite-mcp.c"))
+        .include(sqlite_include)
         .include(&src)
         .include(&libs)
         .define("SQLITE_CORE", None)
@@ -138,7 +148,7 @@ fn build_sqlite_mcp(vendor: &PathBuf) {
         .compile("sqlite_mcp");
 }
 
-fn build_sqlite_ai(vendor: &PathBuf, target_os: &str) {
+fn build_sqlite_ai(vendor: &PathBuf, target_os: &str, sqlite_include: &str) {
     let ext = vendor.join("sqlite-ai");
     let src = ext.join("src");
     let llama_dir = ext.join("modules/llama.cpp");
@@ -239,6 +249,7 @@ fn build_sqlite_ai(vendor: &PathBuf, target_os: &str) {
     cc::Build::new()
         .file(src.join("sqlite-ai.c"))
         .file(src.join("utils.c"))
+        .include(sqlite_include)
         .include(&src)
         .include(llama_build.join("include"))
         .include(whisper_dir.join("include"))
@@ -251,15 +262,14 @@ fn build_sqlite_ai(vendor: &PathBuf, target_os: &str) {
         .compile("sqlite_ai");
 }
 
-fn build_sqlite_agent(vendor: &PathBuf) {
+fn build_sqlite_agent(vendor: &PathBuf, sqlite_include: &str) {
     let ext = vendor.join("sqlite-agent");
     let src = ext.join("src");
     let libs = ext.join("libs");
 
-    // sqlite-agent.c uses SQLITE_EXTENSION_INIT1 unconditionally (no #ifndef guard).
-    // We must include sqlite3ext.h which defines it as a no-op when SQLITE_CORE is set.
     cc::Build::new()
         .file(src.join("sqlite-agent.c"))
+        .include(sqlite_include)
         .include(&src)
         .include(&libs)
         .define("SQLITE_CORE", None)

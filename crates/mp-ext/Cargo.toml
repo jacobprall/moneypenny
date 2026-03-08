@@ -8,6 +8,9 @@ rusqlite.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 mcp-ffi = { path = "../../vendor/sqlite-mcp" }
+# Explicit dep so DEP_SQLITE3_INCLUDE is available in build.rs.
+# Cargo only propagates DEP_* vars from direct dependencies with a `links` key.
+libsqlite3-sys = { version = "0.33", features = ["bundled"] }
 
 [build-dependencies]
 cc = "1"

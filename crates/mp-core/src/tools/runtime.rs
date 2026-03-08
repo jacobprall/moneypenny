@@ -20,11 +20,15 @@ pub fn dispatch(conn: &Connection, agent_id: &str, session_id: &str, tool_name: 
         "job_resume"        => job_resume(conn, arguments),
         "policy_list"       => policy_list(conn),
         "audit_query"       => audit_query(conn, session_id, arguments),
+        "js_tool_add"       => js_tool_add(conn, arguments),
+        "js_tool_list"      => js_tool_list(conn),
+        "js_tool_delete"    => js_tool_delete(conn, arguments),
         _ => anyhow::bail!("unknown runtime tool: {tool_name}"),
     }
 }
 
-/// Returns true if the given tool name is a runtime tool.
+/// Returns true if the given tool name is a built-in runtime tool (handled by
+/// this module, NOT a user-defined JS tool stored in the DB).
 pub fn is_runtime_tool(name: &str) -> bool {
     matches!(name,
         "memory_search" | "fact_add" | "fact_update" | "fact_list"
@@ -32,6 +36,87 @@ pub fn is_runtime_tool(name: &str) -> bool {
         | "knowledge_ingest" | "knowledge_list"
         | "job_create" | "job_list" | "job_pause" | "job_resume"
         | "policy_list" | "audit_query"
+        | "js_tool_add" | "js_tool_list" | "js_tool_delete"
+    )
+}
+
+/// Returns true if `tool_name` refers to a user-defined JS tool stored in
+/// the `skills` table (`tool_id` starting with `sqlite_js:`).
+pub fn is_js_tool(conn: &Connection, name: &str) -> bool {
+    conn.query_row(
+        "SELECT tool_id FROM skills WHERE name = ?1",
+        [name],
+        |r| r.get::<_, Option<String>>(0),
+    )
+    .ok()
+    .flatten()
+    .map(|tid| tid.starts_with("sqlite_js:"))
+    .unwrap_or(false)
+}
+
+/// Execute a user-defined JS tool stored in the `skills` table.
+///
+/// The script must define a function named `run` that accepts a single JSON
+/// object argument and returns a value that will be JSON-serialised.
+///
+/// Requires `node` (Node.js) or `deno` to be available on `PATH`.
+/// If neither is found the tool returns a helpful error.
+///
+/// # Script contract
+/// ```js
+/// function run(args) {
+///     // args is the parsed JSON arguments object
+///     return { result: args.x + args.y };
+/// }
+/// ```
+pub fn dispatch_js(conn: &Connection, tool_name: &str, arguments: &str) -> anyhow::Result<ToolResult> {
+    let start = std::time::Instant::now();
+
+    let script: String = conn.query_row(
+        "SELECT content FROM skills WHERE name = ?1",
+        [tool_name],
+        |r| r.get(0),
+    ).map_err(|_| anyhow::anyhow!("JS tool '{tool_name}' not found in skills"))?;
+
+    // Build the runner: inject args, call run(), print JSON result
+    let runner = format!(
+        "const args = {};\n{}\nconsole.log(JSON.stringify(run(args)));",
+        arguments, script
+    );
+
+    // Try node first, then deno
+    let output = run_js_engine(&runner)?;
+    let duration_ms = start.elapsed().as_millis() as u64;
+
+    let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let success = output.status.success() && !out.is_empty();
+    let final_output = if output.status.success() {
+        if out.is_empty() { "null".into() } else { out }
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        format!("JS tool error: {}", if stderr.is_empty() { "unknown error".into() } else { stderr.trim().to_string() })
+    };
+
+    Ok(ToolResult { output: final_output, success, duration_ms })
+}
+
+fn run_js_engine(script: &str) -> anyhow::Result<std::process::Output> {
+    // Try node first
+    if let Ok(out) = std::process::Command::new("node")
+        .arg("-e").arg(script)
+        .output()
+    {
+        return Ok(out);
+    }
+    // Fall back to deno
+    if let Ok(out) = std::process::Command::new("deno")
+        .arg("eval").arg(script)
+        .output()
+    {
+        return Ok(out);
+    }
+    anyhow::bail!(
+        "No JavaScript runtime found. Install Node.js (node) or Deno (deno) to use JS tools."
     )
 }
 
@@ -45,7 +130,7 @@ fn memory_search(conn: &Connection, agent_id: &str, arguments: &str) -> anyhow::
         .ok_or_else(|| anyhow::anyhow!("missing 'query'"))?;
     let limit = args["limit"].as_u64().unwrap_or(10) as usize;
 
-    let results = crate::search::search(conn, query, agent_id, limit, None)?;
+    let results = crate::search::search(conn, query, agent_id, limit, None, None)?;
 
     let output: Vec<serde_json::Value> = results.iter().map(|r| {
         serde_json::json!({
@@ -379,6 +464,101 @@ fn audit_row_to_json(r: &rusqlite::Row) -> rusqlite::Result<serde_json::Value> {
     }))
 }
 
+// =========================================================================
+// JS tool management
+// =========================================================================
+
+/// Store a user-defined JavaScript tool in the skills table.
+///
+/// The agent calls this tool to persist a new callable JS function.  The
+/// script must define a `run(args)` function; `args` will be the parsed JSON
+/// object passed when the tool is invoked.
+///
+/// Example:
+/// ```json
+/// {
+///   "name": "add_numbers",
+///   "description": "Add two numbers together",
+///   "script": "function run(args) { return { result: args.a + args.b }; }"
+/// }
+/// ```
+fn js_tool_add(conn: &Connection, arguments: &str) -> anyhow::Result<ToolResult> {
+    let args: serde_json::Value = serde_json::from_str(arguments)?;
+    let name = args["name"].as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'name'"))?;
+    let description = args["description"].as_str().unwrap_or("User-defined JS tool");
+    let script = args["script"].as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'script'"))?;
+
+    // Validate the name is safe
+    if name.chars().any(|c| !c.is_alphanumeric() && c != '_' && c != '-') {
+        anyhow::bail!("tool name must contain only letters, digits, underscores, or hyphens");
+    }
+
+    let tool_id = format!("sqlite_js:{name}");
+    let now = chrono::Utc::now().timestamp();
+    let id = uuid::Uuid::new_v4().to_string();
+
+    conn.execute(
+        "INSERT OR REPLACE INTO skills
+         (id, name, description, content, tool_id, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![id, name, description, script, tool_id, now, now],
+    )?;
+
+    Ok(ToolResult {
+        output: serde_json::json!({"status": "created", "name": name}).to_string(),
+        success: true,
+        duration_ms: 0,
+    })
+}
+
+fn js_tool_list(conn: &Connection) -> anyhow::Result<ToolResult> {
+    let mut stmt = conn.prepare(
+        "SELECT name, description, updated_at FROM skills
+         WHERE tool_id LIKE 'sqlite_js:%'
+         ORDER BY name"
+    )?;
+    let tools = stmt.query_map([], |r| {
+        Ok(serde_json::json!({
+            "name": r.get::<_, String>(0)?,
+            "description": r.get::<_, String>(1)?,
+            "updated_at": r.get::<_, i64>(2)?,
+        }))
+    })?.collect::<Result<Vec<_>, _>>()?;
+
+    Ok(ToolResult {
+        output: serde_json::to_string_pretty(&tools)?,
+        success: true,
+        duration_ms: 0,
+    })
+}
+
+fn js_tool_delete(conn: &Connection, arguments: &str) -> anyhow::Result<ToolResult> {
+    let args: serde_json::Value = serde_json::from_str(arguments)?;
+    let name = args["name"].as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'name'"))?;
+
+    let rows = conn.execute(
+        "DELETE FROM skills WHERE name = ?1 AND tool_id LIKE 'sqlite_js:%'",
+        [name],
+    )?;
+
+    if rows == 0 {
+        Ok(ToolResult {
+            output: format!("JS tool '{name}' not found"),
+            success: false,
+            duration_ms: 0,
+        })
+    } else {
+        Ok(ToolResult {
+            output: serde_json::json!({"status": "deleted", "name": name}).to_string(),
+            success: true,
+            duration_ms: 0,
+        })
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -397,6 +577,9 @@ mod tests {
         assert!(is_runtime_tool("fact_add"));
         assert!(is_runtime_tool("job_create"));
         assert!(is_runtime_tool("policy_list"));
+        assert!(is_runtime_tool("js_tool_add"));
+        assert!(is_runtime_tool("js_tool_list"));
+        assert!(is_runtime_tool("js_tool_delete"));
         assert!(!is_runtime_tool("file_read"));
         assert!(!is_runtime_tool("shell_exec"));
         assert!(!is_runtime_tool("unknown"));
@@ -557,6 +740,75 @@ mod tests {
     fn fact_add_missing_content_fails() {
         let conn = setup();
         let result = dispatch(&conn, "a", "s1", "fact_add", r#"{"summary": "x"}"#);
+        assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // JS tool management
+    // ========================================================================
+
+    #[test]
+    fn js_tool_add_and_list() {
+        let conn = setup();
+        let result = dispatch(
+            &conn, "a", "s1", "js_tool_add",
+            r#"{"name":"greet","description":"Say hello","script":"function run(args){return{msg:'hello '+args.name};}"}"#,
+        ).unwrap();
+        assert!(result.success, "js_tool_add should succeed: {}", result.output);
+        assert!(result.output.contains("created"));
+
+        let list = dispatch(&conn, "a", "s1", "js_tool_list", "{}").unwrap();
+        assert!(list.success);
+        assert!(list.output.contains("greet"));
+    }
+
+    #[test]
+    fn js_tool_is_detectable() {
+        let conn = setup();
+        dispatch(
+            &conn, "a", "s1", "js_tool_add",
+            r#"{"name":"my_js_tool","script":"function run(args){return{}}"}"#,
+        ).unwrap();
+        assert!(is_js_tool(&conn, "my_js_tool"));
+        assert!(!is_js_tool(&conn, "memory_search")); // runtime tool, not JS
+    }
+
+    #[test]
+    fn js_tool_delete_removes_tool() {
+        let conn = setup();
+        dispatch(
+            &conn, "a", "s1", "js_tool_add",
+            r#"{"name":"temp_tool","script":"function run(a){return{}}"}"#,
+        ).unwrap();
+        assert!(is_js_tool(&conn, "temp_tool"));
+
+        let del = dispatch(&conn, "a", "s1", "js_tool_delete", r#"{"name":"temp_tool"}"#).unwrap();
+        assert!(del.success);
+        assert!(!is_js_tool(&conn, "temp_tool"));
+    }
+
+    #[test]
+    fn js_tool_delete_nonexistent_returns_failure() {
+        let conn = setup();
+        let result = dispatch(&conn, "a", "s1", "js_tool_delete", r#"{"name":"nope"}"#).unwrap();
+        assert!(!result.success);
+        assert!(result.output.contains("not found"));
+    }
+
+    #[test]
+    fn js_tool_add_rejects_bad_name() {
+        let conn = setup();
+        let result = dispatch(
+            &conn, "a", "s1", "js_tool_add",
+            r#"{"name":"bad name!","script":"function run(a){return{}}"}"#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn js_tool_add_missing_script_fails() {
+        let conn = setup();
+        let result = dispatch(&conn, "a", "s1", "js_tool_add", r#"{"name":"x"}"#);
         assert!(result.is_err());
     }
 }

@@ -16,6 +16,7 @@ rusqlite.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tracing.workspace = true
+mp-ext = { path = "../mp-ext" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
