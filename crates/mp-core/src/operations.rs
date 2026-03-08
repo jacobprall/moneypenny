@@ -50,8 +50,41 @@ pub struct OperationResponse {
 }
 
 pub fn execute(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
-    if let Some(mut aborted) = run_pre_hooks(req) {
-        annotate_response_metadata(req, &mut aborted);
+    let mut idempotency_state = if req.idempotency_key.is_some() {
+        "provided_unenforced"
+    } else {
+        "not_provided"
+    };
+
+    if is_idempotent_mutation(req.op.as_str()) {
+        if let Some(key) = req.idempotency_key.as_deref() {
+            let fingerprint = request_fingerprint(req)?;
+            if let Some(stored) = load_idempotency_record(conn, req, key)? {
+                if stored.request_fingerprint != fingerprint {
+                    let mut conflict = fail_response(
+                        "idempotency_conflict",
+                        "idempotency key was already used with different arguments".to_string(),
+                    );
+                    idempotency_state = "conflict";
+                    record_idempotency_audit_event(conn, req, idempotency_state, Some(conflict.message.as_str()))?;
+                    annotate_response_metadata(req, &mut conflict, idempotency_state);
+                    return Ok(conflict);
+                }
+
+                let mut replayed: OperationResponse = serde_json::from_str(&stored.response_json)
+                    .map_err(|e| anyhow::anyhow!("failed to decode stored idempotent response: {e}"))?;
+                bump_idempotency_replay(conn, stored.id.as_str())?;
+                idempotency_state = "replayed";
+                record_idempotency_audit_event(conn, req, idempotency_state, Some("replayed stored response"))?;
+                annotate_response_metadata(req, &mut replayed, idempotency_state);
+                return Ok(replayed);
+            }
+            idempotency_state = "provided_enforced";
+        }
+    }
+
+    if let Some(mut aborted) = run_pre_hooks(conn, req)? {
+        annotate_response_metadata(req, &mut aborted, idempotency_state);
         return Ok(aborted);
     }
 
@@ -62,12 +95,20 @@ pub fn execute(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Oper
             "policy_missing",
             format!("operation '{}' completed without policy metadata", req.op),
         );
-        annotate_response_metadata(req, &mut failed);
+        annotate_response_metadata(req, &mut failed, idempotency_state);
         return Ok(failed);
     }
 
-    run_post_hooks(req, &mut resp);
-    annotate_response_metadata(req, &mut resp);
+    run_post_hooks(conn, req, &mut resp)?;
+
+    if is_idempotent_mutation(req.op.as_str()) {
+        if let Some(key) = req.idempotency_key.as_deref() {
+            let fingerprint = request_fingerprint(req)?;
+            store_idempotency_record(conn, req, key, &fingerprint, &resp)?;
+        }
+    }
+
+    annotate_response_metadata(req, &mut resp, idempotency_state);
     Ok(resp)
 }
 
@@ -79,9 +120,23 @@ fn dispatch_operation(conn: &Connection, req: &OperationRequest) -> anyhow::Resu
         "job.pause" => op_job_pause(conn, req),
         "policy.add" => op_policy_add(conn, req),
         "knowledge.ingest" => op_knowledge_ingest(conn, req),
+        "memory.search" => op_memory_search(conn, req),
+        "memory.fact.add" => op_memory_fact_add(conn, req),
+        "memory.fact.update" => op_memory_fact_update(conn, req),
+        "memory.fact.get" => op_memory_fact_get(conn, req),
+        "memory.fact.compaction.reset" => op_memory_fact_compaction_reset(conn, req),
         "skill.add" => op_skill_add(conn, req),
         "skill.promote" => op_skill_promote(conn, req),
         "fact.delete" => op_fact_delete(conn, req),
+        "policy.evaluate" => op_policy_evaluate(conn, req),
+        "policy.explain" => op_policy_explain(conn, req),
+        "audit.query" => op_audit_query(conn, req),
+        "audit.append" => op_audit_append(conn, req),
+        "session.resolve" => op_session_resolve(conn, req),
+        "session.list" => op_session_list(conn, req),
+        "js.tool.add" => op_js_tool_add(conn, req),
+        "js.tool.list" => op_js_tool_list(conn, req),
+        "js.tool.delete" => op_js_tool_delete(conn, req),
         "agent.create" => op_agent_create(conn, req),
         "agent.delete" => op_agent_delete(conn, req),
         "agent.config" => op_agent_config(conn, req),
@@ -342,6 +397,469 @@ fn op_policy_add(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Op
     })
 }
 
+fn op_policy_evaluate(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+    let action = req.args["action"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'action'"))?;
+    let resource = req.args["resource"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'resource'"))?;
+    let actor = req.args["actor"].as_str().unwrap_or(&req.actor.agent_id);
+    let sql_content = req.args["sql_content"].as_str();
+    let channel = req.args["channel"]
+        .as_str()
+        .or(req.actor.channel.as_deref());
+    let mode = parse_policy_mode(req.args["mode"].as_str());
+
+    let decision = if let Some(mode) = mode {
+        crate::policy::evaluate_with_mode(
+            conn,
+            &crate::policy::PolicyRequest {
+                actor,
+                action,
+                resource,
+                sql_content,
+                channel,
+            },
+            mode,
+        )?
+    } else {
+        crate::policy::evaluate(
+            conn,
+            &crate::policy::PolicyRequest {
+                actor,
+                action,
+                resource,
+                sql_content,
+                channel,
+            },
+        )?
+    };
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "policy evaluated".into(),
+        data: serde_json::json!({
+            "actor": actor,
+            "action": action,
+            "resource": resource,
+            "effect": match decision.effect {
+                crate::policy::Effect::Allow => "allow",
+                crate::policy::Effect::Deny => "deny",
+                crate::policy::Effect::Audit => "audit",
+            },
+            "policy_id": decision.policy_id,
+            "reason": decision.reason,
+            "mode": req.args["mode"].as_str().unwrap_or("default"),
+        }),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
+fn op_policy_explain(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+    let mut resp = op_policy_evaluate(conn, req)?;
+    resp.message = "policy explanation generated".into();
+    Ok(resp)
+}
+
+fn op_audit_query(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+    let limit = req.args["limit"].as_u64().unwrap_or(50).clamp(1, 500) as i64;
+    let effect = req.args["effect"].as_str().map(|s| s.to_string());
+    let actor = req.args["actor"].as_str().map(|s| s.to_string());
+    let action = req.args["action"].as_str().map(|s| s.to_string());
+    let resource = req.args["resource"].as_str().map(|s| s.to_string());
+    let session_id = req.args["session_id"].as_str().map(|s| s.to_string());
+    let query = req.args["query"].as_str().map(|q| format!("%{q}%"));
+
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "query",
+            resource: "audit",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT id, policy_id, actor, action, resource, effect, reason, correlation_id, session_id, idempotency_key, idempotency_state, created_at
+         FROM policy_audit
+         WHERE (?1 IS NULL OR effect = ?1)
+           AND (?2 IS NULL OR actor = ?2)
+           AND (?3 IS NULL OR action = ?3)
+           AND (?4 IS NULL OR resource = ?4)
+           AND (?5 IS NULL OR session_id = ?5)
+           AND (
+             ?6 IS NULL OR
+             reason LIKE ?6 OR actor LIKE ?6 OR action LIKE ?6 OR resource LIKE ?6 OR correlation_id LIKE ?6
+           )
+         ORDER BY created_at DESC
+         LIMIT ?7",
+    )?;
+    let rows = stmt
+        .query_map(
+            rusqlite::params![effect, actor, action, resource, session_id, query, limit],
+            |r| {
+                Ok(serde_json::json!({
+                    "id": r.get::<_, String>(0)?,
+                    "policy_id": r.get::<_, Option<String>>(1)?,
+                    "actor": r.get::<_, String>(2)?,
+                    "action": r.get::<_, String>(3)?,
+                    "resource": r.get::<_, String>(4)?,
+                    "effect": r.get::<_, String>(5)?,
+                    "reason": r.get::<_, Option<String>>(6)?,
+                    "correlation_id": r.get::<_, Option<String>>(7)?,
+                    "session_id": r.get::<_, Option<String>>(8)?,
+                    "idempotency_key": r.get::<_, Option<String>>(9)?,
+                    "idempotency_state": r.get::<_, Option<String>>(10)?,
+                    "created_at": r.get::<_, i64>(11)?,
+                }))
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "audit query completed".into(),
+        data: serde_json::json!(rows),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
+fn op_audit_append(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+    let action = req.args["action"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'action'"))?;
+    let resource = req.args["resource"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'resource'"))?;
+    let effect = req.args["effect"].as_str().unwrap_or("audited");
+    let actor = req.args["actor"].as_str().unwrap_or(&req.actor.agent_id);
+    let reason = req.args["reason"].as_str();
+    let now = req
+        .args["created_at"]
+        .as_i64()
+        .unwrap_or_else(|| chrono::Utc::now().timestamp());
+
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "append",
+            resource: "audit",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    let id = req.args["id"]
+        .as_str()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    conn.execute(
+        "INSERT INTO policy_audit (id, policy_id, actor, action, resource, effect, reason, correlation_id, session_id, idempotency_key, idempotency_state, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        rusqlite::params![
+            id,
+            req.args["policy_id"].as_str(),
+            actor,
+            action,
+            resource,
+            effect,
+            reason,
+            req.args["correlation_id"].as_str().or(req.request_id.as_deref()).or(req.context.trace_id.as_deref()),
+            req.args["session_id"].as_str().or(req.context.session_id.as_deref()),
+            req.idempotency_key.as_deref(),
+            Some(if req.idempotency_key.is_some() { "provided_enforced" } else { "not_provided" }),
+            now,
+        ],
+    )?;
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "audit entry appended".into(),
+        data: serde_json::json!({
+            "id": id,
+            "actor": actor,
+            "action": action,
+            "resource": resource,
+            "effect": effect,
+        }),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
+fn op_session_resolve(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+    let requested = req.args["session_id"].as_str().map(|s| s.to_string());
+    let channel = req.args["channel"].as_str().or(req.actor.channel.as_deref());
+    let target_agent = req.args["agent_id"].as_str().unwrap_or(&req.actor.agent_id);
+    let create_if_missing = req.args["create_if_missing"].as_bool().unwrap_or(true);
+
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "resolve",
+            resource: "session",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    let (session_id, created) = if let Some(sid) = requested {
+        if let Some(existing) = crate::store::log::get_session(conn, &sid)? {
+            (existing.id, false)
+        } else if create_if_missing {
+            let now = chrono::Utc::now().timestamp();
+            conn.execute(
+                "INSERT INTO sessions (id, agent_id, channel, started_at) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![sid, target_agent, channel, now],
+            )?;
+            (sid, true)
+        } else {
+            return Ok(OperationResponse {
+                ok: false,
+                code: "not_found".into(),
+                message: "session not found".into(),
+                data: serde_json::json!({}),
+                policy: Some(policy_meta(&decision)),
+                audit: AuditMeta { recorded: true },
+            });
+        }
+    } else {
+        (crate::store::log::create_session(conn, target_agent, channel)?, true)
+    };
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: if created { "session created".into() } else { "session resolved".into() },
+        data: serde_json::json!({
+            "session_id": session_id,
+            "agent_id": target_agent,
+            "channel": channel,
+            "created": created
+        }),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
+fn op_session_list(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+    let target_agent = req.args["agent_id"].as_str().unwrap_or(&req.actor.agent_id);
+    let limit = req.args["limit"].as_u64().unwrap_or(20).clamp(1, 200) as i64;
+
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "list",
+            resource: "session",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT s.id, s.channel, s.started_at, s.ended_at,
+                COUNT(m.id) AS message_count,
+                COALESCE(MAX(m.created_at), s.started_at) AS last_activity
+         FROM sessions s
+         LEFT JOIN messages m ON m.session_id = s.id
+         WHERE s.agent_id = ?1
+         GROUP BY s.id, s.channel, s.started_at, s.ended_at
+         ORDER BY last_activity DESC
+         LIMIT ?2",
+    )?;
+    let rows = stmt
+        .query_map(rusqlite::params![target_agent, limit], |r| {
+            Ok(serde_json::json!({
+                "id": r.get::<_, String>(0)?,
+                "channel": r.get::<_, Option<String>>(1)?,
+                "started_at": r.get::<_, i64>(2)?,
+                "ended_at": r.get::<_, Option<i64>>(3)?,
+                "message_count": r.get::<_, i64>(4)?,
+                "last_activity": r.get::<_, i64>(5)?,
+            }))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "sessions listed".into(),
+        data: serde_json::json!(rows),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
+fn op_js_tool_add(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+    let name = req.args["name"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'name'"))?;
+    let description = req.args["description"].as_str().unwrap_or("User-defined JS tool");
+    let script = req.args["script"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'script'"))?;
+
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "add",
+            resource: "js_tool",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    if name.chars().any(|c| !c.is_alphanumeric() && c != '_' && c != '-') {
+        return Ok(fail_response(
+            "invalid_args",
+            "tool name must contain only letters, digits, underscores, or hyphens".into(),
+        ));
+    }
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().timestamp();
+    let tool_id = format!("sqlite_js:{name}");
+    conn.execute(
+        "INSERT OR REPLACE INTO skills
+         (id, name, description, content, tool_id, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![id, name, description, script, tool_id, now, now],
+    )?;
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "js tool added".into(),
+        data: serde_json::json!({
+            "id": id,
+            "name": name,
+            "status": "created",
+        }),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
+fn op_js_tool_list(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "list",
+            resource: "js_tool",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT name, description, updated_at FROM skills
+         WHERE tool_id LIKE 'sqlite_js:%'
+         ORDER BY name",
+    )?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(serde_json::json!({
+                "name": r.get::<_, String>(0)?,
+                "description": r.get::<_, String>(1)?,
+                "updated_at": r.get::<_, i64>(2)?,
+            }))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "js tools listed".into(),
+        data: serde_json::json!(rows),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
+fn op_js_tool_delete(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+    let name = req.args["name"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'name'"))?;
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "delete",
+            resource: "js_tool",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    let rows = conn.execute(
+        "DELETE FROM skills WHERE name = ?1 AND tool_id LIKE 'sqlite_js:%'",
+        [name],
+    )?;
+    if rows == 0 {
+        return Ok(OperationResponse {
+            ok: false,
+            code: "not_found".into(),
+            message: format!("js tool '{name}' not found"),
+            data: serde_json::json!({}),
+            policy: Some(policy_meta(&decision)),
+            audit: AuditMeta { recorded: true },
+        });
+    }
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "js tool deleted".into(),
+        data: serde_json::json!({
+            "name": name,
+            "status": "deleted",
+        }),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
 fn op_knowledge_ingest(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
     let content = req.args["content"]
         .as_str()
@@ -375,6 +893,290 @@ fn op_knowledge_ingest(conn: &Connection, req: &OperationRequest) -> anyhow::Res
         data: serde_json::json!({
             "document_id": doc_id,
             "chunks_created": chunk_count
+        }),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
+fn op_memory_search(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+    let query = req.args["query"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'query'"))?;
+    let agent_id = req.args["agent_id"]
+        .as_str()
+        .unwrap_or(&req.actor.agent_id);
+    let limit = req.args["limit"].as_u64().unwrap_or(20) as usize;
+
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "search",
+            resource: "memory",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    let rows = crate::search::search(conn, query, agent_id, limit, None, None)?;
+    let data = rows
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "id": r.id,
+                "store": format!("{:?}", r.store),
+                "content": r.content,
+                "score": r.score,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "memory search completed".into(),
+        data: serde_json::json!(data),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
+fn op_memory_fact_add(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+    let content = req.args["content"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'content'"))?;
+    let summary = req.args["summary"].as_str().unwrap_or(content);
+    let pointer = req.args["pointer"].as_str().unwrap_or(content);
+    let confidence = req.args["confidence"].as_f64().unwrap_or(1.0);
+    let agent_id = req.args["agent_id"]
+        .as_str()
+        .unwrap_or(&req.actor.agent_id);
+    let reason = req.args["reason"].as_str().or(Some("added via canonical operation"));
+    let keywords = req.args["keywords"].as_str().map(|s| s.to_string());
+
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "add",
+            resource: "fact",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    let id = crate::store::facts::add(
+        conn,
+        &crate::store::facts::NewFact {
+            agent_id: agent_id.to_string(),
+            content: content.to_string(),
+            summary: summary.to_string(),
+            pointer: pointer.to_string(),
+            keywords,
+            source_message_id: req.args["source_message_id"].as_str().map(|s| s.to_string()),
+            confidence,
+        },
+        reason,
+    )?;
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "fact added".into(),
+        data: serde_json::json!({
+            "id": id,
+            "agent_id": agent_id,
+            "summary": summary,
+            "pointer": pointer,
+            "confidence": confidence
+        }),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
+fn op_memory_fact_update(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+    let fact_id = req.args["id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'id'"))?;
+    let content = req.args["content"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'content'"))?;
+    let summary = req.args["summary"].as_str().unwrap_or(content);
+    let pointer = req.args["pointer"].as_str().unwrap_or(content);
+    let reason = req.args["reason"].as_str().or(Some("updated via canonical operation"));
+    let source_message_id = req.args["source_message_id"].as_str();
+
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "update",
+            resource: "fact",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    if crate::store::facts::get(conn, fact_id)?.is_none() {
+        return Ok(OperationResponse {
+            ok: false,
+            code: "not_found".into(),
+            message: format!("fact '{fact_id}' not found"),
+            data: serde_json::json!({}),
+            policy: Some(policy_meta(&decision)),
+            audit: AuditMeta { recorded: true },
+        });
+    }
+
+    crate::store::facts::update(
+        conn,
+        fact_id,
+        content,
+        summary,
+        pointer,
+        reason,
+        source_message_id,
+    )?;
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "fact updated".into(),
+        data: serde_json::json!({
+            "id": fact_id,
+            "summary": summary,
+            "pointer": pointer
+        }),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
+fn op_memory_fact_get(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+    let fact_id = req.args["id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'id'"))?;
+
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "read",
+            resource: "fact",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    let fact = match crate::store::facts::get(conn, fact_id)? {
+        Some(v) => v,
+        None => {
+            return Ok(OperationResponse {
+                ok: false,
+                code: "not_found".into(),
+                message: format!("fact '{fact_id}' not found"),
+                data: serde_json::json!({}),
+                policy: Some(policy_meta(&decision)),
+                audit: AuditMeta { recorded: true },
+            })
+        }
+    };
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "fact loaded".into(),
+        data: serde_json::json!({
+            "id": fact.id,
+            "agent_id": fact.agent_id,
+            "content": fact.content,
+            "summary": fact.summary,
+            "pointer": fact.pointer,
+            "confidence": fact.confidence,
+            "version": fact.version,
+            "context_compact": fact.context_compact,
+            "compaction_level": fact.compaction_level,
+            "last_compacted_at": fact.last_compacted_at,
+            "superseded_at": fact.superseded_at,
+        }),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
+fn op_memory_fact_compaction_reset(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+    let fact_id = req.args["id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'id'"))?;
+    let reason = req.args["reason"].as_str().or(Some("compaction reset via canonical operation"));
+
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "update",
+            resource: "fact",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    let fact = match crate::store::facts::get(conn, fact_id)? {
+        Some(v) => v,
+        None => {
+            return Ok(OperationResponse {
+                ok: false,
+                code: "not_found".into(),
+                message: format!("fact '{fact_id}' not found"),
+                data: serde_json::json!({}),
+                policy: Some(policy_meta(&decision)),
+                audit: AuditMeta { recorded: true },
+            })
+        }
+    };
+
+    crate::store::facts::reset_compaction(conn, fact_id)?;
+    crate::store::facts::update(
+        conn,
+        fact_id,
+        &fact.content,
+        &fact.summary,
+        &fact.pointer,
+        reason,
+        req.args["source_message_id"].as_str(),
+    )?;
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "fact compaction reset".into(),
+        data: serde_json::json!({
+            "id": fact_id,
+            "compaction_level": 0,
+            "context_compact": serde_json::Value::Null,
+            "reset": true,
         }),
         policy: Some(policy_meta(&decision)),
         audit: AuditMeta { recorded: true },
@@ -775,8 +1577,10 @@ fn op_ingest_events(conn: &Connection, req: &OperationRequest) -> anyhow::Result
 
 fn op_ingest_status(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
     let source = req.args["source"].as_str();
+    let status = req.args["status"].as_str();
+    let file_path_like = req.args["file_path_like"].as_str();
     let limit = req.args["limit"].as_u64().unwrap_or(20) as usize;
-    let rows = crate::ingest::recent_runs(conn, source, limit)?;
+    let rows = crate::ingest::recent_runs(conn, source, status, file_path_like, limit)?;
     let data = rows
         .into_iter()
         .map(|r| {
@@ -883,6 +1687,14 @@ fn policy_meta(decision: &crate::policy::PolicyDecision) -> PolicyMeta {
     }
 }
 
+fn parse_policy_mode(mode: Option<&str>) -> Option<crate::policy::PolicyMode> {
+    match mode {
+        Some("deny_by_default") | Some("deny") => Some(crate::policy::PolicyMode::DenyByDefault),
+        Some("allow_by_default") | Some("allow") => Some(crate::policy::PolicyMode::AllowByDefault),
+        _ => None,
+    }
+}
+
 fn denied_response(decision: &crate::policy::PolicyDecision) -> OperationResponse {
     OperationResponse {
         ok: false,
@@ -916,6 +1728,20 @@ fn is_policy_required(op: &str) -> bool {
             | "job.run"
             | "job.pause"
             | "policy.add"
+            | "memory.search"
+            | "memory.fact.add"
+            | "memory.fact.update"
+            | "memory.fact.get"
+            | "memory.fact.compaction.reset"
+            | "policy.evaluate"
+            | "policy.explain"
+            | "audit.query"
+            | "audit.append"
+            | "session.resolve"
+            | "session.list"
+            | "js.tool.add"
+            | "js.tool.list"
+            | "js.tool.delete"
             | "knowledge.ingest"
             | "skill.add"
             | "skill.promote"
@@ -928,24 +1754,294 @@ fn is_policy_required(op: &str) -> bool {
     )
 }
 
-fn run_pre_hooks(req: &OperationRequest) -> Option<OperationResponse> {
+fn is_idempotent_mutation(op: &str) -> bool {
+    matches!(
+        op,
+        "job.create"
+            | "job.run"
+            | "job.pause"
+            | "policy.add"
+            | "memory.fact.add"
+            | "memory.fact.update"
+            | "memory.fact.compaction.reset"
+            | "audit.append"
+            | "session.resolve"
+            | "js.tool.add"
+            | "js.tool.delete"
+            | "knowledge.ingest"
+            | "skill.add"
+            | "skill.promote"
+            | "fact.delete"
+            | "agent.create"
+            | "agent.delete"
+            | "agent.config"
+            | "ingest.events"
+            | "ingest.replay"
+    )
+}
+
+#[derive(Debug)]
+struct StoredIdempotency {
+    id: String,
+    request_fingerprint: String,
+    response_json: String,
+}
+
+fn request_fingerprint(req: &OperationRequest) -> anyhow::Result<String> {
+    serde_json::to_string(&serde_json::json!({
+        "op": req.op,
+        "actor": req.actor.agent_id,
+        "args": req.args,
+    }))
+    .map_err(|e| anyhow::anyhow!("failed to serialize idempotency request fingerprint: {e}"))
+}
+
+fn load_idempotency_record(
+    conn: &Connection,
+    req: &OperationRequest,
+    key: &str,
+) -> anyhow::Result<Option<StoredIdempotency>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, request_fingerprint, response_json
+         FROM operation_idempotency
+         WHERE actor_id = ?1 AND op = ?2 AND idempotency_key = ?3
+         LIMIT 1",
+    )?;
+
+    let row = stmt.query_row(rusqlite::params![req.actor.agent_id, req.op, key], |r| {
+        Ok(StoredIdempotency {
+            id: r.get(0)?,
+            request_fingerprint: r.get(1)?,
+            response_json: r.get(2)?,
+        })
+    });
+
+    match row {
+        Ok(v) => Ok(Some(v)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+fn store_idempotency_record(
+    conn: &Connection,
+    req: &OperationRequest,
+    key: &str,
+    fingerprint: &str,
+    response: &OperationResponse,
+) -> anyhow::Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    let response_json = serde_json::to_string(response)
+        .map_err(|e| anyhow::anyhow!("failed to serialize idempotent response: {e}"))?;
+
+    conn.execute(
+        "INSERT OR REPLACE INTO operation_idempotency
+         (id, actor_id, op, idempotency_key, request_fingerprint, response_json, created_at, replay_count)
+         VALUES (
+            COALESCE(
+                (SELECT id FROM operation_idempotency WHERE actor_id = ?1 AND op = ?2 AND idempotency_key = ?3),
+                ?4
+            ),
+            ?1, ?2, ?3, ?5, ?6, ?7,
+            COALESCE(
+                (SELECT replay_count FROM operation_idempotency WHERE actor_id = ?1 AND op = ?2 AND idempotency_key = ?3),
+                0
+            )
+         )",
+        rusqlite::params![
+            req.actor.agent_id,
+            req.op,
+            key,
+            uuid::Uuid::new_v4().to_string(),
+            fingerprint,
+            response_json,
+            now,
+        ],
+    )?;
+    Ok(())
+}
+
+fn bump_idempotency_replay(conn: &Connection, record_id: &str) -> anyhow::Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "UPDATE operation_idempotency
+         SET replay_count = replay_count + 1, last_replayed_at = ?2
+         WHERE id = ?1",
+        rusqlite::params![record_id, now],
+    )?;
+    Ok(())
+}
+
+fn record_idempotency_audit_event(
+    conn: &Connection,
+    req: &OperationRequest,
+    state: &str,
+    reason: Option<&str>,
+) -> anyhow::Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO policy_audit (
+            id, policy_id, actor, action, resource, effect, reason, correlation_id, session_id, idempotency_key, idempotency_state, created_at
+        ) VALUES (?1, NULL, ?2, ?3, ?4, 'audited', ?5, ?6, ?7, ?8, ?9, ?10)",
+        rusqlite::params![
+            uuid::Uuid::new_v4().to_string(),
+            req.actor.agent_id,
+            "idempotency",
+            req.op,
+            reason,
+            req.request_id.as_deref().or(req.context.trace_id.as_deref()),
+            req.context.session_id.as_deref(),
+            req.idempotency_key.as_deref(),
+            state,
+            now,
+        ],
+    )?;
+    Ok(())
+}
+
+#[derive(Debug)]
+struct OperationHookRow {
+    id: String,
+    op_pattern: String,
+    hook_type: String,
+    config_json: String,
+}
+
+fn load_operation_hooks(conn: &Connection, phase: &str) -> anyhow::Result<Vec<OperationHookRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, op_pattern, hook_type, config_json
+         FROM operation_hooks
+         WHERE enabled = 1 AND phase = ?1
+         ORDER BY created_at ASC, id ASC",
+    )?;
+    let rows = stmt
+        .query_map([phase], |r| {
+            Ok(OperationHookRow {
+                id: r.get(0)?,
+                op_pattern: r.get(1)?,
+                hook_type: r.get(2)?,
+                config_json: r.get(3)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+fn op_pattern_matches(pattern: &str, op: &str) -> bool {
+    let parts: Vec<&str> = pattern.split('*').collect();
+    if parts.len() == 1 {
+        return pattern == op;
+    }
+
+    let mut pos = 0;
+    for (i, part) in parts.iter().enumerate() {
+        if part.is_empty() {
+            continue;
+        }
+        match op[pos..].find(part) {
+            Some(found) => {
+                if i == 0 && found != 0 {
+                    return false;
+                }
+                pos += found + part.len();
+            }
+            None => return false,
+        }
+    }
+    if !pattern.ends_with('*') {
+        return pos == op.len();
+    }
+    true
+}
+
+fn run_pre_hooks(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Option<OperationResponse>> {
     // Hard guardrail: avoid oversized operation envelopes overwhelming runtime.
     let args_size = req.args.to_string().len();
     if args_size > 2_000_000 {
-        return Some(fail_response(
+        return Ok(Some(fail_response(
             "invalid_args",
             format!("operation args too large: {} bytes", args_size),
-        ));
+        )));
     }
-    None
+
+    let hooks = load_operation_hooks(conn, "pre")?;
+    let args_text = req.args.to_string();
+    for hook in hooks {
+        if !op_pattern_matches(&hook.op_pattern, &req.op) {
+            continue;
+        }
+        let cfg: serde_json::Value = serde_json::from_str(&hook.config_json).unwrap_or_else(|_| serde_json::json!({}));
+        match hook.hook_type.as_str() {
+            "deny_if_args_contains" => {
+                let needle = cfg["needle"].as_str().unwrap_or("");
+                if !needle.is_empty() && args_text.contains(needle) {
+                    let msg = cfg["message"]
+                        .as_str()
+                        .unwrap_or("operation blocked by pre-hook")
+                        .to_string();
+                    tracing::debug!(hook_id = %hook.id, op = %req.op, "operation pre-hook denied request");
+                    return Ok(Some(fail_response("hook_denied", msg)));
+                }
+            }
+            "max_args_bytes" => {
+                let max = cfg["max_bytes"].as_u64().unwrap_or(u64::MAX) as usize;
+                if args_size > max {
+                    let msg = cfg["message"]
+                        .as_str()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| format!("operation args exceeded hook limit: {} > {}", args_size, max));
+                    tracing::debug!(hook_id = %hook.id, op = %req.op, "operation pre-hook rejected oversized args");
+                    return Ok(Some(fail_response("hook_denied", msg)));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(None)
 }
 
-fn run_post_hooks(_req: &OperationRequest, resp: &mut OperationResponse) {
+fn run_post_hooks(conn: &Connection, req: &OperationRequest, resp: &mut OperationResponse) -> anyhow::Result<()> {
     // Standardized post-hook: redact accidental secret-like output text.
     resp.message = crate::store::redact::redact(&resp.message);
+
+    let hooks = load_operation_hooks(conn, "post")?;
+    for hook in hooks {
+        if !op_pattern_matches(&hook.op_pattern, &req.op) {
+            continue;
+        }
+        let cfg: serde_json::Value = serde_json::from_str(&hook.config_json).unwrap_or_else(|_| serde_json::json!({}));
+        match hook.hook_type.as_str() {
+            "append_message_suffix" => {
+                if let Some(suffix) = cfg["suffix"].as_str() {
+                    resp.message.push_str(suffix);
+                }
+            }
+            "prepend_message_prefix" => {
+                if let Some(prefix) = cfg["prefix"].as_str() {
+                    resp.message = format!("{prefix}{}", resp.message);
+                }
+            }
+            "truncate_message" => {
+                let max_chars = cfg["max_chars"].as_u64().unwrap_or(u64::MAX) as usize;
+                let mut out = String::new();
+                for (i, ch) in resp.message.chars().enumerate() {
+                    if i >= max_chars {
+                        break;
+                    }
+                    out.push(ch);
+                }
+                if out.len() < resp.message.len() {
+                    resp.message = out;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
-fn annotate_response_metadata(req: &OperationRequest, resp: &mut OperationResponse) {
+fn annotate_response_metadata(req: &OperationRequest, resp: &mut OperationResponse, idempotency_state: &str) {
     let correlation_id = req
         .request_id
         .as_deref()
@@ -953,11 +2049,6 @@ fn annotate_response_metadata(req: &OperationRequest, resp: &mut OperationRespon
         .unwrap_or("")
         .to_string();
     let idempotency_key = req.idempotency_key.clone();
-    let idempotency_state = if idempotency_key.is_some() {
-        "provided_unenforced"
-    } else {
-        "not_provided"
-    };
     let meta = serde_json::json!({
         "op": req.op,
         "op_version": req.op_version,
@@ -966,17 +2057,8 @@ fn annotate_response_metadata(req: &OperationRequest, resp: &mut OperationRespon
         "idempotency_state": idempotency_state,
     });
 
-    match &mut resp.data {
-        serde_json::Value::Object(map) => {
-            map.insert("_meta".into(), meta);
-        }
-        other => {
-            let prior = other.take();
-            resp.data = serde_json::json!({
-                "result": prior,
-                "_meta": meta
-            });
-        }
+    if let serde_json::Value::Object(map) = &mut resp.data {
+        map.insert("_meta".into(), meta);
     }
 }
 
@@ -985,9 +2067,20 @@ fn evaluate_policy_with_request_context(
     policy_req: &crate::policy::PolicyRequest,
     req: &OperationRequest,
 ) -> anyhow::Result<crate::policy::PolicyDecision> {
+    let idempotency_state = if req.idempotency_key.is_some() {
+        if is_idempotent_mutation(req.op.as_str()) {
+            "provided_enforced"
+        } else {
+            "provided_unenforced"
+        }
+    } else {
+        "not_provided"
+    };
     let audit = crate::policy::PolicyAuditContext {
         session_id: req.context.session_id.as_deref(),
         correlation_id: req.request_id.as_deref().or(req.context.trace_id.as_deref()),
+        idempotency_key: req.idempotency_key.as_deref(),
+        idempotency_state: Some(idempotency_state),
     };
     crate::policy::evaluate_with_audit(conn, policy_req, &audit)
 }
@@ -1232,6 +2325,115 @@ mod tests {
     }
 
     #[test]
+    fn configured_pre_hook_can_block_operation() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO operation_hooks (id, op_pattern, phase, hook_type, config_json, enabled, created_at)
+             VALUES ('h-pre-block', 'job.create', 'pre', 'deny_if_args_contains', '{\"needle\":\"blocked-job\",\"message\":\"blocked by configured hook\"}', 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        let req = OperationRequest {
+            op: "job.create".into(),
+            op_version: Some("v1".into()),
+            request_id: Some("corr-hook-pre".into()),
+            idempotency_key: None,
+            actor: ActorContext {
+                agent_id: "main".into(),
+                tenant_id: None,
+                user_id: None,
+                channel: Some("cli".into()),
+            },
+            context: OperationContext::default(),
+            args: serde_json::json!({
+                "name": "blocked-job",
+                "schedule": "* * * * *"
+            }),
+        };
+        let resp = execute(&conn, &req).unwrap();
+        assert!(!resp.ok);
+        assert_eq!(resp.code, "hook_denied");
+        assert_eq!(resp.message, "blocked by configured hook");
+    }
+
+    #[test]
+    fn configured_post_hook_can_mutate_message() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, created_at)
+             VALUES ('allow-all', 'allow all', 10, 'allow', '*', '*', '*', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO operation_hooks (id, op_pattern, phase, hook_type, config_json, enabled, created_at)
+             VALUES ('h-post-suffix', 'job.create', 'post', 'append_message_suffix', '{\"suffix\":\" [hooked]\"}', 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        let req = OperationRequest {
+            op: "job.create".into(),
+            op_version: Some("v1".into()),
+            request_id: Some("corr-hook-post".into()),
+            idempotency_key: None,
+            actor: ActorContext {
+                agent_id: "main".into(),
+                tenant_id: None,
+                user_id: None,
+                channel: Some("cli".into()),
+            },
+            context: OperationContext::default(),
+            args: serde_json::json!({
+                "name": "hooked-message-job",
+                "schedule": "* * * * *"
+            }),
+        };
+        let resp = execute(&conn, &req).unwrap();
+        assert!(resp.ok);
+        assert!(resp.message.ends_with(" [hooked]"));
+    }
+
+    #[test]
+    fn configured_hooks_do_not_bypass_policy_denial() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, message, created_at)
+             VALUES ('deny-job-create', 'deny create', 100, 'deny', '*', 'create', 'job', 'blocked', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO operation_hooks (id, op_pattern, phase, hook_type, config_json, enabled, created_at)
+             VALUES ('h-post-prefix', 'job.create', 'post', 'prepend_message_prefix', '{\"prefix\":\"HOOK: \"}', 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        let req = OperationRequest {
+            op: "job.create".into(),
+            op_version: Some("v1".into()),
+            request_id: Some("corr-hook-policy".into()),
+            idempotency_key: None,
+            actor: ActorContext {
+                agent_id: "main".into(),
+                tenant_id: None,
+                user_id: None,
+                channel: Some("cli".into()),
+            },
+            context: OperationContext::default(),
+            args: serde_json::json!({
+                "name": "must-deny",
+                "schedule": "* * * * *"
+            }),
+        };
+        let resp = execute(&conn, &req).unwrap();
+        assert!(!resp.ok);
+        assert_eq!(resp.code, "policy_denied");
+    }
+
+    #[test]
     fn response_contains_idempotency_metadata() {
         let conn = setup();
         conn.execute(
@@ -1241,7 +2443,7 @@ mod tests {
         )
         .unwrap();
         let req = OperationRequest {
-            op: "job.list".into(),
+            op: "job.create".into(),
             op_version: Some("v1".into()),
             request_id: Some("corr-123".into()),
             idempotency_key: Some("idem-123".into()),
@@ -1252,13 +2454,159 @@ mod tests {
                 channel: Some("cli".into()),
             },
             context: OperationContext::default(),
-            args: serde_json::json!({}),
+            args: serde_json::json!({
+                "name": "meta-check",
+                "schedule": "* * * * *"
+            }),
         };
         let resp = execute(&conn, &req).unwrap();
         assert!(resp.ok);
         assert_eq!(resp.data["_meta"]["correlation_id"], "corr-123");
         assert_eq!(resp.data["_meta"]["idempotency_key"], "idem-123");
-        assert_eq!(resp.data["_meta"]["idempotency_state"], "provided_unenforced");
+        assert_eq!(resp.data["_meta"]["idempotency_state"], "provided_enforced");
+    }
+
+    #[test]
+    fn idempotency_replays_mutating_response() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, created_at)
+             VALUES ('allow-all', 'allow all', 10, 'allow', '*', '*', '*', 1)",
+            [],
+        )
+        .unwrap();
+
+        let req = OperationRequest {
+            op: "job.create".into(),
+            op_version: Some("v1".into()),
+            request_id: Some("corr-idem-first".into()),
+            idempotency_key: Some("idem-replay-1".into()),
+            actor: ActorContext {
+                agent_id: "main".into(),
+                tenant_id: None,
+                user_id: None,
+                channel: Some("cli".into()),
+            },
+            context: OperationContext::default(),
+            args: serde_json::json!({
+                "name": "idem-job",
+                "schedule": "* * * * *"
+            }),
+        };
+
+        let first = execute(&conn, &req).unwrap();
+        assert!(first.ok);
+        let first_id = first.data["id"].as_str().unwrap().to_string();
+
+        let second = execute(
+            &conn,
+            &OperationRequest {
+                request_id: Some("corr-idem-second".into()),
+                ..req
+            },
+        )
+        .unwrap();
+        assert!(second.ok);
+        assert_eq!(second.data["id"], first_id);
+        assert_eq!(second.data["_meta"]["idempotency_state"], "replayed");
+
+        let job_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM jobs WHERE name = 'idem-job'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(job_count, 1);
+    }
+
+    #[test]
+    fn idempotency_conflict_rejects_changed_args() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, created_at)
+             VALUES ('allow-all', 'allow all', 10, 'allow', '*', '*', '*', 1)",
+            [],
+        )
+        .unwrap();
+
+        let first = OperationRequest {
+            op: "job.create".into(),
+            op_version: Some("v1".into()),
+            request_id: Some("corr-idem-conflict-first".into()),
+            idempotency_key: Some("idem-conflict-1".into()),
+            actor: ActorContext {
+                agent_id: "main".into(),
+                tenant_id: None,
+                user_id: None,
+                channel: Some("cli".into()),
+            },
+            context: OperationContext::default(),
+            args: serde_json::json!({
+                "name": "idem-conflict-job",
+                "schedule": "* * * * *"
+            }),
+        };
+        let first_resp = execute(&conn, &first).unwrap();
+        assert!(first_resp.ok);
+
+        let second = OperationRequest {
+            args: serde_json::json!({
+                "name": "idem-conflict-job",
+                "schedule": "0 * * * *"
+            }),
+            request_id: Some("corr-idem-conflict-second".into()),
+            ..first
+        };
+        let second_resp = execute(&conn, &second).unwrap();
+        assert!(!second_resp.ok);
+        assert_eq!(second_resp.code, "idempotency_conflict");
+        assert_eq!(second_resp.data["_meta"]["idempotency_state"], "conflict");
+    }
+
+    #[test]
+    fn policy_audit_records_idempotency_state() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, created_at)
+             VALUES ('allow-all', 'allow all', 10, 'allow', '*', '*', '*', 1)",
+            [],
+        )
+        .unwrap();
+
+        let req = OperationRequest {
+            op: "job.create".into(),
+            op_version: Some("v1".into()),
+            request_id: Some("corr-idem-audit".into()),
+            idempotency_key: Some("idem-audit-1".into()),
+            actor: ActorContext {
+                agent_id: "main".into(),
+                tenant_id: None,
+                user_id: None,
+                channel: Some("cli".into()),
+            },
+            context: OperationContext::default(),
+            args: serde_json::json!({
+                "name": "idem-audit-job",
+                "schedule": "* * * * *"
+            }),
+        };
+
+        let resp = execute(&conn, &req).unwrap();
+        assert!(resp.ok);
+
+        let (key, state): (Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT idempotency_key, idempotency_state
+                 FROM policy_audit
+                 WHERE correlation_id = 'corr-idem-audit'
+                 LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(key.as_deref(), Some("idem-audit-1"));
+        assert_eq!(state.as_deref(), Some("provided_enforced"));
     }
 
     #[test]
@@ -1299,6 +2647,440 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM policies WHERE name = 'deny-shell'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn memory_fact_add_update_and_search_work() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, created_at)
+             VALUES ('allow-all', 'allow all', 10, 'allow', '*', '*', '*', 1)",
+            [],
+        )
+        .unwrap();
+
+        let add = execute(
+            &conn,
+            &OperationRequest {
+                op: "memory.fact.add".into(),
+                op_version: Some("v1".into()),
+                request_id: Some("corr-memory-add".into()),
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "content": "Stripe webhooks power billing events",
+                    "summary": "billing uses Stripe webhooks",
+                    "pointer": "billing:stripe-webhooks"
+                }),
+            },
+        )
+        .unwrap();
+        assert!(add.ok);
+        let fact_id = add.data["id"].as_str().unwrap().to_string();
+
+        let update = execute(
+            &conn,
+            &OperationRequest {
+                op: "memory.fact.update".into(),
+                op_version: Some("v1".into()),
+                request_id: Some("corr-memory-update".into()),
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "id": fact_id,
+                    "content": "Stripe webhooks and retries power billing events",
+                    "summary": "billing uses Stripe webhooks + retries",
+                    "pointer": "billing:stripe-webhooks-retries"
+                }),
+            },
+        )
+        .unwrap();
+        assert!(update.ok);
+
+        let search = execute(
+            &conn,
+            &OperationRequest {
+                op: "memory.search".into(),
+                op_version: Some("v1".into()),
+                request_id: Some("corr-memory-search".into()),
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "query": "Stripe",
+                    "limit": 10
+                }),
+            },
+        )
+        .unwrap();
+        assert!(search.ok);
+        let rows = search.data.as_array().unwrap();
+        assert!(!rows.is_empty());
+    }
+
+    #[test]
+    fn memory_fact_get_and_compaction_reset_work() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, created_at)
+             VALUES ('allow-all', 'allow all', 10, 'allow', '*', '*', '*', 1)",
+            [],
+        )
+        .unwrap();
+
+        let add = execute(
+            &conn,
+            &OperationRequest {
+                op: "memory.fact.add".into(),
+                op_version: Some("v1".into()),
+                request_id: Some("corr-memory-add-2".into()),
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "content": "Checkout service retries payment intents before marking failure",
+                    "summary": "checkout retries payment intents",
+                    "pointer": "checkout:payment-retries"
+                }),
+            },
+        )
+        .unwrap();
+        assert!(add.ok);
+        let fact_id = add.data["id"].as_str().unwrap().to_string();
+
+        // Force compaction so reset has something to clear.
+        let compacted = crate::store::facts::compact_for_context(&conn, "main").unwrap();
+        assert!(compacted >= 1);
+
+        let get = execute(
+            &conn,
+            &OperationRequest {
+                op: "memory.fact.get".into(),
+                op_version: Some("v1".into()),
+                request_id: Some("corr-memory-get".into()),
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "id": fact_id
+                }),
+            },
+        )
+        .unwrap();
+        assert!(get.ok);
+        assert_eq!(get.data["pointer"], "checkout:payment-retries");
+        assert!(get.data["compaction_level"].as_i64().unwrap_or(0) >= 1);
+
+        let reset = execute(
+            &conn,
+            &OperationRequest {
+                op: "memory.fact.compaction.reset".into(),
+                op_version: Some("v1".into()),
+                request_id: Some("corr-memory-reset".into()),
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "id": get.data["id"],
+                    "reason": "test reset"
+                }),
+            },
+        )
+        .unwrap();
+        assert!(reset.ok);
+        assert_eq!(reset.data["compaction_level"], 0);
+        assert!(reset.data["context_compact"].is_null());
+    }
+
+    #[test]
+    fn policy_evaluate_and_explain_work() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, message, created_at)
+             VALUES ('deny-shell', 'deny shell', 100, 'deny', '*', 'call', 'tool:shell_*', 'Shell blocked', 1)",
+            [],
+        )
+        .unwrap();
+
+        let eval = execute(
+            &conn,
+            &OperationRequest {
+                op: "policy.evaluate".into(),
+                op_version: Some("v1".into()),
+                request_id: Some("corr-policy-eval".into()),
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "actor": "agent:main",
+                    "action": "call",
+                    "resource": "tool:shell_exec"
+                }),
+            },
+        )
+        .unwrap();
+        assert!(eval.ok);
+        assert_eq!(eval.data["effect"], "deny");
+
+        let explain = execute(
+            &conn,
+            &OperationRequest {
+                op: "policy.explain".into(),
+                op_version: Some("v1".into()),
+                request_id: Some("corr-policy-explain".into()),
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "actor": "agent:main",
+                    "action": "call",
+                    "resource": "tool:shell_exec"
+                }),
+            },
+        )
+        .unwrap();
+        assert!(explain.ok);
+        assert_eq!(explain.data["effect"], "deny");
+    }
+
+    #[test]
+    fn audit_append_and_query_work() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, created_at)
+             VALUES ('allow-all', 'allow all', 10, 'allow', '*', '*', '*', 1)",
+            [],
+        )
+        .unwrap();
+
+        let append = execute(
+            &conn,
+            &OperationRequest {
+                op: "audit.append".into(),
+                op_version: Some("v1".into()),
+                request_id: Some("corr-audit-append".into()),
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "actor": "agent:main",
+                    "action": "test.append",
+                    "resource": "audit",
+                    "effect": "audited",
+                    "reason": "manual append"
+                }),
+            },
+        )
+        .unwrap();
+        assert!(append.ok);
+
+        let query = execute(
+            &conn,
+            &OperationRequest {
+                op: "audit.query".into(),
+                op_version: Some("v1".into()),
+                request_id: Some("corr-audit-query".into()),
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "query": "manual append",
+                    "limit": 10
+                }),
+            },
+        )
+        .unwrap();
+        assert!(query.ok);
+        let rows = query.data.as_array().unwrap();
+        assert!(!rows.is_empty());
+    }
+
+    #[test]
+    fn session_resolve_and_list_work() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, created_at)
+             VALUES ('allow-all', 'allow all', 10, 'allow', '*', '*', '*', 1)",
+            [],
+        )
+        .unwrap();
+
+        let resolve = execute(
+            &conn,
+            &OperationRequest {
+                op: "session.resolve".into(),
+                op_version: Some("v1".into()),
+                request_id: Some("corr-session-resolve".into()),
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "channel": "cli"
+                }),
+            },
+        )
+        .unwrap();
+        assert!(resolve.ok);
+
+        let list = execute(
+            &conn,
+            &OperationRequest {
+                op: "session.list".into(),
+                op_version: Some("v1".into()),
+                request_id: Some("corr-session-list".into()),
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "limit": 10
+                }),
+            },
+        )
+        .unwrap();
+        assert!(list.ok);
+        let rows = list.data.as_array().unwrap();
+        assert!(!rows.is_empty());
+    }
+
+    #[test]
+    fn js_tool_add_list_delete_work() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, created_at)
+             VALUES ('allow-all', 'allow all', 10, 'allow', '*', '*', '*', 1)",
+            [],
+        )
+        .unwrap();
+
+        let add = execute(
+            &conn,
+            &OperationRequest {
+                op: "js.tool.add".into(),
+                op_version: Some("v1".into()),
+                request_id: Some("corr-js-add".into()),
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "name": "js_calc",
+                    "description": "test tool",
+                    "script": "function run(args){ return {ok:true}; }"
+                }),
+            },
+        )
+        .unwrap();
+        assert!(add.ok);
+
+        let list = execute(
+            &conn,
+            &OperationRequest {
+                op: "js.tool.list".into(),
+                op_version: Some("v1".into()),
+                request_id: Some("corr-js-list".into()),
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({}),
+            },
+        )
+        .unwrap();
+        assert!(list.ok);
+        let rows = list.data.as_array().unwrap();
+        assert!(rows.iter().any(|r| r["name"] == "js_calc"));
+
+        let del = execute(
+            &conn,
+            &OperationRequest {
+                op: "js.tool.delete".into(),
+                op_version: Some("v1".into()),
+                request_id: Some("corr-js-del".into()),
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "name": "js_calc"
+                }),
+            },
+        )
+        .unwrap();
+        assert!(del.ok);
     }
 
     #[test]
@@ -1695,6 +3477,106 @@ mod tests {
     }
 
     #[test]
+    fn ingest_status_supports_source_and_file_filters() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, created_at)
+             VALUES ('allow-all', 'allow all', 10, 'allow', '*', '*', '*', 1)",
+            [],
+        )
+        .unwrap();
+        let file_a = temp_jsonl_file(
+            "ingest-status-filter-a",
+            &[r#"{"event_id":"sfa1","type":"session.state","session_id":"sfa-s1","timestamp":100}"#],
+        );
+        let file_b = temp_jsonl_file(
+            "ingest-status-filter-b",
+            &[r#"{"event_id":"sfb1","type":"session.state","session_id":"sfb-s1","timestamp":100}"#],
+        );
+
+        for (source, file) in [("openclaw", &file_a), ("custom", &file_b)] {
+            let ingest = execute(
+                &conn,
+                &OperationRequest {
+                    op: "ingest.events".into(),
+                    op_version: Some("v1".into()),
+                    request_id: Some(format!("corr-ingest-status-filter-{source}")),
+                    idempotency_key: None,
+                    actor: ActorContext {
+                        agent_id: "main".into(),
+                        tenant_id: None,
+                        user_id: None,
+                        channel: Some("cli".into()),
+                    },
+                    context: OperationContext::default(),
+                    args: serde_json::json!({
+                        "source": source,
+                        "file_path": file.to_string_lossy().to_string(),
+                        "replay": true
+                    }),
+                },
+            )
+            .unwrap();
+            assert!(ingest.ok);
+        }
+
+        let by_source = execute(
+            &conn,
+            &OperationRequest {
+                op: "ingest.status".into(),
+                op_version: Some("v1".into()),
+                request_id: Some("corr-ingest-status-filter-source".into()),
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "source": "openclaw",
+                    "limit": 10
+                }),
+            },
+        )
+        .unwrap();
+        assert!(by_source.ok);
+        let source_rows = by_source.data.as_array().cloned().unwrap_or_default();
+        assert!(!source_rows.is_empty());
+        assert!(source_rows.iter().all(|r| r["source"] == "openclaw"));
+
+        let by_path = execute(
+            &conn,
+            &OperationRequest {
+                op: "ingest.status".into(),
+                op_version: Some("v1".into()),
+                request_id: Some("corr-ingest-status-filter-path".into()),
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "file_path_like": "ingest-status-filter-b",
+                    "limit": 10
+                }),
+            },
+        )
+        .unwrap();
+        assert!(by_path.ok);
+        let path_rows = by_path.data.as_array().cloned().unwrap_or_default();
+        assert_eq!(path_rows.len(), 1);
+        assert_eq!(path_rows[0]["source"], "custom");
+
+        let _ = std::fs::remove_file(file_a);
+        let _ = std::fs::remove_file(file_b);
+    }
+
+    #[test]
     fn ingest_projects_priority_families() {
         let conn = setup();
         conn.execute(
@@ -1706,7 +3588,7 @@ mod tests {
         let file = temp_jsonl_file(
             "ingest-priority-families",
             &[
-                r#"{"event_id":"u1","type":"model.usage","session_id":"pf-s1","provider":"anthropic","model":"claude","channel":"cli","input_tokens":10,"output_tokens":5,"cost_usd":0.01,"duration_ms":120}"#,
+                r#"{"event_id":"u1","type":"model.usage","session_id":"pf-s1","provider":"anthropic","model":"claude","channel":"cli","input_tokens":10,"output_tokens":5,"cost_usd":0.01,"duration_ms":120,"correlation_id":"corr-u1"}"#,
                 r#"{"event_id":"r1","type":"run.attempt","session_id":"pf-s1","status":"ok","output":"done","duration_ms":50}"#,
                 r#"{"event_id":"w1","type":"webhook.error","session_id":"pf-s1","provider":"stripe","endpoint":"/hook","error":"bad sig"}"#,
             ],
@@ -1745,6 +3627,40 @@ mod tests {
             )
             .unwrap();
         assert_eq!(usage_calls, 1);
+        let usage_projection: (String, String, i64, i64, i64, f64, String) = conn
+            .query_row(
+                "SELECT
+                    normalized_provider,
+                    normalized_model,
+                    normalized_input_tokens,
+                    normalized_output_tokens,
+                    normalized_total_tokens,
+                    normalized_cost_usd,
+                    normalized_correlation_id
+                 FROM external_events
+                 WHERE event_type = 'model.usage'
+                 LIMIT 1",
+                [],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(usage_projection.0, "anthropic");
+        assert_eq!(usage_projection.1, "claude");
+        assert_eq!(usage_projection.2, 10);
+        assert_eq!(usage_projection.3, 5);
+        assert_eq!(usage_projection.4, 15);
+        assert!((usage_projection.5 - 0.01).abs() < 1e-9);
+        assert_eq!(usage_projection.6, "corr-u1");
 
         let run_calls: i64 = conn
             .query_row(
@@ -1763,6 +3679,60 @@ mod tests {
             )
             .unwrap();
         assert_eq!(webhook_audit, 1);
+
+        let _ = std::fs::remove_file(file);
+    }
+
+    #[test]
+    fn ingest_message_projection_promotes_durable_facts() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, created_at)
+             VALUES ('allow-all', 'allow all', 10, 'allow', '*', '*', '*', 1)",
+            [],
+        )
+        .unwrap();
+        let file = temp_jsonl_file(
+            "ingest-message-facts",
+            &[r#"{"event_id":"mf1","type":"message.processed","session_id":"mf-s1","role":"assistant","content":"Payments retries use exponential backoff and cap at three attempts before raising an operator alert.","timestamp":1710000000}"#],
+        );
+
+        let resp = execute(
+            &conn,
+            &OperationRequest {
+                op: "ingest.events".into(),
+                op_version: Some("v1".into()),
+                request_id: Some("corr-ingest-message-facts".into()),
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "source": "openclaw",
+                    "file_path": file.to_string_lossy().to_string(),
+                    "replay": true
+                }),
+            },
+        )
+        .unwrap();
+        assert!(resp.ok);
+
+        let fact_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM facts WHERE agent_id = 'main'", [], |r| r.get(0))
+            .unwrap();
+        assert!(fact_count >= 1);
+        let source_msg_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM facts WHERE source_message_id = 'ext:openclaw:msg:mf1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(source_msg_count >= 1);
 
         let _ = std::fs::remove_file(file);
     }

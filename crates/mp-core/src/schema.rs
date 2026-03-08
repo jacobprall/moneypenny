@@ -6,11 +6,14 @@
 
 use rusqlite::Connection;
 
-const AGENT_SCHEMA_VERSION: i64 = 4;
+const AGENT_SCHEMA_VERSION: i64 = 9;
 const METADATA_SCHEMA_VERSION: i64 = 1;
 
 pub fn init_agent_db(conn: &Connection) -> anyhow::Result<()> {
     let current = get_schema_version(conn);
+    if current >= AGENT_SCHEMA_VERSION {
+        return Ok(());
+    }
 
     if current < 1 {
         conn.execute_batch(AGENT_SCHEMA_V1)?;
@@ -30,6 +33,31 @@ pub fn init_agent_db(conn: &Connection) -> anyhow::Result<()> {
     if current < 4 {
         conn.execute_batch(AGENT_SCHEMA_V4)?;
         set_schema_version(conn, 4)?;
+    }
+
+    if current < 5 {
+        conn.execute_batch(AGENT_SCHEMA_V5)?;
+        set_schema_version(conn, 5)?;
+    }
+
+    if current < 6 {
+        conn.execute_batch(AGENT_SCHEMA_V6)?;
+        set_schema_version(conn, 6)?;
+    }
+
+    if current < 7 {
+        conn.execute_batch(AGENT_SCHEMA_V7)?;
+        set_schema_version(conn, 7)?;
+    }
+
+    if current < 8 {
+        conn.execute_batch(AGENT_SCHEMA_V8)?;
+        set_schema_version(conn, 8)?;
+    }
+
+    if current < 9 {
+        conn.execute_batch(AGENT_SCHEMA_V9)?;
+        set_schema_version(conn, 9)?;
     }
 
     Ok(())
@@ -56,11 +84,15 @@ pub fn init_vector_indexes(conn: &Connection, dims: usize) -> anyhow::Result<()>
     let opts = format!("type=FLOAT32,dimension={dims},distance=COSINE");
     for (table, col) in &[
         ("facts",  "content_embedding"),
+        ("messages", "content_embedding"),
+        ("tool_calls", "content_embedding"),
+        ("policy_audit", "content_embedding"),
         ("chunks", "content_embedding"),
     ] {
-        conn.execute(
+        conn.query_row(
             "SELECT vector_init(?1, ?2, ?3)",
             rusqlite::params![table, col, opts],
+            |_| Ok::<_, rusqlite::Error>(()),
         )?;
     }
     Ok(())
@@ -355,6 +387,59 @@ CREATE TABLE IF NOT EXISTS ingest_runs (
 );
 ";
 
+const AGENT_SCHEMA_V5: &str = "
+ALTER TABLE policy_audit ADD COLUMN idempotency_key TEXT;
+ALTER TABLE policy_audit ADD COLUMN idempotency_state TEXT;
+
+CREATE TABLE IF NOT EXISTS operation_idempotency (
+    id                  TEXT PRIMARY KEY,
+    actor_id            TEXT NOT NULL DEFAULT '',
+    op                  TEXT NOT NULL DEFAULT '',
+    idempotency_key     TEXT NOT NULL DEFAULT '',
+    request_fingerprint TEXT NOT NULL DEFAULT '',
+    response_json       TEXT NOT NULL DEFAULT '',
+    created_at          INTEGER NOT NULL DEFAULT 0,
+    last_replayed_at    INTEGER,
+    replay_count        INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_operation_idempotency_actor_op_key
+ON operation_idempotency (actor_id, op, idempotency_key);
+";
+
+const AGENT_SCHEMA_V6: &str = "
+CREATE TABLE IF NOT EXISTS operation_hooks (
+    id                  TEXT PRIMARY KEY,
+    op_pattern          TEXT NOT NULL DEFAULT '*',
+    phase               TEXT NOT NULL DEFAULT 'pre',
+    hook_type           TEXT NOT NULL DEFAULT '',
+    config_json         TEXT NOT NULL DEFAULT '{}',
+    enabled             INTEGER NOT NULL DEFAULT 1,
+    created_at          INTEGER NOT NULL DEFAULT 0
+);
+";
+
+const AGENT_SCHEMA_V7: &str = "
+ALTER TABLE facts ADD COLUMN context_compact TEXT;
+ALTER TABLE facts ADD COLUMN compaction_level INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE facts ADD COLUMN last_compacted_at INTEGER;
+";
+
+const AGENT_SCHEMA_V8: &str = "
+ALTER TABLE tool_calls ADD COLUMN content_embedding BLOB;
+ALTER TABLE policy_audit ADD COLUMN content_embedding BLOB;
+";
+
+const AGENT_SCHEMA_V9: &str = "
+ALTER TABLE external_events ADD COLUMN normalized_provider TEXT;
+ALTER TABLE external_events ADD COLUMN normalized_model TEXT;
+ALTER TABLE external_events ADD COLUMN normalized_input_tokens INTEGER;
+ALTER TABLE external_events ADD COLUMN normalized_output_tokens INTEGER;
+ALTER TABLE external_events ADD COLUMN normalized_total_tokens INTEGER;
+ALTER TABLE external_events ADD COLUMN normalized_cost_usd REAL;
+ALTER TABLE external_events ADD COLUMN normalized_correlation_id TEXT;
+";
+
 // ---------------------------------------------------------------------------
 // Metadata database — v1
 // ---------------------------------------------------------------------------
@@ -441,6 +526,7 @@ mod tests {
             "content_embedding", "summary_embedding", "pointer_embedding",
             "keywords", "source_message_id", "confidence",
             "created_at", "updated_at", "superseded_at", "version",
+            "context_compact", "compaction_level", "last_compacted_at",
         ];
         for col in &expected {
             assert!(has_column(&conn, "facts", col), "facts missing column: {col}");
@@ -647,7 +733,7 @@ mod tests {
         let conn = setup_agent_db();
         let expected = vec![
             "id", "message_id", "session_id", "tool_name", "arguments",
-            "result", "status", "policy_decision", "duration_ms", "created_at",
+            "result", "status", "policy_decision", "content_embedding", "duration_ms", "created_at",
         ];
         for col in &expected {
             assert!(has_column(&conn, "tool_calls", col), "tool_calls missing column: {col}");
@@ -861,7 +947,8 @@ mod tests {
         let conn = setup_agent_db();
         let expected = vec![
             "id", "policy_id", "actor", "action", "resource",
-            "effect", "reason", "correlation_id", "session_id", "created_at",
+            "effect", "reason", "content_embedding", "correlation_id", "session_id",
+            "idempotency_key", "idempotency_state", "created_at",
         ];
         for col in &expected {
             assert!(has_column(&conn, "policy_audit", col), "policy_audit missing: {col}");
@@ -875,6 +962,41 @@ mod tests {
         for name in &["actor", "action", "resource", "effect", "created_at"] {
             let col = info.iter().find(|c| c.0 == *name).unwrap();
             assert!(col.2, "policy_audit.{name} should be NOT NULL");
+        }
+    }
+
+    // ========================================================================
+    // OPERATION_HOOKS
+    // ========================================================================
+
+    #[test]
+    fn operation_hooks_table_has_all_columns() {
+        let conn = setup_agent_db();
+        let expected = vec![
+            "id", "op_pattern", "phase", "hook_type", "config_json", "enabled", "created_at",
+        ];
+        for col in &expected {
+            assert!(has_column(&conn, "operation_hooks", col), "operation_hooks missing: {col}");
+        }
+    }
+
+    #[test]
+    fn external_events_table_has_normalized_projection_columns() {
+        let conn = setup_agent_db();
+        let expected = vec![
+            "normalized_provider",
+            "normalized_model",
+            "normalized_input_tokens",
+            "normalized_output_tokens",
+            "normalized_total_tokens",
+            "normalized_cost_usd",
+            "normalized_correlation_id",
+        ];
+        for col in &expected {
+            assert!(
+                has_column(&conn, "external_events", col),
+                "external_events missing normalized projection column: {col}"
+            );
         }
     }
 
@@ -1016,6 +1138,8 @@ mod tests {
             "policies", "policy_audit",
             "jobs", "job_runs",
             "external_events", "ingest_runs",
+            "operation_idempotency",
+            "operation_hooks",
         ];
 
         let mut stmt = conn.prepare(
@@ -1057,7 +1181,7 @@ mod tests {
         let version: i64 = conn
             .query_row("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1", [], |r| r.get(0))
             .expect("schema_version table should exist and have a row");
-        assert!(version >= 1, "schema version should be at least 1");
+        assert_eq!(version, super::AGENT_SCHEMA_VERSION, "schema version should match current");
     }
 
     #[test]

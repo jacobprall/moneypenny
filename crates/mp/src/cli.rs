@@ -89,9 +89,29 @@ pub enum Command {
         #[arg(long)]
         replay_run: Option<String>,
 
-        /// Preflight replay without writing projected rows
+        /// Replay the latest matching run (uses --source/--status-filter/--file-filter)
+        #[arg(long, default_value_t = false, conflicts_with = "replay_run")]
+        replay_latest: bool,
+
+        /// Offset when using --replay-latest (0 = newest, 1 = previous, etc.)
+        #[arg(long, default_value_t = 0)]
+        replay_offset: usize,
+
+        /// Filter ingest runs by status (e.g. completed, completed_with_errors, running)
+        #[arg(long)]
+        status_filter: Option<String>,
+
+        /// Filter ingest runs whose file path contains this substring
+        #[arg(long)]
+        file_filter: Option<String>,
+
+        /// Force preflight replay without writing projected rows
         #[arg(long, default_value_t = false)]
         dry_run: bool,
+
+        /// Apply replay writes (default behavior is safe preview)
+        #[arg(long, default_value_t = false)]
+        apply: bool,
 
         /// Source label for external ingest/status
         #[arg(long, default_value = "openclaw")]
@@ -210,6 +230,29 @@ pub enum FactsCommand {
     Inspect {
         /// Fact ID
         id: String,
+    },
+
+    /// Expand a compacted pointer to full fact content
+    Expand {
+        /// Fact ID
+        id: String,
+    },
+
+    /// Reset compaction state for a fact
+    ResetCompaction {
+        /// Fact ID (omit when using --all)
+        id: Option<String>,
+
+        /// Reset compaction for all active facts
+        #[arg(long, default_value_t = false)]
+        all: bool,
+
+        /// Agent name (for --all mode)
+        agent: Option<String>,
+
+        /// Required when using --all
+        #[arg(long, default_value_t = false)]
+        confirm: bool,
     },
 
     /// Promote a fact to shared scope

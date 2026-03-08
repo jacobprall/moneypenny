@@ -125,11 +125,18 @@ pub fn ingest_jsonl_file(
         let content_hash = stable_hash_hex(&line);
         let event_key = source_event_id.clone().unwrap_or_else(|| content_hash.clone());
         let event_id = format!("ext:{source}:{event_key}");
+        let normalized = normalized_projection_fields(
+            &parsed,
+            source,
+            event_key.as_str(),
+            session_id.as_deref(),
+        );
 
         conn.execute(
             "INSERT OR IGNORE INTO external_events
-             (id, source, source_event_id, event_type, event_ts, session_id, payload_json, content_hash, run_id, line_no, raw_line, projected, ingested_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12)",
+             (id, source, source_event_id, event_type, event_ts, session_id, payload_json, content_hash, run_id, line_no, raw_line, projected, ingested_at,
+              normalized_provider, normalized_model, normalized_input_tokens, normalized_output_tokens, normalized_total_tokens, normalized_cost_usd, normalized_correlation_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 event_id,
                 source,
@@ -142,7 +149,14 @@ pub fn ingest_jsonl_file(
                 run_id,
                 line_no,
                 line,
-                chrono::Utc::now().timestamp()
+                chrono::Utc::now().timestamp(),
+                normalized.provider,
+                normalized.model,
+                normalized.input_tokens,
+                normalized.output_tokens,
+                normalized.total_tokens,
+                normalized.cost_usd,
+                normalized.correlation_id
             ],
         )?;
 
@@ -230,19 +244,24 @@ pub fn replay_run_preflight(conn: &Connection, run_id: &str) -> anyhow::Result<I
 pub fn recent_runs(
     conn: &Connection,
     source: Option<&str>,
+    status: Option<&str>,
+    file_path_like: Option<&str>,
     limit: usize,
 ) -> anyhow::Result<Vec<IngestRunRecord>> {
     let lim = i64::try_from(limit).unwrap_or(20);
-    let rows = if let Some(src) = source {
-        let mut stmt = conn.prepare(
-            "SELECT id, source, file_path, from_line, to_line, processed_count, inserted_count, deduped_count,
-                    projected_count, error_count, status, started_at, finished_at
-             FROM ingest_runs
-             WHERE source = ?1
-             ORDER BY started_at DESC
-             LIMIT ?2",
-        )?;
-        stmt.query_map(params![src, lim], |r| {
+    let file_path_pattern = file_path_like.map(|f| format!("%{f}%"));
+    let mut stmt = conn.prepare(
+        "SELECT id, source, file_path, from_line, to_line, processed_count, inserted_count, deduped_count,
+                projected_count, error_count, status, started_at, finished_at
+         FROM ingest_runs
+         WHERE (?1 IS NULL OR source = ?1)
+           AND (?2 IS NULL OR status = ?2)
+           AND (?3 IS NULL OR file_path LIKE ?3)
+         ORDER BY started_at DESC
+         LIMIT ?4",
+    )?;
+    let rows = stmt
+        .query_map(params![source, status, file_path_pattern, lim], |r| {
             Ok(IngestRunRecord {
                 id: r.get(0)?,
                 source: r.get(1)?,
@@ -259,34 +278,7 @@ pub fn recent_runs(
                 finished_at: r.get(12)?,
             })
         })?
-        .collect::<Result<Vec<_>, _>>()?
-    } else {
-        let mut stmt = conn.prepare(
-            "SELECT id, source, file_path, from_line, to_line, processed_count, inserted_count, deduped_count,
-                    projected_count, error_count, status, started_at, finished_at
-             FROM ingest_runs
-             ORDER BY started_at DESC
-             LIMIT ?1",
-        )?;
-        stmt.query_map([lim], |r| {
-            Ok(IngestRunRecord {
-                id: r.get(0)?,
-                source: r.get(1)?,
-                file_path: r.get(2)?,
-                from_line: r.get(3)?,
-                to_line: r.get(4)?,
-                processed_count: r.get(5)?,
-                inserted_count: r.get(6)?,
-                deduped_count: r.get(7)?,
-                projected_count: r.get(8)?,
-                error_count: r.get(9)?,
-                status: r.get(10)?,
-                started_at: r.get(11)?,
-                finished_at: r.get(12)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?
-    };
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
 
@@ -407,6 +399,9 @@ fn project_event(
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![msg_id, sid, role, content, ts],
         )?;
+        if role == "assistant" || role == "system" {
+            promote_imported_message_fact(conn, agent_id, &sid, &msg_id, &content);
+        }
         return Ok(true);
     }
 
@@ -571,4 +566,143 @@ fn stable_hash_hex(input: &str) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     input.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
+}
+
+fn promote_imported_message_fact(
+    conn: &Connection,
+    agent_id: &str,
+    session_id: &str,
+    source_message_id: &str,
+    content: &str,
+) {
+    if let Some(candidate) = candidate_from_message(content) {
+        let _ = crate::extraction::run_pipeline(
+            conn,
+            agent_id,
+            session_id,
+            &[candidate],
+            Some(source_message_id),
+        );
+    }
+}
+
+fn candidate_from_message(content: &str) -> Option<crate::extraction::CandidateFact> {
+    let normalized = content.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.len() < 40 {
+        return None;
+    }
+    if normalized.starts_with('{') || normalized.starts_with('[') {
+        return None;
+    }
+
+    let first_sentence = normalized
+        .split_terminator(['.', '!', '?'])
+        .find(|s| !s.trim().is_empty())
+        .unwrap_or(&normalized)
+        .trim();
+    if first_sentence.split_whitespace().count() < 6 {
+        return None;
+    }
+
+    let content_value = truncate_chars(first_sentence, 320);
+    let summary = truncate_chars(first_sentence, 140);
+    let pointer_words = first_sentence
+        .split_whitespace()
+        .take(6)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let pointer = format!("external: {pointer_words}");
+    let keywords = extract_keywords(first_sentence);
+
+    Some(crate::extraction::CandidateFact {
+        content: content_value,
+        summary,
+        pointer,
+        keywords,
+        confidence: 0.7,
+    })
+}
+
+fn truncate_chars(input: &str, max_chars: usize) -> String {
+    input.chars().take(max_chars).collect::<String>().trim().to_string()
+}
+
+fn extract_keywords(input: &str) -> Option<String> {
+    let mut keywords = Vec::new();
+    for word in input.split_whitespace() {
+        let cleaned = word
+            .trim_matches(|c: char| !c.is_alphanumeric() && c != '_')
+            .to_ascii_lowercase();
+        if cleaned.len() < 4 {
+            continue;
+        }
+        if !keywords.iter().any(|k| k == &cleaned) {
+            keywords.push(cleaned);
+        }
+        if keywords.len() >= 8 {
+            break;
+        }
+    }
+    if keywords.is_empty() {
+        None
+    } else {
+        Some(keywords.join(" "))
+    }
+}
+
+#[derive(Debug)]
+struct NormalizedProjectionFields {
+    provider: Option<String>,
+    model: Option<String>,
+    input_tokens: Option<i64>,
+    output_tokens: Option<i64>,
+    total_tokens: Option<i64>,
+    cost_usd: Option<f64>,
+    correlation_id: Option<String>,
+}
+
+fn normalized_projection_fields(
+    payload: &Value,
+    source: &str,
+    event_key: &str,
+    session_id: Option<&str>,
+) -> NormalizedProjectionFields {
+    let provider = pick_str(payload, &["provider", "vendor", "llm_provider"]).map(str::to_string);
+    let model = pick_str(payload, &["model", "model_name", "llm_model"]).map(str::to_string);
+    let input_tokens = pick_i64(payload, &["input_tokens", "prompt_tokens"]);
+    let output_tokens = pick_i64(payload, &["output_tokens", "completion_tokens"]);
+    let total_tokens = pick_i64(payload, &["total_tokens"]).or_else(|| {
+        if input_tokens.is_some() || output_tokens.is_some() {
+            Some(input_tokens.unwrap_or(0) + output_tokens.unwrap_or(0))
+        } else {
+            None
+        }
+    });
+    let cost_usd = pick_f64(payload, &["cost_usd", "cost"]);
+    let correlation_id = pick_str(
+        payload,
+        &[
+            "correlation_id",
+            "correlationId",
+            "trace_id",
+            "traceId",
+            "request_id",
+            "requestId",
+            "run_id",
+            "runId",
+        ],
+    )
+    .map(str::to_string)
+    .or_else(|| session_id.map(str::to_string))
+    .or_else(|| Some(format!("{source}:{event_key}")));
+
+    NormalizedProjectionFields {
+        provider,
+        model,
+        input_tokens,
+        output_tokens,
+        total_tokens,
+        cost_usd,
+        correlation_id,
+    }
 }

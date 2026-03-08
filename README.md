@@ -135,13 +135,8 @@ Other frameworks force tradeoffs. Moneypenny gets these from the foundation.
 | Doc | Description |
 |-----|-------------|
 | [SPEC_CURRENT.md](./docs/SPEC_CURRENT.md) | Current architecture and integration model |
-| [docs/README.md](./docs/README.md) | Documentation guide and navigation |
-| [SPEC.md](./docs/SPEC.md) | Archived historical technical design notes |
-| [PLAN.md](./docs/PLAN.md) | Current forward plan |
 | [WORKBOARD.md](./docs/WORKBOARD.md) | Centralized outstanding work tracker |
 | [STRATEGY_DECISIONS.md](./docs/STRATEGY_DECISIONS.md) | Platform positioning and architecture trade-off decisions |
-| [INTERFACE_RFC.md](./docs/INTERFACE_RFC.md) | Canonical capability contract across CLI, MCP, API, and ingest |
-| [IDEA_LEDGER.md](./docs/IDEA_LEDGER.md) | Living record of strategic ideas and decision hygiene |
 | [OPENCLAW_INTEGRATION.md](./docs/OPENCLAW_INTEGRATION.md) | V1 OpenClaw integration contract and event mapping |
 
 ---

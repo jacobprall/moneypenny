@@ -24,18 +24,16 @@ All key behavior is expressed as canonical operations (capabilities), not transp
 Implemented now (v1):
 - `job.create`, `job.list`, `job.run`, `job.pause`
 - `policy.add`
+- `policy.evaluate`, `policy.explain`
 - `knowledge.ingest`
+- `memory.search`, `memory.fact.add`, `memory.fact.update`, `memory.fact.get`, `memory.fact.compaction.reset`
 - `skill.add`, `skill.promote`
 - `fact.delete`
+- `audit.query`, `audit.append`
+- `session.resolve`, `session.list`
+- `js.tool.add`, `js.tool.list`, `js.tool.delete`
 - `agent.create`, `agent.config`, `agent.delete`
 - `ingest.events`, `ingest.status`, `ingest.replay`
-
-Planned expansion:
-- `memory.search`, `memory.fact.add`, `memory.fact.update`
-- `policy.evaluate`, `policy.explain`
-- `audit.query`, `audit.append`
-- `js.tool.add`, `js.tool.list`
-- `session.resolve`, `session.list`
 
 ### 2) Unified Execution Pipeline
 
@@ -43,9 +41,9 @@ Every mutating or policy-relevant operation follows:
 1. Parse operation envelope
 2. Resolve actor/session/tenant context
 3. Pre-policy evaluation
-4. Optional pre-hooks
+4. Configurable pre-hooks (DB-backed operation hook registry + baseline guardrails)
 5. Handler execution
-6. Optional post-hooks
+6. Configurable post-hooks (DB-backed operation hook registry + baseline redaction)
 7. Redaction + audit write
 8. Standard result envelope
 
@@ -60,6 +58,7 @@ Every mutating or policy-relevant operation follows:
 - SQLite-backed state with local-first operation.
 - Rust kernel for execution, policy, audit, projection, and core memory logic.
 - Governed JS extension surface (jobs/hooks/tool scripts) under policy and audit constraints.
+- Progressive fact compaction in context (halve words per pass to a 5-word floor) with explicit full-fact retrieval by ID.
 
 ---
 
@@ -104,8 +103,6 @@ Target principle remains: no adapter-specific business logic.
 
 ## Related Docs
 
-- Interface contract: `docs/INTERFACE_RFC.md`
 - OpenClaw contract: `docs/OPENCLAW_INTEGRATION.md`
 - Strategy decisions: `docs/STRATEGY_DECISIONS.md`
 - Central backlog: `docs/WORKBOARD.md`
-- Plan: `docs/PLAN.md`

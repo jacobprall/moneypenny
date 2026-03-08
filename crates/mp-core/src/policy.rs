@@ -46,6 +46,8 @@ pub struct PolicyRequest<'a> {
 pub struct PolicyAuditContext<'a> {
     pub session_id: Option<&'a str>,
     pub correlation_id: Option<&'a str>,
+    pub idempotency_key: Option<&'a str>,
+    pub idempotency_state: Option<&'a str>,
 }
 
 /// Evaluate a policy request against the policies table.
@@ -342,8 +344,8 @@ fn log_decision(
     };
 
     conn.execute(
-        "INSERT INTO policy_audit (id, policy_id, actor, action, resource, effect, reason, correlation_id, session_id, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO policy_audit (id, policy_id, actor, action, resource, effect, reason, correlation_id, session_id, idempotency_key, idempotency_state, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             id,
             decision.policy_id,
@@ -354,6 +356,8 @@ fn log_decision(
             decision.reason,
             audit.correlation_id,
             audit.session_id,
+            audit.idempotency_key,
+            audit.idempotency_state,
             now
         ],
     )?;

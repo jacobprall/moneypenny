@@ -182,11 +182,19 @@ pub fn assemble(
         }
     }
 
-    // 3. ALL fact pointers (Level 2)
+    // 3. ALL fact pointers (Level 2), progressively compacted over time.
+    crate::store::facts::compact_for_context(conn, agent_id)?;
     let pointers = crate::store::facts::all_pointers(conn, agent_id)?;
     if !pointers.is_empty() {
         let pointer_text = pointers.iter()
-            .map(|(id, p)| format!("- [{id}] {p}"))
+            .map(|(id, p, compact, level)| {
+                if let Some(c) = compact {
+                    if !c.trim().is_empty() {
+                        return format!("- [{id}] {p} :: {c} (compact_level={level})");
+                    }
+                }
+                format!("- [{id}] {p}")
+            })
             .collect::<Vec<_>>()
             .join("\n");
         segments.push(ContextSegment {
@@ -442,7 +450,7 @@ mod tests {
         let sid = store::log::create_session(&conn, "a", None).unwrap();
         store::facts::add(&conn, &store::facts::NewFact {
             agent_id: "a".into(),
-            content: "ORDERS uses soft deletes".into(),
+            content: "ORDERS uses soft deletes with deleted_at audit and compliance history".into(),
             summary: "ORDERS soft deletes".into(),
             pointer: "ORDERS: soft-delete".into(),
             keywords: Some("orders".into()),
@@ -457,6 +465,8 @@ mod tests {
 
         let labels: Vec<&str> = segments.iter().map(|s| s.label).collect();
         assert!(labels.contains(&"fact_pointers"), "should include fact pointers");
+        let pointers = segments.iter().find(|s| s.label == "fact_pointers").unwrap();
+        assert!(pointers.content.contains("compact_level="), "fact pointers should include compaction metadata");
     }
 
     #[test]

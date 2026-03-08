@@ -59,7 +59,6 @@ Durable strategic decisions only. Historical implementation detail is intentiona
 
 ## Source Of Truth
 
-- Interface contract: `docs/INTERFACE_RFC.md`
+- Architecture: `docs/SPEC_CURRENT.md`
 - OpenClaw contract: `docs/OPENCLAW_INTEGRATION.md`
 - Central backlog: `docs/WORKBOARD.md`
-- Idea continuity: `docs/IDEA_LEDGER.md`

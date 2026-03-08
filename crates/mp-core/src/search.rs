@@ -116,6 +116,72 @@ pub fn fts5_search_messages(conn: &Connection, query: &str, agent_id: &str, limi
     Ok(rows)
 }
 
+/// Search projected tool call logs scoped to the agent's sessions.
+pub fn fts5_search_tool_calls(conn: &Connection, query: &str, agent_id: &str, limit: usize) -> anyhow::Result<Vec<(String, String, f64)>> {
+    let pattern = format!("%{query}%");
+    let mut stmt = conn.prepare(
+        "SELECT tc.id,
+                (
+                    '[tool_call] tool=' || tc.tool_name ||
+                    ' status=' || COALESCE(tc.status, '') ||
+                    ' policy=' || COALESCE(tc.policy_decision, '') ||
+                    ' args=' || COALESCE(tc.arguments, '') ||
+                    ' result=' || COALESCE(tc.result, '')
+                ) AS content,
+                1.0
+         FROM tool_calls tc
+         JOIN sessions s ON s.id = tc.session_id
+         WHERE s.agent_id = ?1
+           AND (
+               tc.tool_name LIKE ?2 OR
+               tc.arguments LIKE ?2 OR
+               tc.result LIKE ?2 OR
+               tc.status LIKE ?2 OR
+               tc.policy_decision LIKE ?2
+           )
+         ORDER BY tc.created_at DESC
+         LIMIT ?3"
+    )?;
+    let rows = stmt.query_map(params![agent_id, pattern, limit], |r| {
+        Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+    })?.collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Search projected policy audit logs scoped to the agent (via session or actor).
+pub fn fts5_search_policy_audit(conn: &Connection, query: &str, agent_id: &str, limit: usize) -> anyhow::Result<Vec<(String, String, f64)>> {
+    let pattern = format!("%{query}%");
+    let mut stmt = conn.prepare(
+        "SELECT pa.id,
+                (
+                    '[policy_audit] actor=' || pa.actor ||
+                    ' action=' || pa.action ||
+                    ' resource=' || pa.resource ||
+                    ' effect=' || pa.effect ||
+                    ' reason=' || COALESCE(pa.reason, '')
+                ) AS content,
+                1.0
+         FROM policy_audit pa
+         WHERE (
+                pa.actor = ?1 OR
+                pa.session_id IN (SELECT id FROM sessions WHERE agent_id = ?1)
+               )
+           AND (
+                pa.actor LIKE ?2 OR
+                pa.action LIKE ?2 OR
+                pa.resource LIKE ?2 OR
+                pa.effect LIKE ?2 OR
+                pa.reason LIKE ?2
+               )
+         ORDER BY pa.created_at DESC
+         LIMIT ?3"
+    )?;
+    let rows = stmt.query_map(params![agent_id, pattern, limit], |r| {
+        Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+    })?.collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /// Search knowledge chunks using LIKE fallback.
 pub fn fts5_search_knowledge(conn: &Connection, query: &str, limit: usize) -> anyhow::Result<Vec<(String, String, f64)>> {
     let pattern = format!("%{query}%");
@@ -248,6 +314,82 @@ pub fn vector_search_facts(
     Ok(rows)
 }
 
+/// KNN search over messages.content_embedding using sqlite-vector.
+pub fn vector_search_messages(
+    conn: &Connection,
+    query_blob: &[u8],
+    agent_id: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<(String, f64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT m.id, v.distance
+         FROM messages AS m
+         JOIN sessions AS s
+           ON s.id = m.session_id
+         JOIN vector_quantize_scan('messages', 'content_embedding', ?1, ?2) AS v
+           ON m.rowid = v.rowid
+         WHERE s.agent_id = ?3
+         ORDER BY v.distance ASC",
+    )?;
+    let rows = stmt
+        .query_map(rusqlite::params![query_blob, limit, agent_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// KNN search over tool_calls.content_embedding using sqlite-vector.
+pub fn vector_search_tool_calls(
+    conn: &Connection,
+    query_blob: &[u8],
+    agent_id: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<(String, f64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT tc.id, v.distance
+         FROM tool_calls AS tc
+         JOIN sessions AS s
+           ON s.id = tc.session_id
+         JOIN vector_quantize_scan('tool_calls', 'content_embedding', ?1, ?2) AS v
+           ON tc.rowid = v.rowid
+         WHERE s.agent_id = ?3
+         ORDER BY v.distance ASC",
+    )?;
+    let rows = stmt
+        .query_map(rusqlite::params![query_blob, limit, agent_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// KNN search over policy_audit.content_embedding using sqlite-vector.
+pub fn vector_search_policy_audit(
+    conn: &Connection,
+    query_blob: &[u8],
+    agent_id: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<(String, f64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT pa.id, v.distance
+         FROM policy_audit AS pa
+         JOIN vector_quantize_scan('policy_audit', 'content_embedding', ?1, ?2) AS v
+           ON pa.rowid = v.rowid
+         WHERE (
+                pa.actor = ?3 OR
+                pa.session_id IN (SELECT id FROM sessions WHERE agent_id = ?3)
+               )
+         ORDER BY v.distance ASC",
+    )?;
+    let rows = stmt
+        .query_map(rusqlite::params![query_blob, limit, agent_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /// KNN search over chunks.content_embedding using sqlite-vector.
 pub fn vector_search_knowledge(
     conn: &Connection,
@@ -293,15 +435,19 @@ pub fn search(
 
     let fact_results = fts5_search_facts(conn, query, agent_id, per_store_limit)?;
     let msg_results = fts5_search_messages(conn, query, agent_id, per_store_limit)?;
+    let tool_call_results = fts5_search_tool_calls(conn, query, agent_id, per_store_limit)?;
+    let policy_audit_results = fts5_search_policy_audit(conn, query, agent_id, per_store_limit)?;
     let knowledge_results = fts5_search_knowledge(conn, query, per_store_limit)?;
 
     // Build ranked lists for RRF — text signals
     let fact_ranked: Vec<(String, f64)> = fact_results.iter().map(|(id, _, s)| (id.clone(), *s)).collect();
     let msg_ranked: Vec<(String, f64)> = msg_results.iter().map(|(id, _, s)| (id.clone(), *s)).collect();
+    let tool_call_ranked: Vec<(String, f64)> = tool_call_results.iter().map(|(id, _, s)| (id.clone(), *s)).collect();
+    let policy_audit_ranked: Vec<(String, f64)> = policy_audit_results.iter().map(|(id, _, s)| (id.clone(), *s)).collect();
     let know_ranked: Vec<(String, f64)> = knowledge_results.iter().map(|(id, _, s)| (id.clone(), *s)).collect();
 
     // Optional vector search signals
-    let (vec_fact_ranked, vec_know_ranked): (Vec<(String, f64)>, Vec<(String, f64)>) =
+    let (vec_fact_ranked, vec_msg_ranked, vec_tool_ranked, vec_policy_ranked, vec_know_ranked): (Vec<(String, f64)>, Vec<(String, f64)>, Vec<(String, f64)>, Vec<(String, f64)>, Vec<(String, f64)>) =
         if let Some(blob) = query_embedding {
             // Invert distance: smaller distance = higher score for RRF rank ordering.
             let vf = vector_search_facts(conn, blob, agent_id, per_store_limit)
@@ -309,19 +455,49 @@ pub fn search(
                 .into_iter()
                 .map(|(id, d)| (id, 1.0 / (1.0 + d)))  // proximity score
                 .collect();
+            let vm = vector_search_messages(conn, blob, agent_id, per_store_limit)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(id, d)| (id, 1.0 / (1.0 + d)))
+                .collect();
+            let vt = vector_search_tool_calls(conn, blob, agent_id, per_store_limit)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(id, d)| (id, 1.0 / (1.0 + d)))
+                .collect();
+            let vp = vector_search_policy_audit(conn, blob, agent_id, per_store_limit)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(id, d)| (id, 1.0 / (1.0 + d)))
+                .collect();
             let vk = vector_search_knowledge(conn, blob, per_store_limit)
                 .unwrap_or_default()
                 .into_iter()
                 .map(|(id, d)| (id, 1.0 / (1.0 + d)))
                 .collect();
-            (vf, vk)
+            (vf, vm, vt, vp, vk)
         } else {
-            (vec![], vec![])
+            (vec![], vec![], vec![], vec![], vec![])
         };
 
-    let mut all_ranked = vec![fact_ranked, msg_ranked, know_ranked];
+    let mut all_ranked = vec![
+        fact_ranked,
+        msg_ranked,
+        tool_call_ranked,
+        policy_audit_ranked,
+        know_ranked,
+    ];
     if !vec_fact_ranked.is_empty() {
         all_ranked.push(vec_fact_ranked);
+    }
+    if !vec_msg_ranked.is_empty() {
+        all_ranked.push(vec_msg_ranked);
+    }
+    if !vec_tool_ranked.is_empty() {
+        all_ranked.push(vec_tool_ranked);
+    }
+    if !vec_policy_ranked.is_empty() {
+        all_ranked.push(vec_policy_ranked);
     }
     if !vec_know_ranked.is_empty() {
         all_ranked.push(vec_know_ranked);
@@ -335,6 +511,12 @@ pub fn search(
         content_map.insert(id.clone(), (content.clone(), Store::Facts));
     }
     for (id, content, _) in &msg_results {
+        content_map.insert(id.clone(), (content.clone(), Store::Log));
+    }
+    for (id, content, _) in &tool_call_results {
+        content_map.insert(id.clone(), (content.clone(), Store::Log));
+    }
+    for (id, content, _) in &policy_audit_results {
         content_map.insert(id.clone(), (content.clone(), Store::Log));
     }
     for (id, content, _) in &knowledge_results {
@@ -353,6 +535,45 @@ pub fn search(
             |r| r.get::<_, String>(0),
         ).map(Some).or_else(|_| Ok::<_, anyhow::Error>(None)) {
             content_map.insert(id.clone(), (row, Store::Facts));
+        } else if let Ok(Some(row)) = conn.query_row(
+            "SELECT m.content
+             FROM messages m
+             JOIN sessions s ON s.id = m.session_id
+             WHERE m.id = ?1 AND s.agent_id = ?2",
+            rusqlite::params![id, agent_id],
+            |r| r.get::<_, String>(0),
+        ).map(Some).or_else(|_| Ok::<_, anyhow::Error>(None)) {
+            content_map.insert(id.clone(), (row, Store::Log));
+        } else if let Ok(Some(row)) = conn.query_row(
+            "SELECT
+                '[tool_call] tool=' || tc.tool_name ||
+                ' status=' || COALESCE(tc.status, '') ||
+                ' policy=' || COALESCE(tc.policy_decision, '') ||
+                ' args=' || COALESCE(tc.arguments, '') ||
+                ' result=' || COALESCE(tc.result, '')
+             FROM tool_calls tc
+             JOIN sessions s ON s.id = tc.session_id
+             WHERE tc.id = ?1 AND s.agent_id = ?2",
+            rusqlite::params![id, agent_id],
+            |r| r.get::<_, String>(0),
+        ).map(Some).or_else(|_| Ok::<_, anyhow::Error>(None)) {
+            content_map.insert(id.clone(), (row, Store::Log));
+        } else if let Ok(Some(row)) = conn.query_row(
+            "SELECT
+                '[policy_audit] actor=' || pa.actor ||
+                ' action=' || pa.action ||
+                ' resource=' || pa.resource ||
+                ' effect=' || pa.effect ||
+                ' reason=' || COALESCE(pa.reason, '')
+             FROM policy_audit pa
+             WHERE pa.id = ?1 AND (
+                 pa.actor = ?2 OR
+                 pa.session_id IN (SELECT id FROM sessions WHERE agent_id = ?2)
+             )",
+            rusqlite::params![id, agent_id],
+            |r| r.get::<_, String>(0),
+        ).map(Some).or_else(|_| Ok::<_, anyhow::Error>(None)) {
+            content_map.insert(id.clone(), (row, Store::Log));
         } else if let Ok(Some(row)) = conn.query_row(
             "SELECT content FROM chunks WHERE id = ?1",
             rusqlite::params![id],
@@ -398,6 +619,21 @@ mod tests {
         let conn = db::open_memory().unwrap();
         schema::init_agent_db(&conn).unwrap();
         conn
+    }
+
+    fn setup_with_vector(dims: usize) -> Connection {
+        let conn = setup();
+        mp_ext::init_all_extensions(&conn).unwrap();
+        schema::init_vector_indexes(&conn, dims).unwrap();
+        conn
+    }
+
+    fn f32_blob(v: &[f32]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(v.len() * std::mem::size_of::<f32>());
+        for x in v {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        out
     }
 
     // ========================================================================
@@ -589,6 +825,56 @@ mod tests {
     }
 
     #[test]
+    fn search_includes_projected_logs() {
+        let conn = setup();
+        let sid = store::log::create_session(&conn, "a", None).unwrap();
+        let mid = store::log::append_message(&conn, &sid, "assistant", "running deploy checks").unwrap();
+
+        conn.execute(
+            "INSERT INTO tool_calls (id, message_id, session_id, tool_name, arguments, result, status, policy_decision, duration_ms, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                "tc-1",
+                mid,
+                sid,
+                "shell_exec",
+                "{\"command\":\"deploy status\"}",
+                "deploy denied by policy",
+                "denied",
+                "deny",
+                12_i64,
+                1_i64,
+            ],
+        ).unwrap();
+
+        conn.execute(
+            "INSERT INTO policy_audit (id, policy_id, actor, action, resource, effect, reason, session_id, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                "pa-1",
+                "policy-1",
+                "a",
+                "call",
+                "shell_exec",
+                "deny",
+                "deploy denied in production",
+                sid,
+                2_i64,
+            ],
+        ).unwrap();
+
+        let results = search(&conn, "deploy denied", "a", 10, None, None).unwrap();
+        assert!(
+            results.iter().any(|r| r.store == Store::Log && r.content.contains("tool=shell_exec")),
+            "should include tool_calls search hit"
+        );
+        assert!(
+            results.iter().any(|r| r.store == Store::Log && r.content.contains("policy_audit")),
+            "should include policy_audit search hit"
+        );
+    }
+
+    #[test]
     fn search_returns_empty_for_no_match() {
         let conn = setup();
         let results = search(&conn, "quantum entanglement", "a", 10, None, None).unwrap();
@@ -611,6 +897,90 @@ mod tests {
         }
         let results = search(&conn, "topic", "a", 5, None, None).unwrap();
         assert!(results.len() <= 5);
+    }
+
+    #[test]
+    fn search_semantic_recall_for_tool_and_policy_logs() {
+        let conn = setup_with_vector(3);
+        let sid = store::log::create_session(&conn, "a", None).unwrap();
+        let mid = store::log::append_message(&conn, &sid, "assistant", "runtime activity").unwrap();
+
+        conn.execute(
+            "INSERT INTO tool_calls
+             (id, message_id, session_id, tool_name, arguments, result, status, policy_decision, content_embedding, duration_ms, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                "tc-sem",
+                mid,
+                sid,
+                "shell_exec",
+                "{\"command\":\"deploy check\"}",
+                "deploy denied",
+                "denied",
+                "deny",
+                f32_blob(&[1.0, 0.0, 0.0]),
+                9_i64,
+                1_i64,
+            ],
+        ).unwrap();
+
+        conn.execute(
+            "INSERT INTO policy_audit
+             (id, policy_id, actor, action, resource, effect, reason, content_embedding, session_id, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                "pa-sem",
+                "p1",
+                "a",
+                "call",
+                "shell_exec",
+                "deny",
+                "prod deploy blocked",
+                f32_blob(&[1.0, 0.0, 0.0]),
+                sid,
+                2_i64,
+            ],
+        ).unwrap();
+
+        // Add an unrelated embedding so vector ranking has non-trivial choices.
+        let fact_id = store::facts::add(&conn, &store::facts::NewFact {
+            agent_id: "a".into(),
+            content: "Unrelated fact".into(),
+            summary: "unrelated".into(),
+            pointer: "unrelated".into(),
+            keywords: None,
+            source_message_id: None,
+            confidence: 1.0,
+        }, None).unwrap();
+        conn.execute(
+            "UPDATE facts SET content_embedding = ?1 WHERE id = ?2",
+            params![f32_blob(&[0.0, 1.0, 0.0]), fact_id],
+        ).unwrap();
+
+        for (table, col) in &[
+            ("facts", "content_embedding"),
+            ("tool_calls", "content_embedding"),
+            ("policy_audit", "content_embedding"),
+        ] {
+            conn.query_row(
+                "SELECT vector_quantize(?1, ?2)",
+                params![table, col],
+                |_| Ok::<_, rusqlite::Error>(()),
+            ).unwrap();
+        }
+
+        // No lexical overlap with inserted content; recall should come from vectors.
+        let query_embedding = f32_blob(&[1.0, 0.0, 0.0]);
+        let results = search(&conn, "qzv no lexical overlap", "a", 10, None, Some(&query_embedding)).unwrap();
+
+        assert!(
+            results.iter().any(|r| r.store == Store::Log && r.content.contains("[tool_call]")),
+            "semantic search should surface tool call logs"
+        );
+        assert!(
+            results.iter().any(|r| r.store == Store::Log && r.content.contains("[policy_audit]")),
+            "semantic search should surface policy audit logs"
+        );
     }
 
     // ========================================================================

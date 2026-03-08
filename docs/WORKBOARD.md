@@ -7,28 +7,46 @@ Status: active single source of truth for outstanding work.
 ## How To Use
 
 - Track only **outstanding** items here.
-- Keep `docs/PLAN.md` strategic and milestone-oriented.
 - When work ships, remove or re-scope the item here first.
 
 ---
 
-## M1/M3 Tail — Canonical + Governance
+## Implementation Queue (Ordered, No Timeline)
 
-- [ ] Enforce idempotency keys for mutating operations with durable key store and deterministic replay responses.
-- [ ] Add explicit idempotency enforcement state in audit records (not only response `_meta`).
-- [ ] Add configurable operation-level hook registry (pre/post) beyond current baseline guardrails.
-- [ ] Expand canonical operation coverage for remaining control-plane families:
-  - [ ] `memory.fact.add`, `memory.fact.update`, `memory.search`
-  - [ ] `policy.evaluate`, `policy.explain`
-  - [ ] `audit.query`, `audit.append`
-  - [ ] `session.resolve`, `session.list`
-  - [ ] `js.tool.add`, `js.tool.list`, `js.tool.delete`
+1. **Ingest depth (M2)**
+   - [x] Expand projection depth with normalized structured fields (token/cost/provider/model/correlation semantics).
+   - [x] Add extraction pass over imported conversations to promote durable facts from external logs.
+   - [x] Add replay safety command ergonomics (clear run selection/filtering, operator-safe preview defaults).
+
+2. **Runtime integration parity (adapters + contracts)**
+   - [ ] Add stdio sidecar operation endpoint for CLI runtime integration.
+   - [ ] Map MCP adapter to canonical operations (translation only, no business logic).
+   - [ ] Expose canonical operations via HTTP/gRPC parity layer.
+   - [ ] Add parity contract tests across CLI/MCP/API/ingest for same-op same-outcome guarantees.
+
+3. **Agent-first JS jobs (M4)**
+   - [ ] Define schema for agent-generated job specs.
+   - [ ] Implement "plan -> confirm -> apply" flow for agent job creation.
+   - [ ] Ensure JS job creation uses same canonical handlers as CLI/API/MCP.
+   - [ ] Add validation tests for natural-language-to-job workflows.
+
+4. **Ship placeholder commands**
+   - [ ] Implement `ingest --url`.
+   - [ ] Implement `policy load`.
+   - [ ] Implement `audit export`.
+
+5. **Deferred product surface expansion**
+   - [ ] Additional channel adapters beyond current set.
+   - [ ] Expanded web UI admin surfaces (memory/policy/audit browsers).
+   - [ ] Marketplace/distribution packaging work.
+
+---
 
 ## M2 — Ingest + Projection
 
-- [ ] Expand projection depth with normalized structured fields (token/cost/provider/model/correlation semantics).
-- [ ] Add extraction pass over imported conversations to promote durable facts from external logs.
-- [ ] Add replay safety command ergonomics (clear run selection/filtering, operator-safe preview defaults).
+- [x] Expand projection depth with normalized structured fields (token/cost/provider/model/correlation semantics).
+- [x] Add extraction pass over imported conversations to promote durable facts from external logs.
+- [x] Add replay safety command ergonomics (clear run selection/filtering, operator-safe preview defaults).
 
 ## Surface Parity (Adapters)
 

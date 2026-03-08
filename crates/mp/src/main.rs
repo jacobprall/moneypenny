@@ -5,7 +5,7 @@ use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Command};
 use mp_core::config::Config;
-use mp_llm::provider::LlmProvider;
+use mp_llm::provider::{EmbeddingProvider, LlmProvider};
 use std::collections::HashSet;
 use std::io::Write;
 use std::path::Path;
@@ -41,8 +41,42 @@ async fn main() -> Result<()> {
             cmd_send(&config, &agent, &message, session_id).await
         },
         Command::Facts(cmd) => cmd_facts(&config, cmd).await,
-        Command::Ingest { path, url, agent, openclaw_file, replay, status, replay_run, dry_run, source, limit } => {
-            cmd_ingest(&config, path, url, agent, openclaw_file, replay, status, replay_run, dry_run, source, limit).await
+        Command::Ingest {
+            path,
+            url,
+            agent,
+            openclaw_file,
+            replay,
+            status,
+            replay_run,
+            replay_latest,
+            replay_offset,
+            status_filter,
+            file_filter,
+            dry_run,
+            apply,
+            source,
+            limit,
+        } => {
+            cmd_ingest(
+                &config,
+                path,
+                url,
+                agent,
+                openclaw_file,
+                replay,
+                status,
+                replay_run,
+                replay_latest,
+                replay_offset,
+                status_filter,
+                file_filter,
+                dry_run,
+                apply,
+                source,
+                limit,
+            )
+            .await
         },
         Command::Session(cmd) => cmd_session(&config, cmd).await,
         Command::Knowledge(cmd) => cmd_knowledge(&config, cmd).await,
@@ -450,6 +484,7 @@ fn load_js_tool_defs(conn: &rusqlite::Connection) -> Vec<(String, String, serde_
 async fn agent_turn(
     conn: &rusqlite::Connection,
     provider: &dyn LlmProvider,
+    embed_provider: Option<&dyn EmbeddingProvider>,
     agent_id: &str,
     session_id: &str,
     persona: Option<&str>,
@@ -607,6 +642,13 @@ async fn agent_turn(
                 conn, session_id, "assistant",
                 &format!("[tool: {}]", tc.name),
             )?;
+            let mut effective_arguments = tc.arguments.clone();
+            if tc.name == "memory_search" {
+                effective_arguments = enrich_memory_search_args_with_embedding(
+                    &effective_arguments,
+                    embed_provider,
+                ).await;
+            }
 
             // Delegation tool is handled at the gateway layer (not via the registry).
             if tc.name == "delegate_to_agent" {
@@ -633,7 +675,7 @@ async fn agent_turn(
 
             let result = mp_core::tools::registry::execute(
                 conn, agent_id, session_id, &msg_id,
-                &tc.name, &tc.arguments,
+                &tc.name, &effective_arguments,
                 &|name, args| mp_core::tools::builtins::dispatch(name, args),
                 None,
             )?;
@@ -689,6 +731,44 @@ and ask for explicit confirmation.",
     let fallback = "I was unable to complete the response after multiple tool call rounds.";
     mp_core::store::log::append_message(conn, session_id, "assistant", fallback)?;
     Ok(fallback.into())
+}
+
+async fn enrich_memory_search_args_with_embedding(
+    arguments: &str,
+    embed_provider: Option<&dyn EmbeddingProvider>,
+) -> String {
+    let Some(embedder) = embed_provider else {
+        return arguments.to_string();
+    };
+
+    let mut parsed: serde_json::Value = match serde_json::from_str(arguments) {
+        Ok(v) => v,
+        Err(_) => return arguments.to_string(),
+    };
+
+    let Some(query) = parsed
+        .get("query")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|q| !q.is_empty())
+    else {
+        return arguments.to_string();
+    };
+
+    match embedder.embed(query).await {
+        Ok(vec) => {
+            let embedding = vec
+                .into_iter()
+                .map(|v| serde_json::Value::from(v as f64))
+                .collect::<Vec<_>>();
+            parsed["__query_embedding"] = serde_json::Value::Array(embedding);
+            serde_json::to_string(&parsed).unwrap_or_else(|_| arguments.to_string())
+        }
+        Err(e) => {
+            tracing::debug!("memory_search embedding generation failed: {e}");
+            arguments.to_string()
+        }
+    }
 }
 
 // =========================================================================
@@ -775,7 +855,7 @@ async fn extract_facts(
     Ok(extracted)
 }
 
-/// Compute and store FLOAT32 embeddings for any facts/chunks that are missing them,
+/// Compute and store FLOAT32 embeddings for any facts/messages/chunks that are missing them,
 /// then rebuild the vector quantized index so `vector_quantize_scan` stays fresh.
 ///
 /// Runs after each extraction pass. Idempotent — only processes NULL-embedding rows.
@@ -812,6 +892,60 @@ async fn embed_pending(
         }
     }
 
+    // --- Messages (session/log data) ---
+    let messages = match mp_core::store::log::messages_without_embedding(conn, agent_id) {
+        Ok(v) => v,
+        Err(e) => { tracing::warn!("embed_pending: messages query failed: {e}"); return; }
+    };
+
+    for (message_id, content) in &messages {
+        match embed.embed(content).await {
+            Ok(vec) => {
+                let blob = mp_llm::f32_slice_to_blob(&vec);
+                if mp_core::store::log::set_message_embedding(conn, message_id, &blob).is_ok() {
+                    embedded += 1;
+                }
+            }
+            Err(e) => tracing::warn!(message_id = %message_id, "embedding failed: {e}"),
+        }
+    }
+
+    // --- Tool calls ---
+    let tool_calls = match mp_core::store::log::tool_calls_without_embedding(conn, agent_id) {
+        Ok(v) => v,
+        Err(e) => { tracing::warn!("embed_pending: tool_calls query failed: {e}"); return; }
+    };
+
+    for (tool_call_id, content) in &tool_calls {
+        match embed.embed(content).await {
+            Ok(vec) => {
+                let blob = mp_llm::f32_slice_to_blob(&vec);
+                if mp_core::store::log::set_tool_call_embedding(conn, tool_call_id, &blob).is_ok() {
+                    embedded += 1;
+                }
+            }
+            Err(e) => tracing::warn!(tool_call_id = %tool_call_id, "embedding failed: {e}"),
+        }
+    }
+
+    // --- Policy audit ---
+    let policy_audit_rows = match mp_core::store::log::policy_audit_without_embedding(conn, agent_id) {
+        Ok(v) => v,
+        Err(e) => { tracing::warn!("embed_pending: policy_audit query failed: {e}"); return; }
+    };
+
+    for (audit_id, content) in &policy_audit_rows {
+        match embed.embed(content).await {
+            Ok(vec) => {
+                let blob = mp_llm::f32_slice_to_blob(&vec);
+                if mp_core::store::log::set_policy_audit_embedding(conn, audit_id, &blob).is_ok() {
+                    embedded += 1;
+                }
+            }
+            Err(e) => tracing::warn!(audit_id = %audit_id, "embedding failed: {e}"),
+        }
+    }
+
     // --- Chunks ---
     let chunks = match mp_core::store::knowledge::chunks_without_embedding(conn) {
         Ok(v) => v,
@@ -832,7 +966,13 @@ async fn embed_pending(
 
     if embedded > 0 {
         // Rebuild the quantized vector index so new embeddings are searchable.
-        for (table, col) in &[("facts", "content_embedding"), ("chunks", "content_embedding")] {
+        for (table, col) in &[
+            ("facts", "content_embedding"),
+            ("messages", "content_embedding"),
+            ("tool_calls", "content_embedding"),
+            ("policy_audit", "content_embedding"),
+            ("chunks", "content_embedding"),
+        ] {
             let _ = conn.execute("SELECT vector_quantize(?1, ?2)", rusqlite::params![table, col]);
         }
         tracing::debug!(count = embedded, "embeddings updated and indexes rebuilt");
@@ -1196,6 +1336,7 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
         let ag = resolve_agent(config, Some(&default_agent))?;
         let conn = open_agent_db(config, &ag.name)?;
         let provider = build_provider(ag)?;
+        let embed = build_embedding_provider(config, ag).ok();
         let sid = mp_core::store::log::create_session(&conn, &ag.name, Some("cli"))?;
 
         println!("  CLI channel active — agent: {}", ag.name);
@@ -1239,13 +1380,16 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
                 continue;
             }
 
-            match agent_turn(&conn, provider.as_ref(), &ag.name, &sid, ag.persona.as_deref(), trimmed, ag.policy_mode(), Some(&bus)).await {
+            match agent_turn(&conn, provider.as_ref(), embed.as_deref(), &ag.name, &sid, ag.persona.as_deref(), trimmed, ag.policy_mode(), Some(&bus)).await {
                 Ok(response) => {
                     println!();
                     for l in response.lines() { println!("  {l}"); }
                     println!();
                     if let Ok(n) = extract_facts(&conn, provider.as_ref(), &ag.name, &sid).await {
                         if n > 0 { println!("  ({n} fact{} learned)\n", if n == 1 { "" } else { "s" }); }
+                    }
+                    if let Some(ref ep) = embed {
+                        embed_pending(&conn, ep.as_ref(), &ag.name).await;
                     }
                     maybe_summarize_session(&conn, provider.as_ref(), &sid).await;
                 }
@@ -1415,6 +1559,7 @@ async fn cmd_worker(config: &Config, agent_name: &str) -> Result<()> {
     let agent = resolve_agent(config, Some(agent_name))?;
     let conn = open_agent_db(config, &agent.name)?;
     let provider = build_provider(agent)?;
+    let embed = build_embedding_provider(config, agent).ok();
 
     tracing::info!(agent = agent_name, "worker started");
 
@@ -1443,7 +1588,7 @@ async fn cmd_worker(config: &Config, agent_name: &str) -> Result<()> {
         };
 
         let response = match agent_turn(
-            &conn, provider.as_ref(), &agent.name, &sid,
+            &conn, provider.as_ref(), embed.as_deref(), &agent.name, &sid,
             agent.persona.as_deref(), msg, agent.policy_mode(), None,
         ).await {
             Ok(r) => serde_json::json!({"response": r, "session_id": sid}),
@@ -1455,6 +1600,9 @@ async fn cmd_worker(config: &Config, agent_name: &str) -> Result<()> {
 
         // Post-response extraction and rolling summarization
         let _ = extract_facts(&conn, provider.as_ref(), &agent.name, &sid).await;
+        if let Some(ref ep) = embed {
+            embed_pending(&conn, ep.as_ref(), &agent.name).await;
+        }
         maybe_summarize_session(&conn, provider.as_ref(), &sid).await;
     }
 
@@ -1737,7 +1885,7 @@ async fn cmd_chat(config: &Config, agent: Option<String>, session_id: Option<Str
             _ => {}
         }
 
-        match agent_turn(&conn, provider.as_ref(), &ag.name, &sid, ag.persona.as_deref(), line, ag.policy_mode(), None).await {
+        match agent_turn(&conn, provider.as_ref(), embed.as_deref(), &ag.name, &sid, ag.persona.as_deref(), line, ag.policy_mode(), None).await {
             Ok(response) => {
                 println!();
                 for resp_line in response.lines() {
@@ -1749,12 +1897,12 @@ async fn cmd_chat(config: &Config, agent: Option<String>, session_id: Option<Str
                     Ok(n) if n > 0 => {
                         println!("  ({n} fact{} learned)", if n == 1 { "" } else { "s" });
                         println!();
-                        if let Some(ref ep) = embed {
-                            embed_pending(&conn, ep.as_ref(), &ag.name).await;
-                        }
                     }
                     Err(e) => tracing::debug!("extraction error: {e}"),
                     _ => {}
+                }
+                if let Some(ref ep) = embed {
+                    embed_pending(&conn, ep.as_ref(), &ag.name).await;
                 }
                 maybe_summarize_session(&conn, provider.as_ref(), &sid).await;
             }
@@ -1782,7 +1930,7 @@ async fn cmd_send(
     let sid = resolve_or_create_session(&conn, &agent.name, Some("cli"), session_id)?;
 
     let response = agent_turn(
-        &conn, provider.as_ref(), &agent.name, &sid,
+        &conn, provider.as_ref(), embed.as_deref(), &agent.name, &sid,
         agent.persona.as_deref(), message, agent.policy_mode(), None,
     ).await?;
 
@@ -1796,10 +1944,10 @@ async fn cmd_send(
         if n > 0 {
             println!("  ({n} fact{} learned)", if n == 1 { "" } else { "s" });
             println!();
-            if let Some(ref ep) = embed {
-                embed_pending(&conn, ep.as_ref(), &agent.name).await;
-            }
         }
+    }
+    if let Some(ref ep) = embed {
+        embed_pending(&conn, ep.as_ref(), &agent.name).await;
     }
     maybe_summarize_session(&conn, provider.as_ref(), &sid).await;
 
@@ -1821,10 +1969,10 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
             if facts.is_empty() {
                 println!("  No facts found for agent \"{}\".", ag.name);
             } else {
-                println!("  {:36} {:6} {:50}", "ID", "CONF", "POINTER");
-                println!("  {:36} {:6} {:50}", "--", "----", "-------");
+                println!("  {:36} {:6} {:6} {:50}", "ID", "CONF", "CMPCT", "POINTER");
+                println!("  {:36} {:6} {:6} {:50}", "--", "----", "-----", "-------");
                 for f in &facts {
-                    println!("  {:36} {:<6.1} {}", f.id, f.confidence, f.pointer);
+                    println!("  {:36} {:<6.1} {:<6} {}", f.id, f.confidence, f.compaction_level, f.pointer);
                 }
                 println!();
                 println!("  {} active facts", facts.len());
@@ -1834,15 +1982,34 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
         cli::FactsCommand::Search { query, agent } => {
             let ag = resolve_agent(config, agent.as_deref())?;
             let conn = open_agent_db(config, &ag.name)?;
-            let results = mp_core::search::search(&conn, &query, &ag.name, 20, None, None)?;
+            let req = op_request(
+                &ag.name,
+                "memory.search",
+                serde_json::json!({
+                    "query": query,
+                    "agent_id": ag.name,
+                    "limit": 20
+                }),
+            );
+            let resp = mp_core::operations::execute(&conn, &req)?;
+            if !resp.ok {
+                println!("  Memory search denied: {}", resp.message);
+                return Ok(());
+            }
+            let results = resp.data.as_array().cloned().unwrap_or_default();
 
             println!();
             if results.is_empty() {
                 println!("  No results for \"{query}\".");
             } else {
                 for r in &results {
-                    let preview: String = r.content.chars().take(80).collect();
-                    println!("  [{:?}] {:.4}  {}", r.store, r.score, preview);
+                    let preview: String = r["content"].as_str().unwrap_or("").chars().take(80).collect();
+                    println!(
+                        "  [{}] {:.4}  {}",
+                        r["store"].as_str().unwrap_or("-"),
+                        r["score"].as_f64().unwrap_or(0.0),
+                        preview
+                    );
                 }
                 println!();
                 println!("  {} results", results.len());
@@ -1852,31 +2019,116 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
         cli::FactsCommand::Inspect { id } => {
             let ag = resolve_agent(config, None)?;
             let conn = open_agent_db(config, &ag.name)?;
+            let req = op_request(
+                &ag.name,
+                "memory.fact.get",
+                serde_json::json!({ "id": id.clone() }),
+            );
+            let resp = mp_core::operations::execute(&conn, &req)?;
+            if !resp.ok {
+                println!("  {}", resp.message);
+                return Ok(());
+            }
 
-            match mp_core::store::facts::get(&conn, &id)? {
-                None => println!("  Fact {id} not found."),
-                Some(f) => {
-                    println!();
-                    println!("  ID:         {}", f.id);
-                    println!("  Pointer:    {}", f.pointer);
-                    println!("  Summary:    {}", f.summary);
-                    println!("  Confidence: {:.1}", f.confidence);
-                    println!("  Version:    {}", f.version);
-                    println!();
-                    println!("  Content:");
-                    println!("  {}", f.content);
-                    println!();
+            println!();
+            println!("  ID:         {}", resp.data["id"].as_str().unwrap_or("-"));
+            println!("  Pointer:    {}", resp.data["pointer"].as_str().unwrap_or("-"));
+            println!("  Summary:    {}", resp.data["summary"].as_str().unwrap_or("-"));
+            println!("  Confidence: {:.1}", resp.data["confidence"].as_f64().unwrap_or(0.0));
+            println!("  Version:    {}", resp.data["version"].as_i64().unwrap_or(1));
+            println!("  Compact Lv: {}", resp.data["compaction_level"].as_i64().unwrap_or(0));
+            if let Some(compact) = resp.data["context_compact"].as_str() {
+                println!("  Compact:    {}", compact);
+            }
+            println!();
+            println!("  Content:");
+            println!("  {}", resp.data["content"].as_str().unwrap_or(""));
+            println!();
 
-                    let audit = mp_core::store::facts::get_audit(&conn, &id)?;
-                    if !audit.is_empty() {
-                        println!("  Audit trail:");
-                        for a in &audit {
-                            println!("    {} — {}", a.operation, a.reason.as_deref().unwrap_or(""));
-                        }
-                    }
-                    println!();
+            let audit = mp_core::store::facts::get_audit(&conn, &id)?;
+            if !audit.is_empty() {
+                println!("  Audit trail:");
+                for a in &audit {
+                    println!("    {} — {}", a.operation, a.reason.as_deref().unwrap_or(""));
                 }
             }
+            println!();
+        }
+        cli::FactsCommand::Expand { id } => {
+            let ag = resolve_agent(config, None)?;
+            let conn = open_agent_db(config, &ag.name)?;
+            let req = op_request(
+                &ag.name,
+                "memory.fact.get",
+                serde_json::json!({ "id": id }),
+            );
+            let resp = mp_core::operations::execute(&conn, &req)?;
+            if !resp.ok {
+                println!("  {}", resp.message);
+                return Ok(());
+            }
+            println!();
+            println!("  [{}] {}", resp.data["id"].as_str().unwrap_or("-"), resp.data["pointer"].as_str().unwrap_or("-"));
+            println!("  Full content:");
+            println!("  {}", resp.data["content"].as_str().unwrap_or(""));
+            println!();
+        }
+        cli::FactsCommand::ResetCompaction { id, all, agent, confirm } => {
+            let ag = resolve_agent(config, agent.as_deref())?;
+            let conn = open_agent_db(config, &ag.name)?;
+
+            if all {
+                if !confirm {
+                    println!("  Use --confirm with --all to reset compaction for every active fact.");
+                    return Ok(());
+                }
+                let facts = mp_core::store::facts::list_active(&conn, &ag.name)?;
+                if facts.is_empty() {
+                    println!("  No active facts found for agent \"{}\".", ag.name);
+                    return Ok(());
+                }
+
+                let mut reset_count = 0usize;
+                for f in &facts {
+                    let req = op_request(
+                        &ag.name,
+                        "memory.fact.compaction.reset",
+                        serde_json::json!({
+                            "id": f.id,
+                            "reason": "bulk compaction reset via CLI",
+                        }),
+                    );
+                    let resp = mp_core::operations::execute(&conn, &req)?;
+                    if resp.ok {
+                        reset_count += 1;
+                    }
+                }
+                println!("  Reset compaction for {reset_count}/{} facts.", facts.len());
+                return Ok(());
+            }
+
+            let fact_id = match id {
+                Some(v) => v,
+                None => {
+                    println!("  Provide a fact ID, or use --all --confirm.");
+                    return Ok(());
+                }
+            };
+
+            let req = op_request(
+                &ag.name,
+                "memory.fact.compaction.reset",
+                serde_json::json!({
+                    "id": fact_id,
+                    "reason": "compaction reset via CLI",
+                }),
+            );
+            let resp = mp_core::operations::execute(&conn, &req)?;
+            if !resp.ok {
+                println!("  Fact reset failed: {}", resp.message);
+                return Ok(());
+            }
+            println!("  Fact {} compaction reset.", resp.data["id"].as_str().unwrap_or("-"));
         }
         cli::FactsCommand::Promote { id, scope } => {
             println!("  [mp facts promote {id} --scope {scope} — requires sync (M13)]");
@@ -1921,7 +2173,12 @@ async fn cmd_ingest(
     replay: bool,
     status: bool,
     replay_run: Option<String>,
+    replay_latest: bool,
+    replay_offset: usize,
+    status_filter: Option<String>,
+    file_filter: Option<String>,
     dry_run: bool,
+    apply: bool,
     source: String,
     limit: usize,
 ) -> Result<()> {
@@ -1933,7 +2190,9 @@ async fn cmd_ingest(
             &ag.name,
             "ingest.status",
             serde_json::json!({
-                "source": source,
+                "source": source.clone(),
+                "status": status_filter.clone(),
+                "file_path_like": file_filter.clone(),
                 "limit": limit
             }),
         );
@@ -1943,12 +2202,13 @@ async fn cmd_ingest(
         if rows.is_empty() {
             println!("  No ingest runs found.");
         } else {
-            println!("  {:36} {:10} {:8} {:8} {:8} {:8} {:8}", "RUN_ID", "SOURCE", "PROC", "INS", "DEDUP", "PROJ", "ERR");
+            println!("  {:36} {:10} {:22} {:8} {:8} {:8} {:8} {:8}", "RUN_ID", "SOURCE", "STATUS", "PROC", "INS", "DEDUP", "PROJ", "ERR");
             for r in rows {
                 println!(
-                    "  {:36} {:10} {:8} {:8} {:8} {:8} {:8}",
+                    "  {:36} {:10} {:22} {:8} {:8} {:8} {:8} {:8}",
                     r["id"].as_str().unwrap_or("-"),
                     r["source"].as_str().unwrap_or("-"),
+                    r["status"].as_str().unwrap_or("-"),
                     r["processed_count"].as_i64().unwrap_or(0),
                     r["inserted_count"].as_i64().unwrap_or(0),
                     r["deduped_count"].as_i64().unwrap_or(0),
@@ -1958,22 +2218,51 @@ async fn cmd_ingest(
             }
         }
         println!();
-    } else if let Some(run_id) = replay_run {
+    } else if replay_run.is_some() || replay_latest {
+        let selected_run_id = if let Some(run_id) = replay_run {
+            run_id
+        } else {
+            let status_req = op_request(
+                &ag.name,
+                "ingest.status",
+                serde_json::json!({
+                    "source": source.clone(),
+                    "status": status_filter.clone(),
+                    "file_path_like": file_filter.clone(),
+                    "limit": limit
+                }),
+            );
+            let status_resp = mp_core::operations::execute(&conn, &status_req)?;
+            let rows = status_resp.data.as_array().cloned().unwrap_or_default();
+            let selected = rows.get(replay_offset).cloned().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no ingest run available at replay offset {} (after filters)",
+                    replay_offset
+                )
+            })?;
+            selected["id"]
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| anyhow::anyhow!("selected ingest run has no id"))?
+        };
+
+        // Operator-safe default: preview first; require --apply to execute writes.
+        let effective_dry_run = if dry_run { true } else { !apply };
         let req = op_request(
             &ag.name,
             "ingest.replay",
             serde_json::json!({
-                "run_id": run_id,
-                "dry_run": dry_run
+                "run_id": selected_run_id,
+                "dry_run": effective_dry_run
             }),
         );
         let resp = mp_core::operations::execute(&conn, &req)?;
         if !resp.ok {
             anyhow::bail!("replay denied: {}", resp.message);
         }
-        if dry_run {
+        if effective_dry_run {
             println!(
-                "  Replay dry-run {}: processed={}, would_insert={}, would_dedupe={}, parse_errors={}, lines={}..{}",
+                "  Replay preview {}: processed={}, would_insert={}, would_dedupe={}, parse_errors={}, lines={}..{} (use --apply to execute)",
                 resp.data["run_id"].as_str().unwrap_or("-"),
                 resp.data["processed_count"].as_i64().unwrap_or(0),
                 resp.data["would_insert_count"].as_i64().unwrap_or(0),
@@ -2245,39 +2534,66 @@ async fn cmd_policy(config: &Config, cmd: cli::PolicyCommand) -> Result<()> {
             println!("  Policy \"{printed_name}\" added ({id})");
         }
         cli::PolicyCommand::Test { input } => {
-            let req = mp_core::policy::PolicyRequest {
-                actor: &ag.name,
-                action: "execute",
-                resource: "sql",
-                sql_content: Some(&input),
-                channel: None,
-            };
-            let decision = mp_core::policy::evaluate(&conn, &req)?;
-            println!("  Effect: {:?}", decision.effect);
-            if let Some(reason) = &decision.reason {
+            let req = op_request(
+                &ag.name,
+                "policy.explain",
+                serde_json::json!({
+                    "actor": ag.name,
+                    "action": "execute",
+                    "resource": "sql",
+                    "sql_content": input
+                }),
+            );
+            let resp = mp_core::operations::execute(&conn, &req)?;
+            if !resp.ok {
+                println!("  Policy explain denied: {}", resp.message);
+                return Ok(());
+            }
+            println!("  Effect: {}", resp.data["effect"].as_str().unwrap_or("unknown"));
+            if let Some(reason) = resp.data["reason"].as_str() {
                 println!("  Reason: {reason}");
+            }
+            if let Some(policy_id) = resp.data["policy_id"].as_str() {
+                println!("  Policy ID: {policy_id}");
             }
         }
         cli::PolicyCommand::Violations { last } => {
             let hours = parse_duration_hours(&last);
             let since = chrono::Utc::now().timestamp() - (hours * 3600);
-            let mut stmt = conn.prepare(
-                "SELECT actor, action, resource, effect, reason, created_at
-                 FROM policy_audit WHERE effect = 'deny' AND created_at >= ?1
-                 ORDER BY created_at DESC LIMIT 50"
-            )?;
-            let violations: Vec<(String, String, String, String, Option<String>, i64)> =
-                stmt.query_map([since], |r| {
-                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
-                })?.collect::<Result<Vec<_>, _>>()?;
+            let req = op_request(
+                &ag.name,
+                "audit.query",
+                serde_json::json!({
+                    "effect": "denied",
+                    "limit": 50
+                }),
+            );
+            let resp = mp_core::operations::execute(&conn, &req)?;
+            if !resp.ok {
+                println!("  Audit query denied: {}", resp.message);
+                return Ok(());
+            }
+            let violations: Vec<serde_json::Value> = resp
+                .data
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|v| v["created_at"].as_i64().unwrap_or(0) >= since)
+                .collect();
 
             println!();
             if violations.is_empty() {
                 println!("  No policy violations in the last {last}.");
             } else {
-                for (actor, action, resource, effect, reason, _ts) in &violations {
+                for v in &violations {
                     println!("  [{effect}] {actor} → {action} on {resource}: {}",
-                        reason.as_deref().unwrap_or(""));
+                        v["reason"].as_str().unwrap_or(""),
+                        effect = v["effect"].as_str().unwrap_or(""),
+                        actor = v["actor"].as_str().unwrap_or(""),
+                        action = v["action"].as_str().unwrap_or(""),
+                        resource = v["resource"].as_str().unwrap_or(""),
+                    );
                 }
             }
             println!();
@@ -2423,42 +2739,61 @@ async fn cmd_audit(
 
     match command {
         None => {
-            let mut stmt = conn.prepare(
-                "SELECT actor, action, resource, effect, reason, created_at
-                 FROM policy_audit ORDER BY created_at DESC LIMIT 20"
-            )?;
-            let entries: Vec<(String, String, String, String, Option<String>, i64)> =
-                stmt.query_map([], |r| {
-                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
-                })?.collect::<Result<Vec<_>, _>>()?;
+            let req = op_request(
+                &ag.name,
+                "audit.query",
+                serde_json::json!({
+                    "limit": 20
+                }),
+            );
+            let resp = mp_core::operations::execute(&conn, &req)?;
+            if !resp.ok {
+                println!("  Audit query denied: {}", resp.message);
+                return Ok(());
+            }
+            let entries = resp.data.as_array().cloned().unwrap_or_default();
 
             println!();
             if entries.is_empty() {
                 println!("  No audit entries.");
             } else {
-                for (actor, action, resource, effect, reason, _ts) in &entries {
+                for e in &entries {
                     println!("  [{effect}] {actor} → {action} on {resource}: {}",
-                        reason.as_deref().unwrap_or(""));
+                        e["reason"].as_str().unwrap_or(""),
+                        effect = e["effect"].as_str().unwrap_or(""),
+                        actor = e["actor"].as_str().unwrap_or(""),
+                        action = e["action"].as_str().unwrap_or(""),
+                        resource = e["resource"].as_str().unwrap_or(""),
+                    );
                 }
             }
             println!();
         }
         Some(cli::AuditCommand::Search { query }) => {
-            let pattern = format!("%{query}%");
-            let mut stmt = conn.prepare(
-                "SELECT actor, action, resource, effect, reason
-                 FROM policy_audit WHERE reason LIKE ?1 OR actor LIKE ?1 OR resource LIKE ?1
-                 ORDER BY created_at DESC LIMIT 20"
-            )?;
-            let entries: Vec<(String, String, String, String, Option<String>)> =
-                stmt.query_map([&pattern], |r| {
-                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
-                })?.collect::<Result<Vec<_>, _>>()?;
+            let req = op_request(
+                &ag.name,
+                "audit.query",
+                serde_json::json!({
+                    "query": query,
+                    "limit": 20
+                }),
+            );
+            let resp = mp_core::operations::execute(&conn, &req)?;
+            if !resp.ok {
+                println!("  Audit query denied: {}", resp.message);
+                return Ok(());
+            }
+            let entries = resp.data.as_array().cloned().unwrap_or_default();
 
             println!();
-            for (actor, action, resource, effect, reason) in &entries {
+            for e in &entries {
                 println!("  [{effect}] {actor} → {action} on {resource}: {}",
-                    reason.as_deref().unwrap_or(""));
+                    e["reason"].as_str().unwrap_or(""),
+                    effect = e["effect"].as_str().unwrap_or(""),
+                    actor = e["actor"].as_str().unwrap_or(""),
+                    action = e["action"].as_str().unwrap_or(""),
+                    resource = e["resource"].as_str().unwrap_or(""),
+                );
             }
             println!();
         }
@@ -2678,29 +3013,20 @@ async fn cmd_session(config: &Config, cmd: cli::SessionCommand) -> Result<()> {
             let ag = resolve_agent(config, agent.as_deref())?;
             let conn = open_agent_db(config, &ag.name)?;
             let limit = limit.max(1).min(200);
-
-            let mut stmt = conn.prepare(
-                "SELECT s.id, s.channel, s.started_at, s.ended_at,
-                        COUNT(m.id) AS message_count,
-                        COALESCE(MAX(m.created_at), s.started_at) AS last_activity
-                 FROM sessions s
-                 LEFT JOIN messages m ON m.session_id = s.id
-                 WHERE s.agent_id = ?1
-                 GROUP BY s.id, s.channel, s.started_at, s.ended_at
-                 ORDER BY last_activity DESC
-                 LIMIT ?2"
-            )?;
-
-            let rows = stmt.query_map(rusqlite::params![ag.name, limit as i64], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, Option<String>>(1)?,
-                    r.get::<_, i64>(2)?,
-                    r.get::<_, Option<i64>>(3)?,
-                    r.get::<_, i64>(4)?,
-                    r.get::<_, i64>(5)?,
-                ))
-            })?.collect::<Result<Vec<_>, _>>()?;
+            let req = op_request(
+                &ag.name,
+                "session.list",
+                serde_json::json!({
+                    "agent_id": ag.name,
+                    "limit": limit
+                }),
+            );
+            let resp = mp_core::operations::execute(&conn, &req)?;
+            if !resp.ok {
+                println!("  Session list denied: {}", resp.message);
+                return Ok(());
+            }
+            let rows = resp.data.as_array().cloned().unwrap_or_default();
 
             if rows.is_empty() {
                 println!("  No sessions found for agent '{}'.", ag.name);
@@ -2716,11 +3042,17 @@ async fn cmd_session(config: &Config, cmd: cli::SessionCommand) -> Result<()> {
             println!();
             println!("  Recent sessions for agent '{}':", ag.name);
             println!();
-            for (id, channel, started_at, ended_at, message_count, last_activity) in rows {
+            for row in rows {
+                let id = row["id"].as_str().unwrap_or("-");
+                let channel = row["channel"].as_str().unwrap_or("unknown");
+                let started_at = row["started_at"].as_i64().unwrap_or(0);
+                let ended_at = row["ended_at"].as_i64();
+                let message_count = row["message_count"].as_i64().unwrap_or(0);
+                let last_activity = row["last_activity"].as_i64().unwrap_or(started_at);
                 println!("  Session: {}", id);
-                println!("    Channel:      {}", channel.unwrap_or_else(|| "unknown".into()));
+                println!("    Channel:      {}", channel);
                 println!("    Started:      {}", fmt_ts(started_at));
-                println!("    Last activity:{}", format!(" {}", fmt_ts(last_activity)));
+                println!("    Last activity: {}", fmt_ts(last_activity));
                 println!("    Messages:     {}", message_count);
                 println!("    Ended:        {}", ended_at.map(fmt_ts).unwrap_or_else(|| "active".into()));
                 println!();

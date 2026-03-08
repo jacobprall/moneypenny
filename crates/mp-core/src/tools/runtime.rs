@@ -240,8 +240,16 @@ fn memory_search(conn: &Connection, agent_id: &str, arguments: &str) -> anyhow::
     let query = args["query"].as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'query'"))?;
     let limit = args["limit"].as_u64().unwrap_or(10) as usize;
+    let query_embedding = parse_query_embedding_blob(&args);
 
-    let results = crate::search::search(conn, query, agent_id, limit, None, None)?;
+    let results = crate::search::search(
+        conn,
+        query,
+        agent_id,
+        limit,
+        None,
+        query_embedding.as_deref(),
+    )?;
 
     let output: Vec<serde_json::Value> = results.iter().map(|r| {
         serde_json::json!({
@@ -257,6 +265,25 @@ fn memory_search(conn: &Connection, agent_id: &str, arguments: &str) -> anyhow::
         success: true,
         duration_ms: 0,
     })
+}
+
+fn parse_query_embedding_blob(args: &serde_json::Value) -> Option<Vec<u8>> {
+    // Optional private arg injected by the runtime caller to enable true hybrid
+    // retrieval (vector + lexical) for the current query.
+    let arr = args.get("__query_embedding")?.as_array()?;
+    if arr.is_empty() || arr.len() > 8192 {
+        return None;
+    }
+
+    let mut blob = Vec::with_capacity(arr.len() * std::mem::size_of::<f32>());
+    for n in arr {
+        let value = n.as_f64()?;
+        if !value.is_finite() {
+            return None;
+        }
+        blob.extend_from_slice(&(value as f32).to_le_bytes());
+    }
+    Some(blob)
 }
 
 fn fact_add(conn: &Connection, agent_id: &str, arguments: &str) -> anyhow::Result<ToolResult> {
@@ -846,6 +873,88 @@ mod tests {
         ).unwrap();
         assert!(result.success);
         assert!(result.output.contains("billing") || result.output.contains("Stripe"));
+    }
+
+    #[test]
+    fn memory_search_semantic_recalls_projected_logs() {
+        let conn = setup();
+        mp_ext::init_all_extensions(&conn).unwrap();
+        crate::schema::init_vector_indexes(&conn, 3).unwrap();
+
+        let sid = crate::store::log::create_session(&conn, "agent-1", None).unwrap();
+        let mid = crate::store::log::append_message(&conn, &sid, "assistant", "executing checks").unwrap();
+
+        conn.execute(
+            "INSERT INTO tool_calls
+             (id, message_id, session_id, tool_name, arguments, result, status, policy_decision, content_embedding, duration_ms, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            rusqlite::params![
+                "tc-runtime-sem",
+                mid,
+                sid,
+                "shell_exec",
+                "{\"command\":\"deploy check\"}",
+                "deploy denied",
+                "denied",
+                "deny",
+                vec![0_u8; 0],
+                7_i64,
+                1_i64,
+            ],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO policy_audit
+             (id, policy_id, actor, action, resource, effect, reason, content_embedding, session_id, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            rusqlite::params![
+                "pa-runtime-sem",
+                "p1",
+                "agent-1",
+                "call",
+                "shell_exec",
+                "deny",
+                "prod deploy blocked",
+                vec![0_u8; 0],
+                sid,
+                2_i64,
+            ],
+        ).unwrap();
+
+        fn f32_blob(v: &[f32]) -> Vec<u8> {
+            let mut out = Vec::with_capacity(v.len() * std::mem::size_of::<f32>());
+            for x in v {
+                out.extend_from_slice(&x.to_le_bytes());
+            }
+            out
+        }
+
+        conn.execute(
+            "UPDATE tool_calls SET content_embedding = ?1 WHERE id = 'tc-runtime-sem'",
+            rusqlite::params![f32_blob(&[1.0, 0.0, 0.0])],
+        ).unwrap();
+        conn.execute(
+            "UPDATE policy_audit SET content_embedding = ?1 WHERE id = 'pa-runtime-sem'",
+            rusqlite::params![f32_blob(&[1.0, 0.0, 0.0])],
+        ).unwrap();
+
+        for (table, col) in &[("tool_calls", "content_embedding"), ("policy_audit", "content_embedding")] {
+            conn.query_row(
+                "SELECT vector_quantize(?1, ?2)",
+                rusqlite::params![table, col],
+                |_| Ok::<_, rusqlite::Error>(()),
+            ).unwrap();
+        }
+
+        let result = dispatch(
+            &conn,
+            "agent-1",
+            &sid,
+            "memory_search",
+            r#"{"query":"qzv no lexical overlap","limit":10,"__query_embedding":[1.0,0.0,0.0]}"#,
+        ).unwrap();
+        assert!(result.success);
+        assert!(result.output.contains("[tool_call]"));
+        assert!(result.output.contains("[policy_audit]"));
     }
 
     #[test]

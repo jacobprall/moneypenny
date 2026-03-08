@@ -129,6 +129,97 @@ pub fn get_recent_messages(conn: &Connection, session_id: &str, limit: usize) ->
     Ok(msgs)
 }
 
+/// Return (id, content) for agent-scoped messages that are missing embeddings.
+pub fn messages_without_embedding(conn: &Connection, agent_id: &str) -> anyhow::Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT m.id, m.content
+         FROM messages m
+         JOIN sessions s ON s.id = m.session_id
+         WHERE s.agent_id = ?1
+           AND m.content_embedding IS NULL
+         ORDER BY m.created_at ASC"
+    )?;
+    let rows = stmt.query_map(params![agent_id], |r| {
+        Ok((r.get(0)?, r.get(1)?))
+    })?.collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Write or overwrite the FLOAT32 content embedding for a message.
+pub fn set_message_embedding(conn: &Connection, message_id: &str, blob: &[u8]) -> anyhow::Result<()> {
+    conn.execute(
+        "UPDATE messages SET content_embedding = ?1 WHERE id = ?2",
+        params![blob, message_id],
+    )?;
+    Ok(())
+}
+
+/// Return (id, composed_text) for tool calls missing embeddings.
+pub fn tool_calls_without_embedding(conn: &Connection, agent_id: &str) -> anyhow::Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT tc.id,
+                (
+                    '[tool_call] tool=' || tc.tool_name ||
+                    ' status=' || COALESCE(tc.status, '') ||
+                    ' policy=' || COALESCE(tc.policy_decision, '') ||
+                    ' args=' || COALESCE(tc.arguments, '') ||
+                    ' result=' || COALESCE(tc.result, '')
+                ) AS content
+         FROM tool_calls tc
+         JOIN sessions s ON s.id = tc.session_id
+         WHERE s.agent_id = ?1
+           AND tc.content_embedding IS NULL
+         ORDER BY tc.created_at ASC"
+    )?;
+    let rows = stmt.query_map(params![agent_id], |r| {
+        Ok((r.get(0)?, r.get(1)?))
+    })?.collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Write or overwrite the FLOAT32 content embedding for a tool call.
+pub fn set_tool_call_embedding(conn: &Connection, tool_call_id: &str, blob: &[u8]) -> anyhow::Result<()> {
+    conn.execute(
+        "UPDATE tool_calls SET content_embedding = ?1 WHERE id = ?2",
+        params![blob, tool_call_id],
+    )?;
+    Ok(())
+}
+
+/// Return (id, composed_text) for policy audit rows missing embeddings.
+pub fn policy_audit_without_embedding(conn: &Connection, agent_id: &str) -> anyhow::Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT pa.id,
+                (
+                    '[policy_audit] actor=' || pa.actor ||
+                    ' action=' || pa.action ||
+                    ' resource=' || pa.resource ||
+                    ' effect=' || pa.effect ||
+                    ' reason=' || COALESCE(pa.reason, '')
+                ) AS content
+         FROM policy_audit pa
+         WHERE (
+                pa.actor = ?1 OR
+                pa.session_id IN (SELECT id FROM sessions WHERE agent_id = ?1)
+               )
+           AND pa.content_embedding IS NULL
+         ORDER BY pa.created_at ASC"
+    )?;
+    let rows = stmt.query_map(params![agent_id], |r| {
+        Ok((r.get(0)?, r.get(1)?))
+    })?.collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Write or overwrite the FLOAT32 content embedding for a policy audit row.
+pub fn set_policy_audit_embedding(conn: &Connection, audit_id: &str, blob: &[u8]) -> anyhow::Result<()> {
+    conn.execute(
+        "UPDATE policy_audit SET content_embedding = ?1 WHERE id = ?2",
+        params![blob, audit_id],
+    )?;
+    Ok(())
+}
+
 /// Record a tool call. Returns the tool call ID.
 pub fn record_tool_call(
     conn: &Connection,
@@ -274,5 +365,64 @@ mod tests {
     fn get_nonexistent_session_returns_none() {
         let conn = setup();
         assert!(get_session(&conn, "nope").unwrap().is_none());
+    }
+
+    #[test]
+    fn message_embedding_roundtrip() {
+        let conn = setup();
+        let sid = create_session(&conn, "a", None).unwrap();
+        let mid = append_message(&conn, &sid, "user", "embed this message").unwrap();
+
+        let pending = messages_without_embedding(&conn, "a").unwrap();
+        assert!(pending.iter().any(|(id, _)| id == &mid));
+
+        let blob = vec![0_u8; 16];
+        set_message_embedding(&conn, &mid, &blob).unwrap();
+
+        let pending_after = messages_without_embedding(&conn, "a").unwrap();
+        assert!(!pending_after.iter().any(|(id, _)| id == &mid));
+    }
+
+    #[test]
+    fn tool_call_embedding_roundtrip() {
+        let conn = setup();
+        let sid = create_session(&conn, "a", None).unwrap();
+        let mid = append_message(&conn, &sid, "assistant", "running tool").unwrap();
+        let tcid = record_tool_call(
+            &conn,
+            &mid,
+            &sid,
+            "shell_exec",
+            Some(r#"{"command":"ls"}"#),
+            Some("ok"),
+            Some("success"),
+            Some("allow"),
+            Some(5),
+        ).unwrap();
+
+        let pending = tool_calls_without_embedding(&conn, "a").unwrap();
+        assert!(pending.iter().any(|(id, _)| id == &tcid));
+
+        set_tool_call_embedding(&conn, &tcid, &[0_u8; 16]).unwrap();
+        let pending_after = tool_calls_without_embedding(&conn, "a").unwrap();
+        assert!(!pending_after.iter().any(|(id, _)| id == &tcid));
+    }
+
+    #[test]
+    fn policy_audit_embedding_roundtrip() {
+        let conn = setup();
+        let sid = create_session(&conn, "a", None).unwrap();
+        conn.execute(
+            "INSERT INTO policy_audit (id, policy_id, actor, action, resource, effect, reason, session_id, created_at)
+             VALUES ('pa-1', 'p1', 'a', 'call', 'shell_exec', 'deny', 'blocked', ?1, 1)",
+            params![sid],
+        ).unwrap();
+
+        let pending = policy_audit_without_embedding(&conn, "a").unwrap();
+        assert!(pending.iter().any(|(id, _)| id == "pa-1"));
+
+        set_policy_audit_embedding(&conn, "pa-1", &[0_u8; 16]).unwrap();
+        let pending_after = policy_audit_without_embedding(&conn, "a").unwrap();
+        assert!(!pending_after.iter().any(|(id, _)| id == "pa-1"));
     }
 }

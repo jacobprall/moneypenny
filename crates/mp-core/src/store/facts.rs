@@ -1,6 +1,8 @@
 use rusqlite::{Connection, params};
 use uuid::Uuid;
 
+const MIN_CONTEXT_COMPACT_WORDS: usize = 5;
+
 #[derive(Debug, Clone)]
 pub struct Fact {
     pub id: String,
@@ -18,6 +20,9 @@ pub struct Fact {
     pub updated_at: i64,
     pub superseded_at: Option<i64>,
     pub version: i64,
+    pub context_compact: Option<String>,
+    pub compaction_level: i64,
+    pub last_compacted_at: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -135,7 +140,8 @@ pub fn get(conn: &Connection, fact_id: &str) -> anyhow::Result<Option<Fact>> {
     let mut stmt = conn.prepare(
         "SELECT id, agent_id, content, summary, pointer, content_embedding, summary_embedding,
                 pointer_embedding, keywords, source_message_id, confidence,
-                created_at, updated_at, superseded_at, version
+                created_at, updated_at, superseded_at, version,
+                context_compact, compaction_level, last_compacted_at
          FROM facts WHERE id = ?1"
     )?;
 
@@ -156,6 +162,9 @@ pub fn get(conn: &Connection, fact_id: &str) -> anyhow::Result<Option<Fact>> {
             updated_at: r.get(12)?,
             superseded_at: r.get(13)?,
             version: r.get(14)?,
+            context_compact: r.get(15)?,
+            compaction_level: r.get(16)?,
+            last_compacted_at: r.get(17)?,
         })
     }).ok();
 
@@ -167,7 +176,8 @@ pub fn list_active(conn: &Connection, agent_id: &str) -> anyhow::Result<Vec<Fact
     let mut stmt = conn.prepare(
         "SELECT id, agent_id, content, summary, pointer, content_embedding, summary_embedding,
                 pointer_embedding, keywords, source_message_id, confidence,
-                created_at, updated_at, superseded_at, version
+                created_at, updated_at, superseded_at, version,
+                context_compact, compaction_level, last_compacted_at
          FROM facts WHERE agent_id = ?1 AND superseded_at IS NULL
          ORDER BY updated_at DESC"
     )?;
@@ -189,6 +199,9 @@ pub fn list_active(conn: &Connection, agent_id: &str) -> anyhow::Result<Vec<Fact
             updated_at: r.get(12)?,
             superseded_at: r.get(13)?,
             version: r.get(14)?,
+            context_compact: r.get(15)?,
+            compaction_level: r.get(16)?,
+            last_compacted_at: r.get(17)?,
         })
     })?.collect::<Result<Vec<_>, _>>()?;
 
@@ -196,13 +209,99 @@ pub fn list_active(conn: &Connection, agent_id: &str) -> anyhow::Result<Vec<Fact
 }
 
 /// Get all Level 2 pointers for an agent (for context loading).
-pub fn all_pointers(conn: &Connection, agent_id: &str) -> anyhow::Result<Vec<(String, String)>> {
+pub fn all_pointers(conn: &Connection, agent_id: &str) -> anyhow::Result<Vec<(String, String, Option<String>, i64)>> {
     let mut stmt = conn.prepare(
-        "SELECT id, pointer FROM facts WHERE agent_id = ?1 AND superseded_at IS NULL ORDER BY updated_at DESC"
+        "SELECT id, pointer, context_compact, compaction_level
+         FROM facts
+         WHERE agent_id = ?1 AND superseded_at IS NULL
+         ORDER BY updated_at DESC"
     )?;
-    let rows = stmt.query_map([agent_id], |r| Ok((r.get(0)?, r.get(1)?)))?
+    let rows = stmt.query_map([agent_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
+}
+
+fn halve_words_for_context(text: &str) -> Option<String> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.len() <= MIN_CONTEXT_COMPACT_WORDS {
+        return None;
+    }
+    let next_len = ((words.len() + 1) / 2).max(MIN_CONTEXT_COMPACT_WORDS);
+    Some(words.into_iter().take(next_len).collect::<Vec<_>>().join(" "))
+}
+
+fn seed_compaction_text(content: &str, summary: &str, pointer: &str) -> String {
+    let candidate = if !content.trim().is_empty() {
+        content
+    } else if !summary.trim().is_empty() {
+        summary
+    } else {
+        pointer
+    };
+    candidate.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Progressively compact active facts for context loading.
+///
+/// Each compaction pass halves the word count of `context_compact` and never
+/// goes below a 5-word floor.
+pub fn compact_for_context(conn: &Connection, agent_id: &str) -> anyhow::Result<usize> {
+    let mut stmt = conn.prepare(
+        "SELECT id, content, summary, pointer, context_compact
+         FROM facts
+         WHERE agent_id = ?1 AND superseded_at IS NULL",
+    )?;
+    let rows = stmt
+        .query_map(params![agent_id], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, Option<String>>(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let now = chrono::Utc::now().timestamp();
+    let mut compacted_count = 0usize;
+    for (id, content, summary, pointer, context_compact) in rows {
+        let existing = context_compact.clone().unwrap_or_default();
+        let current = context_compact.unwrap_or_else(|| seed_compaction_text(&content, &summary, &pointer));
+        if let Some(next_compact) = halve_words_for_context(&current) {
+            conn.execute(
+                "UPDATE facts
+                 SET context_compact = ?1,
+                     compaction_level = compaction_level + 1,
+                     last_compacted_at = ?2
+                 WHERE id = ?3",
+                params![next_compact, now, id],
+            )?;
+            compacted_count += 1;
+        } else if current != existing {
+            conn.execute(
+                "UPDATE facts
+                 SET context_compact = ?1
+                 WHERE id = ?2",
+                params![current, id],
+            )?;
+        }
+    }
+
+    Ok(compacted_count)
+}
+
+/// Reset context compaction metadata for a fact.
+pub fn reset_compaction(conn: &Connection, fact_id: &str) -> anyhow::Result<()> {
+    conn.execute(
+        "UPDATE facts
+         SET context_compact = NULL,
+             compaction_level = 0,
+             last_compacted_at = NULL
+         WHERE id = ?1",
+        params![fact_id],
+    )?;
+    Ok(())
 }
 
 /// Link two facts.
@@ -411,6 +510,57 @@ mod tests {
         let pointers = all_pointers(&conn, "agent-main").unwrap();
         assert_eq!(pointers.len(), 1);
         assert_eq!(pointers[0].1, "ORDERS: soft-delete filter");
+        assert!(pointers[0].2.is_none());
+        assert_eq!(pointers[0].3, 0);
+    }
+
+    #[test]
+    fn compact_for_context_halves_until_floor() {
+        let conn = setup();
+        let id = add(&conn, &sample(), None).unwrap();
+
+        let mut previous = get(&conn, &id).unwrap().unwrap().content;
+        for _ in 0..6 {
+            compact_for_context(&conn, "agent-main").unwrap();
+            let fact = get(&conn, &id).unwrap().unwrap();
+            let compact = fact.context_compact.unwrap_or_default();
+            assert!(!compact.trim().is_empty());
+            assert!(compact.split_whitespace().count() <= previous.split_whitespace().count());
+            previous = compact;
+        }
+
+        let fact = get(&conn, &id).unwrap().unwrap();
+        let compact = fact.context_compact.unwrap_or_default();
+        let words = compact.split_whitespace().count();
+        assert!(words >= MIN_CONTEXT_COMPACT_WORDS);
+        assert!(words <= MIN_CONTEXT_COMPACT_WORDS + 1);
+        assert!(fact.compaction_level > 0);
+    }
+
+    #[test]
+    fn compact_for_context_skips_superseded_facts() {
+        let conn = setup();
+        let id = add(&conn, &sample(), None).unwrap();
+        delete(&conn, &id, Some("stale")).unwrap();
+        let compacted = compact_for_context(&conn, "agent-main").unwrap();
+        assert_eq!(compacted, 0);
+    }
+
+    #[test]
+    fn reset_compaction_clears_compaction_fields() {
+        let conn = setup();
+        let id = add(&conn, &sample(), None).unwrap();
+        compact_for_context(&conn, "agent-main").unwrap();
+
+        let before = get(&conn, &id).unwrap().unwrap();
+        assert!(before.compaction_level > 0);
+        assert!(before.context_compact.is_some());
+
+        reset_compaction(&conn, &id).unwrap();
+        let after = get(&conn, &id).unwrap().unwrap();
+        assert_eq!(after.compaction_level, 0);
+        assert!(after.context_compact.is_none());
+        assert!(after.last_compacted_at.is_none());
     }
 
     #[test]
