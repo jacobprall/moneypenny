@@ -91,6 +91,18 @@ Embeddings are generated locally by default. Optional Web UI: build `web-ui` and
 
 ---
 
+## OpenClaw Integration (Execution Plane + Intelligence Plane)
+
+Moneypenny can integrate with OpenClaw.
+
+__In short: Moneypenny becomes the layer that makes OpenClaw outputs compounding, explainable, and safely reusable across sessions and agents.__
+
+- **OpenClaw** is the execution/control plane (channels, nodes, browser automation, webhooks, device actions).
+- **Moneypenny** is the intelligence/data plane (durable memory, policy governance, audit analytics, cross-session retrieval, and sync).
+
+OpenClaw handles breadth of interfaces and action routing; Moneypenny turns logs and events into governed, queryable long-term intelligence.
+
+
 ## Built On
 
 Seven [SQLite AI](https://github.com/nicholasgasior/sqliteai) extensions, statically linked into one binary:
@@ -130,6 +142,7 @@ Other frameworks force tradeoffs. Moneypenny gets these from the foundation.
 | [SPEC.md](./SPEC.md) | Architecture, schemas, algorithms |
 | [PLAN.md](./PLAN.md) | Roadmap, milestones |
 | [TASKS.md](./TASKS.md) | Current status, active work |
+| [OPENCLAW_INTEGRATION.md](./docs/OPENCLAW_INTEGRATION.md) | V1 OpenClaw integration contract and event mapping |
 
 ---
 
