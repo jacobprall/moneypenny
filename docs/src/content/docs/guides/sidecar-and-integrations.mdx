@@ -1,0 +1,304 @@
+---
+title: Sidecar & Integrations
+description: MCP integration, sidecar interface, and HTTP ops for external runtimes
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+Moneypenny exposes its entire intelligence layer — memory, policy, search, audit,
+knowledge, and more — as a set of canonical operations. Every operation is
+available through **MCP (Model Context Protocol)**, the **sidecar CLI**, and the
+**HTTP ops endpoint**. MCP is the recommended integration path: any
+MCP-compatible client can use Moneypenny's capabilities through natural language
+without writing a single line of glue code.
+
+## MCP Integration
+
+Moneypenny implements the Model Context Protocol, so it appears as a native tool
+provider in any MCP-compatible client. Each canonical operation is registered as
+an MCP tool — when you ask your client to "search memory for rate limits" or
+"add a policy rule", the client calls the corresponding Moneypenny tool
+automatically.
+
+<Aside type="tip">
+  MCP is the fastest way to start using Moneypenny. No SDK, no HTTP server,
+  no piping JSON — just add the server config and start talking.
+</Aside>
+
+### Configuring Moneypenny as an MCP Server
+
+<Tabs>
+  <TabItem label="Claude Desktop">
+    Add the following to your Claude Desktop MCP configuration
+    (`claude_desktop_config.json`):
+
+    ```json
+    {
+      "mcpServers": {
+        "moneypenny": {
+          "command": "mp",
+          "args": ["sidecar"]
+        }
+      }
+    }
+    ```
+  </TabItem>
+  <TabItem label="Cursor">
+    Add the following to `.cursor/mcp.json` in your project root:
+
+    ```json
+    {
+      "mcpServers": {
+        "moneypenny": {
+          "command": "mp",
+          "args": ["sidecar"]
+        }
+      }
+    }
+    ```
+  </TabItem>
+</Tabs>
+
+Once configured, the client discovers Moneypenny's tools on startup. You can
+immediately ask questions like:
+
+- *"Search my memory for everything about rate limits"*
+- *"Add a policy rule that denies shell access for the research agent"*
+- *"Show me the audit log for the last deployment"*
+- *"Ingest this document into knowledge"*
+
+The client translates your natural language into the matching MCP tool call,
+Moneypenny executes the canonical operation, and the result flows back into the
+conversation.
+
+### How MCP Tools Map to Operations
+
+Every MCP tool corresponds 1:1 to a canonical operation. The MCP adapter
+translates tool names and arguments into the same `{"op": "...", "args": {...}}`
+envelope used by the sidecar and HTTP interfaces. This means behaviour is
+identical regardless of which interface you use — the same policy checks, audit
+logging, and response envelopes apply everywhere.
+
+| MCP Tool | Canonical Operation | Example Prompt |
+|---|---|---|
+| `memory_search` | `memory.search` | *"Search memory for deployment failures"* |
+| `memory_fact_add` | `memory.fact.add` | *"Remember that staging uses port 8080"* |
+| `policy_evaluate` | `policy.evaluate` | *"Can the research agent call shell_exec?"* |
+| `audit_query` | `audit.query` | *"Show audit entries from the last hour"* |
+| `knowledge_ingest` | `knowledge.ingest` | *"Ingest the API spec into knowledge"* |
+| `job_create` | `job.create` | *"Create a daily sync job at 9am"* |
+
+The full set of operations is listed in [Available Operations](#available-operations) below.
+
+## Sidecar Interface
+
+The sidecar reads canonical operation requests from stdin and writes results to
+stdout (JSONL). This makes it straightforward to integrate from any language or
+runtime that can spawn a subprocess.
+
+```bash
+echo '{"op":"memory.search","args":{"query":"rate limits","limit":5}}' | mp sidecar
+```
+
+### Specifying an Agent
+
+```bash
+echo '{"op":"memory.fact.add","args":{...}}' | mp sidecar --agent research
+```
+
+Without `--agent`, the sidecar uses the first configured agent.
+
+## Operation Envelope
+
+Every request follows the same structure regardless of interface:
+
+```json
+{
+  "op": "namespace.action",
+  "args": { ... }
+}
+```
+
+Every response follows a standard envelope:
+
+```json
+{
+  "ok": true,
+  "code": "success",
+  "message": "Operation completed",
+  "data": { ... },
+  "policy": { "effect": "allow", "policy_id": "..." },
+  "audit": { "recorded": true }
+}
+```
+
+## Available Operations
+
+### Memory
+
+| Operation | Purpose |
+|---|---|
+| `memory.search` | Hybrid search across all stores |
+| `memory.fact.add` | Store a new fact |
+| `memory.fact.update` | Update an existing fact |
+| `memory.fact.get` | Retrieve a fact by ID |
+| `memory.fact.compaction.reset` | Reset compaction state |
+| `fact.delete` | Soft-delete a fact |
+
+### Knowledge
+
+| Operation | Purpose |
+|---|---|
+| `knowledge.ingest` | Ingest a document |
+
+### Policy
+
+| Operation | Purpose |
+|---|---|
+| `policy.add` | Add a policy rule |
+| `policy.evaluate` | Evaluate an action against policies |
+| `policy.explain` | Explain why a decision was made |
+
+### Skills
+
+| Operation | Purpose |
+|---|---|
+| `skill.add` | Add a skill |
+| `skill.promote` | Promote a skill's visibility |
+
+### Jobs
+
+| Operation | Purpose |
+|---|---|
+| `job.create` | Create a scheduled job |
+| `job.list` | List all jobs |
+| `job.run` | Trigger a job immediately |
+| `job.pause` | Pause a job |
+| `job.history` | View run history |
+| `job.spec.plan` | Plan a job (agent-created flow) |
+| `job.spec.confirm` | Confirm a planned job |
+| `job.spec.apply` | Apply a confirmed job |
+
+### JS Tools
+
+| Operation | Purpose |
+|---|---|
+| `js.tool.add` | Register a JavaScript tool |
+| `js.tool.list` | List JS tools |
+| `js.tool.delete` | Remove a JS tool |
+
+### Sessions
+
+| Operation | Purpose |
+|---|---|
+| `session.resolve` | Resolve or create a session |
+| `session.list` | List recent sessions |
+
+### Agents
+
+| Operation | Purpose |
+|---|---|
+| `agent.create` | Create a new agent |
+| `agent.config` | Update agent configuration |
+| `agent.delete` | Delete an agent |
+
+### Audit
+
+| Operation | Purpose |
+|---|---|
+| `audit.query` | Search audit records |
+| `audit.append` | Write an audit entry |
+
+### Ingest (External Events)
+
+| Operation | Purpose |
+|---|---|
+| `ingest.events` | Ingest external runtime events |
+| `ingest.status` | Check ingest run status |
+| `ingest.replay` | Replay a prior ingest run |
+
+## HTTP Ops Endpoint
+
+The same operations are available over HTTP when the gateway is running:
+
+```bash
+curl -X POST http://localhost:4821/v1/ops \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-key" \
+  -d '{"op":"memory.search","args":{"query":"deployment","limit":10}}'
+```
+
+## Integration Patterns
+
+### Pre-Execution Query (Runtime → Moneypenny)
+
+Before your runtime executes a tool, query Moneypenny for policy clearance and
+relevant context.
+
+<Tabs>
+  <TabItem label="Natural Language (MCP)">
+    In any MCP client, ask directly:
+
+    > *"Is the main agent allowed to call shell_exec? Also, what do we know about the current deployment status?"*
+
+    Moneypenny resolves this into a `policy.evaluate` call followed by a
+    `memory.search` call and returns both results inline.
+  </TabItem>
+  <TabItem label="Sidecar">
+    ```bash
+    # Check if the action is allowed
+    echo '{"op":"policy.evaluate","args":{"actor":"main","action":"call","resource":"shell_exec"}}' | mp sidecar
+
+    # Retrieve relevant context
+    echo '{"op":"memory.search","args":{"query":"current deployment status"}}' | mp sidecar
+    ```
+  </TabItem>
+</Tabs>
+
+### Post-Execution Append (Runtime → Moneypenny)
+
+After your runtime completes work, record the outcome in Moneypenny's memory and
+audit trail.
+
+<Tabs>
+  <TabItem label="Natural Language (MCP)">
+    In any MCP client:
+
+    > *"Remember that deployment v2.3.1 completed successfully at 14:32 UTC. Also log an audit event for the deploy."*
+
+    Moneypenny executes `memory.fact.add` and `audit.append` behind the scenes.
+  </TabItem>
+  <TabItem label="Sidecar">
+    ```bash
+    # Add a fact from runtime observations
+    echo '{"op":"memory.fact.add","args":{
+      "content":"Deployment v2.3.1 completed successfully at 14:32 UTC",
+      "summary":"Deploy v2.3.1 success 14:32 UTC",
+      "pointer":"DEPLOY: v2.3.1-ok",
+      "confidence":1.0
+    }}' | mp sidecar
+
+    # Log an audit event
+    echo '{"op":"audit.append","args":{"action":"deploy","resource":"v2.3.1","message":"completed"}}' | mp sidecar
+    ```
+  </TabItem>
+</Tabs>
+
+### OpenClaw Integration
+
+Moneypenny integrates with OpenClaw as the intelligence/data plane:
+
+- **OpenClaw** handles execution (channels, nodes, browser automation, webhooks)
+- **Moneypenny** handles intelligence (memory, policy, audit, retrieval, sync)
+
+Ingest OpenClaw event logs for replay and forensics:
+
+```bash
+mp ingest --openclaw-file run-log.jsonl
+```
+
+<Aside type="note">
+  Regardless of interface — MCP, sidecar, or HTTP — every operation passes
+  through the same policy engine and audit pipeline. Switching between
+  interfaces never changes the security or observability guarantees.
+</Aside>

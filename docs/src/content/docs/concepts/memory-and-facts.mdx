@@ -3,8 +3,15 @@ title: Memory & Facts
 description: Structured, compressible, self-curating long-term memory
 ---
 
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
 Moneypenny's memory system gives agents durable, structured knowledge that
 persists across sessions and compresses intelligently to fit context windows.
+
+Because Moneypenny exposes its full surface area via MCP (Model Context
+Protocol), you can manage facts through the CLI, through natural language in
+any MCP-compatible client (Claude Desktop, Cursor, etc.), or programmatically
+via the sidecar interface.
 
 ## What Is a Fact?
 
@@ -49,9 +56,23 @@ Token budget: 128K
 Facts are added automatically by the extraction pipeline after each
 conversation turn, or manually:
 
-<CodeGroup>
-
-```bash CLI (sidecar)
+<Tabs>
+  <TabItem label="CLI">
+```bash
+mp facts add \
+  --content "API rate limit is 1000 req/min per tenant." \
+  --summary "API rate limit: 1000 req/min/tenant" \
+  --pointer "API: rate-limit" \
+  --confidence 0.95 \
+  --keywords "api rate limit tenant"
+```
+  </TabItem>
+  <TabItem label="Natural Language">
+Ask your MCP-connected agent:
+> Remember that our API rate limit is 1000 req/min per tenant.
+  </TabItem>
+  <TabItem label="Sidecar">
+```bash
 echo '{"op":"memory.fact.add","args":{
   "content":"API rate limit is 1000 req/min per tenant.",
   "summary":"API rate limit: 1000 req/min/tenant",
@@ -60,13 +81,8 @@ echo '{"op":"memory.fact.add","args":{
   "keywords":"api rate limit tenant"
 }}' | mp sidecar
 ```
-
-```bash Agent tool call
-# The agent calls fact_add during conversation:
-[TOOL:fact_add]({"content":"...","summary":"...","pointer":"..."})
-```
-
-</CodeGroup>
+  </TabItem>
+</Tabs>
 
 ## Automatic Extraction
 
@@ -82,20 +98,50 @@ a larger API model. Memory management stays fast and local.
 
 ## Listing and Inspecting
 
+<Tabs>
+  <TabItem label="CLI">
 ```bash
 mp facts list
 mp facts inspect <fact-id>
+```
+  </TabItem>
+  <TabItem label="Natural Language">
+Ask your MCP-connected agent:
+> Show me all my facts.
+
+> Inspect fact &lt;id&gt;.
+  </TabItem>
+</Tabs>
+
+`inspect` shows the full record with audit history.
+
+Expand a compacted pointer back to its full content:
+
+<Tabs>
+  <TabItem label="CLI">
+```bash
 mp facts expand <fact-id>
 ```
-
-`inspect` shows the full record with audit history. `expand` retrieves the
-full content from a compacted pointer.
+  </TabItem>
+  <TabItem label="Natural Language">
+Ask your MCP-connected agent:
+> Expand fact &lt;id&gt; to full detail.
+  </TabItem>
+</Tabs>
 
 ## Searching Facts
 
+<Tabs>
+  <TabItem label="CLI">
 ```bash
 mp facts search "deployment pipeline"
 ```
+  </TabItem>
+  <TabItem label="Natural Language">
+Ask your MCP-connected agent:
+> What do you know about the deployment pipeline?
+  </TabItem>
+</Tabs>
 
 This uses the unified search system — FTS5 full-text matching plus vector
 KNN when embeddings exist, fused via Reciprocal Rank Fusion.
@@ -108,9 +154,17 @@ superseded but retained for audit.
 
 ## Deleting Facts
 
+<Tabs>
+  <TabItem label="CLI">
 ```bash
 mp facts delete <fact-id> --confirm
 ```
+  </TabItem>
+  <TabItem label="Natural Language">
+Ask your MCP-connected agent:
+> Delete fact &lt;id&gt;.
+  </TabItem>
+</Tabs>
 
 Deletion is a soft operation — the fact is marked superseded but remains in
 the database for audit purposes.
@@ -119,10 +173,20 @@ the database for audit purposes.
 
 Reset compaction to restore full text in context:
 
+<Tabs>
+  <TabItem label="CLI">
 ```bash
 mp facts reset-compaction <fact-id>
 mp facts reset-compaction --all --confirm
 ```
+  </TabItem>
+  <TabItem label="Natural Language">
+Ask your MCP-connected agent:
+> Reset compaction for fact &lt;id&gt;.
+
+> Reset compaction for all facts.
+  </TabItem>
+</Tabs>
 
 ## Scoped Facts
 
@@ -134,9 +198,17 @@ Facts have a visibility scope:
 
 Promote a fact to shared scope:
 
+<Tabs>
+  <TabItem label="CLI">
 ```bash
 mp facts promote <fact-id> --scope shared
 ```
+  </TabItem>
+  <TabItem label="Natural Language">
+Ask your MCP-connected agent:
+> Promote fact &lt;id&gt; to shared scope.
+  </TabItem>
+</Tabs>
 
 Scope is enforced at the SQL level — agents cannot query outside their
 authorization boundary.

@@ -3,24 +3,46 @@ title: Knowledge Base
 description: Ingest, chunk, and search documents
 ---
 
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
 The knowledge base stores ingested documents — markdown files, text files,
 web pages — chunked and indexed for retrieval. Unlike facts (which are
 structured, extracted knowledge), knowledge is raw reference material.
 
+Because Moneypenny exposes its full API via **MCP (Model Context Protocol)**,
+you can manage your knowledge base through natural language in any
+MCP-compatible client (Claude Desktop, Cursor, etc.) — or through the CLI.
+
 ## Ingesting Documents
 
-From a local file:
+### From a Local File
 
-```bash
-mp ingest path/to/document.md
-mp ingest path/to/directory/
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp ingest path/to/document.md
+    mp ingest path/to/directory/
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Ingest the file at docs/architecture.md into the knowledge base
+  </TabItem>
+</Tabs>
 
-From a URL:
+### From a URL
 
-```bash
-mp ingest --url "https://example.com/docs/architecture"
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp ingest --url "https://example.com/docs/architecture"
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Ingest the page at https://example.com/docs into my knowledge base
+  </TabItem>
+</Tabs>
 
 ## What Happens During Ingestion
 
@@ -33,18 +55,34 @@ If embeddings are configured, chunks are also vectorized for KNN search.
 
 ## Listing Documents
 
-```bash
-mp knowledge list
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp knowledge list
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > What documents are in my knowledge base?
+  </TabItem>
+</Tabs>
 
 Shows each document with its title, source, and chunk count.
 
 ## Searching Knowledge
 
-```bash
-mp knowledge search "deployment pipeline"
-mp knowledge search "security policy"
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp knowledge search "deployment pipeline"
+    mp knowledge search "security policy"
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Search my knowledge base for security policy
+  </TabItem>
+</Tabs>
 
 Knowledge search uses FTS5 full-text matching. When combined with the unified
 search system (`mp facts search`), results from knowledge, facts, messages,

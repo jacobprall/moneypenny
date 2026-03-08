@@ -41,49 +41,134 @@ This creates:
 mp health
 ```
 
-## 4. Add Some Knowledge
+## 4. Connect via MCP
+
+Moneypenny exposes its full surface area as an MCP server. Add it to your
+MCP-compatible client so you can interact through natural language instead of
+(or alongside) the CLI.
+
+**Claude Desktop** — add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "moneypenny": {
+      "command": "mp",
+      "args": ["sidecar"]
+    }
+  }
+}
+```
+
+**Cursor** — add to `.cursor/mcp.json` in your project root:
+
+```json
+{
+  "mcpServers": {
+    "moneypenny": {
+      "command": "mp",
+      "args": ["sidecar"]
+    }
+  }
+}
+```
+
+Once connected, every operation below can be performed by asking your agent in
+plain English. The following steps show both ways.
+
+## 5. Add Some Knowledge
 
 Ingest a document:
 
-```bash
-mp ingest path/to/document.md
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp ingest path/to/document.md
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Ingest the file at path/to/document.md
+  </TabItem>
+</Tabs>
 
 Or from a URL:
 
-```bash
-mp ingest --url "https://example.com/docs"
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp ingest --url "https://example.com/docs"
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Ingest the docs page at https://example.com/docs
+  </TabItem>
+</Tabs>
 
-## 5. Add Facts
+## 6. Add Facts
 
 Store structured knowledge:
 
-```bash
-echo '{"op":"memory.fact.add","args":{"content":"Our API rate limit is 1000 req/min per tenant.","summary":"API rate limit: 1000 req/min/tenant","pointer":"API: rate-limit","confidence":0.95,"keywords":"api rate limit tenant"}}' \
-  | mp sidecar
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    echo '{"op":"memory.fact.add","args":{"content":"Our API rate limit is 1000 req/min per tenant.","summary":"API rate limit: 1000 req/min/tenant","pointer":"API: rate-limit","confidence":0.95,"keywords":"api rate limit tenant"}}' \
+      | mp sidecar
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Remember that our API rate limit is 1000 requests per minute per tenant.
+  </TabItem>
+</Tabs>
 
 List what was stored:
 
-```bash
-mp facts list
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp facts list
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > List all the facts you know.
+  </TabItem>
+</Tabs>
 
-## 6. Search
+## 7. Search
 
-```bash
-mp facts search "rate limit"
-mp knowledge search "deployment"
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp facts search "rate limit"
+    mp knowledge search "deployment"
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > What do you know about rate limits?
 
-## 7. Chat (Requires LLM)
+    > Search the knowledge base for anything about deployment.
+  </TabItem>
+</Tabs>
+
+## 8. Chat (Requires LLM)
 
 For interactive conversation with your agent:
 
-```bash
-mp chat
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp chat
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    If you're already in an MCP-connected client, you're chatting! Just talk:
+    > What do you know about our deployment pipeline?
+  </TabItem>
+</Tabs>
 
 <Aside type="note">
   Chat and send commands require an LLM provider. The default config uses
@@ -94,17 +179,33 @@ mp chat
 
 For a one-shot message:
 
-```bash
-mp send main "What do you know about our deployment pipeline?"
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp send main "What do you know about our deployment pipeline?"
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Ask the main agent what it knows about our deployment pipeline.
+  </TabItem>
+</Tabs>
 
-## 8. Start the Gateway
+## 9. Start the Gateway
 
 For multi-agent, multi-channel operation:
 
-```bash
-mp start
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp start
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Start the Moneypenny gateway.
+  </TabItem>
+</Tabs>
 
 This spawns worker processes for each agent, starts the scheduler, and binds
 configured channel adapters (HTTP, Slack, Discord, Telegram).

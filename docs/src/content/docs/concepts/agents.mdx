@@ -3,9 +3,16 @@ title: Agents
 description: The fundamental unit of intelligence in Moneypenny
 ---
 
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
 An agent in Moneypenny is a self-contained unit of intelligence backed by a
 single SQLite file. That file contains the agent's memory, policies, skills,
 knowledge, audit trail, sessions, and tool definitions.
+
+Because Moneypenny exposes its entire surface area via MCP (Model Context
+Protocol), every operation that works from the CLI also works as a natural
+language request through any MCP-compatible client — Claude Desktop, Cursor,
+or anything else that speaks the protocol.
 
 ## Agent Anatomy
 
@@ -26,16 +33,32 @@ Every agent has:
 
 Initialization creates a default agent named `main`:
 
+<Tabs>
+  <TabItem label="CLI">
 ```bash
 mp init
 ```
+  </TabItem>
+  <TabItem label="Natural Language">
+Ask your MCP-connected agent:
+> Initialize a new Moneypenny project.
+  </TabItem>
+</Tabs>
 
 Create additional agents:
 
+<Tabs>
+  <TabItem label="CLI">
 ```bash
 mp agent create research
 mp agent create ops-bot
 ```
+  </TabItem>
+  <TabItem label="Natural Language">
+Ask your MCP-connected agent:
+> Create a new agent called research.
+  </TabItem>
+</Tabs>
 
 Agent creation goes through the canonical operation pipeline — policy-checked,
 hooked, and audited like any other mutation.
@@ -51,7 +74,7 @@ trust_level = "standard"
 persona = "You are a helpful engineering assistant."
 
 [agents.llm]
-provider = "local"           # or "http" for API providers
+provider = "anthropic"       # or "local" for GGUF, "http" for other APIs
 # api_base = "https://api.openai.com"
 # api_key = "sk-..."
 # model = "gpt-4o"
@@ -64,9 +87,17 @@ dimensions = 768
 
 Update config at runtime:
 
+<Tabs>
+  <TabItem label="CLI">
 ```bash
 mp agent config main persona "You are a senior SRE."
 ```
+  </TabItem>
+  <TabItem label="Natural Language">
+Ask your MCP-connected agent:
+> Update the main agent's persona to "You are a senior SRE."
+  </TabItem>
+</Tabs>
 
 ## Trust Levels
 
@@ -80,20 +111,40 @@ Trust levels are labels — their meaning is defined by the policies you write.
 
 ## Listing and Inspecting
 
+<Tabs>
+  <TabItem label="CLI">
 ```bash
 mp agent list
 mp agent status
 mp agent status research
 ```
+  </TabItem>
+  <TabItem label="Natural Language">
+Ask your MCP-connected agent:
+> List all agents.
+
+> Show me agent status.
+
+> Show me the status of the research agent.
+  </TabItem>
+</Tabs>
 
 Status shows memory stats: fact count, session count, document count, and
 skill count.
 
 ## Deleting Agents
 
+<Tabs>
+  <TabItem label="CLI">
 ```bash
 mp agent delete research --confirm
 ```
+  </TabItem>
+  <TabItem label="Natural Language">
+Ask your MCP-connected agent:
+> Delete the research agent.
+  </TabItem>
+</Tabs>
 
 This removes the agent from the registry and deletes its database file.
 

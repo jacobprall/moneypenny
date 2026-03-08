@@ -1,0 +1,232 @@
+---
+title: Multi-Agent
+description: Run multiple agents with delegation and shared knowledge
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Moneypenny supports running multiple agents as independent workers under a
+shared gateway. Agents can delegate tasks to each other, share knowledge
+through CRDT sync, and maintain independent conversation histories.
+
+Because Moneypenny exposes its entire surface area via **MCP (Model Context
+Protocol)**, every operation below can be performed either through the CLI or
+by asking any MCP-compatible client (Claude Desktop, Cursor, etc.) in natural
+language.
+
+## Creating Multiple Agents
+
+Start by initializing and creating agents:
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp init
+    mp agent create research
+    mp agent create ops-bot
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Create a new agent called research
+
+    Then:
+    > Create a new agent called ops-bot
+  </TabItem>
+</Tabs>
+
+Configure each agent in `moneypenny.toml`:
+
+```toml
+[[agents]]
+name = "main"
+trust_level = "standard"
+persona = "You are a helpful engineering assistant."
+
+[[agents]]
+name = "research"
+trust_level = "standard"
+persona = "You are a research analyst. You focus on deep investigation."
+
+[[agents]]
+name = "ops-bot"
+trust_level = "elevated"
+persona = "You are an SRE bot. You monitor systems and triage incidents."
+```
+
+## Running the Gateway
+
+When you start the gateway, each agent runs as a separate worker process:
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp start
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Start the Moneypenny gateway
+  </TabItem>
+</Tabs>
+
+```
+Gateway
+  ├── Worker: main      (mp-data/main.db)
+  ├── Worker: research  (mp-data/research.db)
+  └── Worker: ops-bot   (mp-data/ops-bot.db)
+```
+
+The gateway routes messages to the correct worker. Channel adapters (HTTP,
+Slack, Discord, Telegram) specify which agent receives messages by default.
+
+## Delegation
+
+Agents can delegate tasks to other agents. Delegation is a governed channel —
+policy controls who can delegate, to whom, and with what depth limits.
+
+Delegation depth is capped at 3 levels by default to prevent infinite
+recursion. Each level runs its own full agent loop (context assembly, policy,
+LLM call, tool execution, extraction).
+
+### Governing Delegation
+
+```bash
+# Allow main to delegate to research
+mp policy add \
+  --name "main-can-delegate-research" \
+  --effect allow \
+  --actor "main" \
+  --action "delegate" \
+  --resource "research"
+
+# Block ops-bot from delegating to anyone
+mp policy add \
+  --name "ops-no-delegate" \
+  --effect deny \
+  --actor "ops-bot" \
+  --action "delegate" \
+  --resource "*"
+```
+
+## Knowledge Sharing via Sync
+
+By default, each agent's facts are private. To share knowledge across agents:
+
+**1. Promote facts to shared scope:**
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp facts promote <fact-id> --scope shared
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Promote fact &lt;id&gt; to shared scope
+  </TabItem>
+</Tabs>
+
+**2. Configure sync peers:**
+
+```toml
+[sync]
+tables = ["facts", "fact_links", "skills", "policies"]
+peers = ["research", "ops-bot"]
+interval_secs = 300
+```
+
+**3. Trigger sync:**
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp sync now
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Sync with all peers now
+  </TabItem>
+</Tabs>
+
+After sync, shared facts are visible to all agents. Protected facts require
+elevated trust. Private facts remain invisible.
+
+## What Syncs and What Doesn't
+
+| Data | Syncs | Reason |
+|---|---|---|
+| Facts | Yes | Shared knowledge is the primary use case |
+| Fact links | Yes | Graph relationships travel with facts |
+| Skills | Yes | Procedures propagate fleet-wide |
+| Policies | Yes | Governance rules are fleet-wide |
+| Jobs | Yes | Scheduled tasks propagate |
+| Conversations | No | Chat history is agent-specific |
+| Scratch | No | Session working memory is ephemeral |
+
+## Targeting Agents from Channels
+
+### HTTP API
+
+Specify the target agent in the request body:
+
+```bash
+curl -X POST http://localhost:4821/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{"agent":"research","message":"What are the latest findings?"}'
+```
+
+### CLI
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp send research "Investigate the Q4 performance regression"
+    mp chat research
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Send the research agent: Investigate the Q4 performance regression
+  </TabItem>
+</Tabs>
+
+### Slack / Discord / Telegram
+
+Each channel adapter has a default agent. Configure per-channel routing in
+`moneypenny.toml`:
+
+```toml
+[channels.slack]
+bot_token = "xoxb-..."
+agent = "ops-bot"
+
+[channels.discord]
+application_id = "..."
+public_key = "..."
+bot_token = "..."
+agent = "main"
+```
+
+## Inspecting Agents
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp agent list           # list all registered agents
+    mp agent status         # summary for all agents
+    mp agent status research  # detailed status for one agent
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Show me agent status for all agents
+
+    Or for a specific agent:
+    > Show me the status of the research agent
+  </TabItem>
+</Tabs>
+
+Status includes: fact count, session count, document count, skill count,
+and sync status.

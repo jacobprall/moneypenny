@@ -1,0 +1,126 @@
+---
+title: Scheduled Jobs
+description: Cron-scheduled tasks with policy governance
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Jobs let agents run tasks on a schedule — prompts, tool calls, JavaScript
+functions, or multi-step pipelines. Jobs are policy-gated, audited, and
+can be created by the agent itself.
+
+Moneypenny exposes job management through MCP, so you can create and manage
+jobs with natural language in any MCP-compatible client (Claude Desktop,
+Cursor, etc.) or through the CLI.
+
+## Creating a Job
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp job create \
+      --name "daily-metrics" \
+      --schedule "0 9 * * *" \
+      --job-type prompt \
+      --payload '{"prompt":"Check performance metrics and flag regressions."}'
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Schedule a job called daily-metrics to check performance metrics every day at 9am
+  </TabItem>
+</Tabs>
+
+## Job Types
+
+| Type | Payload | Execution |
+|---|---|---|
+| `prompt` | `{"prompt":"..."}` | Sent to the LLM as a user message |
+| `tool` | `{"tool":"...","args":{}}` | Calls a specific tool directly |
+| `js` | `{"source":"function run() {...}"}` | Executes JavaScript in QuickJS |
+| `pipeline` | `{"steps":[...]}` | Runs a sequence of steps |
+
+## Schedules
+
+Schedules use cron syntax:
+
+| Pattern | Meaning |
+|---|---|
+| `0 9 * * *` | Every day at 9:00 AM |
+| `*/30 * * * *` | Every 30 minutes |
+| `0 9 * * 1-5` | Weekdays at 9:00 AM |
+| `0 0 1 * *` | First of every month |
+
+## Managing Jobs
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp job list                  # list all jobs
+    mp job run <job-id>          # trigger immediately
+    mp job pause <job-id>        # pause scheduling
+    mp job history               # view all run history
+    mp job history <job-id>      # history for one job
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Show me all scheduled jobs
+
+    > Trigger the daily-metrics job now
+
+    > Pause job &lt;id&gt;
+
+    > Show me job history
+  </TabItem>
+</Tabs>
+
+## Overlap Policies
+
+When a job fires while its previous run is still active:
+
+| Policy | Behavior |
+|---|---|
+| `skip` | Skip the new run |
+| `queue` | Queue it for later |
+| `allow` | Run both concurrently |
+
+## Agent-Created Jobs
+
+Agents can create jobs during conversation through a structured flow:
+
+1. **Plan** — agent proposes a job specification
+2. **Confirm** — user reviews and approves
+3. **Apply** — job is created through the canonical operation pipeline
+
+This ensures agent-created jobs go through the same policy checks, hooks,
+and audit as operator-created jobs.
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    # Plan phase
+    echo '{"op":"job.spec.plan","args":{"description":"Check metrics daily"}}' | mp sidecar
+
+    # After review
+    echo '{"op":"job.spec.confirm","args":{"spec_id":"..."}}' | mp sidecar
+
+    # Apply
+    echo '{"op":"job.spec.apply","args":{"spec_id":"..."}}' | mp sidecar
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Set up a daily check for metrics
+
+    The agent handles the plan/confirm/apply flow conversationally — it
+    proposes a job spec, asks you to review it, and applies it once you
+    confirm.
+  </TabItem>
+</Tabs>
+
+## Scheduler
+
+When `mp start` runs the gateway, a scheduler loop polls for due jobs and
+dispatches them. Each job run is recorded with status, output, duration, and
+any errors. Failed jobs are retried according to their retry configuration.

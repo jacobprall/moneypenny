@@ -3,9 +3,15 @@ title: Sync
 description: CRDT-based multi-agent knowledge sharing
 ---
 
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
 Moneypenny uses CRDTs (Conflict-free Replicated Data Types) at the SQLite
 level to sync data between agents. No central server required — agents merge
 state directly from each other's database files.
+
+Moneypenny exposes sync operations through MCP, so you can check status,
+push, pull, and connect to cloud sync with natural language in any
+MCP-compatible client (Claude Desktop, Cursor, etc.) or through the CLI.
 
 ## What Syncs
 
@@ -31,9 +37,17 @@ you sync, CRDT metadata is used to merge changes without conflicts:
 
 ## Checking Status
 
-```bash
-mp sync status
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp sync status
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Show me the sync status
+  </TabItem>
+</Tabs>
 
 Shows the site ID, database version, and per-table sync status.
 
@@ -41,23 +55,47 @@ Shows the site ID, database version, and per-table sync status.
 
 Bidirectional sync with all configured peers:
 
-```bash
-mp sync now
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp sync now
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Sync with all peers now
+  </TabItem>
+</Tabs>
 
 One-way push (this agent → peer):
 
-```bash
-mp sync push --to research
-mp sync push --to /path/to/other.db
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp sync push --to research
+    mp sync push --to /path/to/other.db
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Push my changes to the research agent
+  </TabItem>
+</Tabs>
 
 One-way pull (peer → this agent):
 
-```bash
-mp sync pull --from research
-mp sync pull --from /path/to/other.db
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp sync pull --from research
+    mp sync pull --from /path/to/other.db
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Pull changes from research
+  </TabItem>
+</Tabs>
 
 ## Configuration
 
@@ -67,6 +105,7 @@ Configure peers and cloud sync in `moneypenny.toml`:
 [sync]
 tables = ["facts", "fact_links", "skills", "policies"]
 peers = ["research", "ops-bot"]
+interval_secs = 300   # auto-sync every 5 minutes; 0 = manual only
 # cloud_url = "sqlite-cloud-url?apikey=..."
 ```
 
@@ -74,10 +113,18 @@ peers = ["research", "ops-bot"]
 
 For remote sync without direct file access:
 
-```bash
-mp sync connect "your-cloud-sync-url?apikey=..."
-mp sync now
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp sync connect "your-cloud-sync-url?apikey=..."
+    mp sync now
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Connect to cloud sync at your-cloud-sync-url?apikey=...
+  </TabItem>
+</Tabs>
 
 Cloud sync uses the same CRDT merge — the cloud backend is a relay, not an
 authority.

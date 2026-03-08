@@ -3,9 +3,15 @@ title: Skills & Tools
 description: Built-in, MCP, and agent-created tools
 ---
 
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
 Tools are the actions an agent can take. Moneypenny supports multiple tool
 sources and makes them all available through a single registry with unified
 policy, audit, and discovery.
+
+Because Moneypenny exposes its full API through MCP, you can manage tools and
+skills conversationally from any MCP-compatible client (Claude Desktop, Cursor,
+etc.) or through the CLI.
 
 ## Tool Sources
 
@@ -67,14 +73,22 @@ Discovered tools appear in the agent's tool list alongside built-in tools.
 
 Agents can create their own tools at runtime using JavaScript:
 
-```bash
-echo '{"op":"js.tool.add","args":{
-  "name":"celsius_to_fahrenheit",
-  "description":"Convert Celsius to Fahrenheit",
-  "source":"function run(args) { return String(args.celsius * 9/5 + 32) + \" °F\"; }",
-  "parameters_schema":"{\"celsius\":\"number\"}"
-}}' | mp sidecar
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    echo '{"op":"js.tool.add","args":{
+      "name":"celsius_to_fahrenheit",
+      "description":"Convert Celsius to Fahrenheit",
+      "source":"function run(args) { return String(args.celsius * 9/5 + 32) + \" °F\"; }",
+      "parameters_schema":"{\"celsius\":\"number\"}"
+    }}' | mp sidecar
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Create a tool called celsius_to_fahrenheit that converts Celsius to Fahrenheit
+  </TabItem>
+</Tabs>
 
 JS tools:
 - Execute in a QuickJS sandbox (not Node.js)
@@ -83,29 +97,55 @@ JS tools:
 - Survive restarts
 - Sync across agents via CRDT
 
-Manage JS tools:
+### Managing JS Tools
 
-```bash
-echo '{"op":"js.tool.list","args":{}}' | mp sidecar
-echo '{"op":"js.tool.delete","args":{"name":"celsius_to_fahrenheit"}}' | mp sidecar
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    echo '{"op":"js.tool.list","args":{}}' | mp sidecar
+    echo '{"op":"js.tool.delete","args":{"name":"celsius_to_fahrenheit"}}' | mp sidecar
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > List my custom tools
+
+    > Delete the celsius_to_fahrenheit tool
+  </TabItem>
+</Tabs>
 
 ## Skills
 
 Skills are reusable procedures stored in the agent's database. They surface
 in retrieval when the agent encounters a relevant query:
 
-```bash
-echo '{"op":"skill.add","args":{
-  "name":"incident-triage",
-  "description":"Triage production incidents",
-  "content":"1) Check dashboards. 2) Escalate: on-call → lead → VP. ..."
-}}' | mp sidecar
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    echo '{"op":"skill.add","args":{
+      "name":"incident-triage",
+      "description":"Triage production incidents",
+      "content":"1) Check dashboards. 2) Escalate: on-call → lead → VP. ..."
+    }}' | mp sidecar
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Add a skill for incident triage: 1) Check dashboards, 2) Escalate: on-call → lead → VP
+  </TabItem>
+</Tabs>
 
-```bash
-mp skill list
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp skill list
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Show me all skills
+  </TabItem>
+</Tabs>
 
 Skills track usage and success. High-performing skills surface more
 prominently in context assembly.
@@ -114,13 +154,25 @@ prominently in context assembly.
 
 Every tool call is subject to policy. Common patterns:
 
-```bash
-# Block shell access entirely
-mp policy add --name "no-shell" --effect deny --action "call" --resource "shell_exec"
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    # Block shell access entirely
+    mp policy add --name "no-shell" --effect deny --action "call" --resource "shell_exec"
 
-# Audit all web searches
-mp policy add --name "audit-web" --effect audit --action "call" --resource "web_search"
+    # Audit all web searches
+    mp policy add --name "audit-web" --effect audit --action "call" --resource "web_search"
 
-# Allow only read-only tools for low-trust agents
-mp policy add --name "read-only" --effect deny --actor "intern-bot" --action "call" --resource "file_write"
-```
+    # Allow only read-only tools for low-trust agents
+    mp policy add --name "read-only" --effect deny --actor "intern-bot" --action "call" --resource "file_write"
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Block shell access
+
+    > Audit all web searches
+
+    > Deny file_write for intern-bot
+  </TabItem>
+</Tabs>

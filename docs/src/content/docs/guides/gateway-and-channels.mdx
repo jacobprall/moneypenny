@@ -1,0 +1,215 @@
+---
+title: Gateway & Channels
+description: HTTP API, Slack, Discord, and Telegram channel adapters
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+The gateway is Moneypenny's multi-channel server. It spawns worker processes
+for each agent, starts the scheduler, and binds channel adapters for HTTP,
+Slack, Discord, and Telegram.
+
+<Aside type="tip">
+  All channel interactions — HTTP, Slack, Discord, Telegram — ultimately expose
+  the same set of **MCP tools**. This means anything you can do through a
+  channel adapter, you can also do by talking to Moneypenny in natural language
+  from any MCP-compatible client (Claude Desktop, Cursor, etc.).
+</Aside>
+
+## Starting the Gateway
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp start
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Start the Moneypenny gateway
+  </TabItem>
+</Tabs>
+
+The gateway binds to the configured host and port (default `127.0.0.1:4820`).
+All channel adapters share a single HTTP server.
+
+## HTTP API
+
+The HTTP adapter exposes REST, SSE, and WebSocket endpoints.
+
+### Configuration
+
+```toml
+[channels.http]
+port = 4821
+api_key = "your-secret-key"   # optional; omit for no auth
+```
+
+### REST: `POST /v1/chat`
+
+Send a message and get a response:
+
+```bash
+curl -X POST http://localhost:4821/v1/chat \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-secret-key" \
+  -d '{"message":"What do you know about deployments?","agent":"main"}'
+```
+
+Response:
+
+```json
+{
+  "response": "Based on what I know...",
+  "session_id": "sess_abc123"
+}
+```
+
+Pass `session_id` to continue a conversation:
+
+```bash
+curl -X POST http://localhost:4821/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Tell me more","session_id":"sess_abc123"}'
+```
+
+### REST: `POST /v1/ops`
+
+Execute canonical operations over HTTP:
+
+```bash
+curl -X POST http://localhost:4821/v1/ops \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-secret-key" \
+  -d '{"op":"memory.search","args":{"query":"deployment","limit":5}}'
+```
+
+### SSE: `GET /v1/chat/stream`
+
+Server-Sent Events for streaming responses:
+
+```bash
+curl "http://localhost:4821/v1/chat/stream?message=Hello&agent=main"
+```
+
+### WebSocket: `GET /v1/ws`
+
+Full-duplex communication:
+
+```json
+// Send
+{"message": "Hello", "agent": "main", "session_id": "optional"}
+
+// Receive
+{"response": "...", "session_id": "sess_abc123"}
+```
+
+### Health Check: `GET /health`
+
+```bash
+curl http://localhost:4821/health
+```
+
+```json
+{"status": "ok", "version": "0.1.0"}
+```
+
+## Slack
+
+The Slack adapter uses the Events API. Moneypenny responds to `app_mention`
+and `message` events, threading replies automatically.
+
+### Configuration
+
+```toml
+[channels.slack]
+bot_token = "xoxb-your-bot-token"
+signing_secret = "your-signing-secret"   # optional but recommended
+agent = "main"                           # default agent for Slack messages
+```
+
+### Setup
+
+1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps)
+2. Enable **Event Subscriptions** and point the request URL to `https://your-host/slack/events`
+3. Subscribe to `app_mention` and `message.im` events
+4. Install the app to your workspace
+5. Copy the bot token and signing secret into `moneypenny.toml`
+
+<Aside type="note">
+  Slack sends a `url_verification` challenge on first connect. Moneypenny
+  handles this automatically — just make sure the endpoint is publicly
+  reachable when you set the request URL.
+</Aside>
+
+## Discord
+
+The Discord adapter handles slash command interactions with Ed25519 signature
+verification.
+
+### Configuration
+
+```toml
+[channels.discord]
+application_id = "your-app-id"
+public_key = "your-ed25519-public-key"
+bot_token = "your-bot-token"
+agent = "main"
+```
+
+### Setup
+
+1. Create an application at [discord.com/developers](https://discord.com/developers/applications)
+2. Set the **Interactions Endpoint URL** to `https://your-host/discord/interactions`
+3. Create a slash command (e.g. `/ask` with a `message` string option)
+4. Copy the application ID, public key, and bot token into config
+
+Discord interactions use deferred responses — the agent processes the request
+asynchronously and sends a follow-up message.
+
+## Telegram
+
+The Telegram adapter uses long-polling (no webhook setup required).
+
+### Configuration
+
+```toml
+[channels.telegram]
+bot_token = "your-bot-token-from-botfather"
+agent = "main"
+```
+
+### Setup
+
+1. Talk to [@BotFather](https://t.me/BotFather) on Telegram
+2. Create a new bot and copy the token
+3. Add the token to `moneypenny.toml`
+
+The adapter starts polling automatically when the gateway launches. Each
+Telegram chat maintains its own session.
+
+## Gateway Configuration
+
+```toml
+[gateway]
+host = "127.0.0.1"
+port = 4820
+log_level = "info"    # trace, debug, info, warn, error
+```
+
+## Graceful Shutdown
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp stop
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Stop the Moneypenny gateway
+  </TabItem>
+</Tabs>
+
+The gateway signals all workers and channel adapters to shut down gracefully,
+completing in-flight requests before exiting.

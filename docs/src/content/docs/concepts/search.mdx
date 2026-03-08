@@ -3,9 +3,15 @@ title: Search
 description: Hybrid retrieval across all memory stores
 ---
 
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
 Moneypenny provides a unified search system that queries across all data
 stores in a single call — facts, messages, tool calls, knowledge chunks, and
 policy audit records.
+
+Because Moneypenny exposes its full API via **MCP (Model Context Protocol)**,
+you can search through natural language in any MCP-compatible client
+(Claude Desktop, Cursor, etc.) — or through the CLI and canonical operations.
 
 ## Hybrid Search
 
@@ -19,24 +25,34 @@ which merges ranked lists without needing score normalization.
 
 ## Using Search
 
-From the CLI:
+### From the CLI
 
-```bash
-mp facts search "deployment pipeline"
-mp knowledge search "security policy"
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp facts search "deployment pipeline"
+    mp knowledge search "security policy"
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > What do you know about the API rate limits?
+  </TabItem>
+</Tabs>
 
-From the agent (tool call during conversation):
+### Via Canonical Operations
 
-```
-[TOOL:memory_search]({"query":"What do we know about the API rate limits?"})
-```
-
-Via canonical operations:
-
-```bash
-echo '{"op":"memory.search","args":{"query":"deployment","limit":10}}' | mp sidecar
-```
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    echo '{"op":"memory.search","args":{"query":"deployment","limit":10}}' | mp sidecar
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Search across all memory stores for deployment info, limit to 10 results
+  </TabItem>
+</Tabs>
 
 ## Store-Weighted Scoring
 

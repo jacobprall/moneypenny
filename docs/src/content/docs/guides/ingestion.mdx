@@ -1,0 +1,164 @@
+---
+title: Ingestion
+description: Import documents, URLs, and external event histories
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+Moneypenny supports ingesting documents from local files, URLs, and external
+runtime event logs (e.g. OpenClaw JSONL). Ingested content feeds the knowledge
+base and enriches agent context.
+
+Because Moneypenny exposes its full capability set over MCP, you can perform
+most ingestion tasks by asking your MCP-connected client (Claude Desktop,
+Cursor, etc.) in plain English — no CLI required.
+
+## Local Files
+
+Ingest a single file or an entire directory:
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp ingest path/to/document.md
+    mp ingest path/to/docs/
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Ingest the document at path/to/document.md into the knowledge base.
+
+    Or for a directory:
+    > Ingest all files in the path/to/docs/ directory.
+  </TabItem>
+</Tabs>
+
+Markdown files are chunked section-aware (splitting on headings). Plain text
+and other formats are chunked by size.
+
+## URL Ingestion
+
+Fetch and ingest from a web page:
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp ingest --url "https://example.com/docs/architecture"
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Ingest the page at https://example.com/docs/architecture
+  </TabItem>
+</Tabs>
+
+The page content is extracted, chunked, and indexed just like a local file.
+
+## What Happens Under the Hood
+
+1. Content is read (local) or fetched (URL)
+2. Parsed and split into chunks (section-aware for markdown)
+3. Each chunk is inserted into the `chunks` table with FTS5 indexing
+4. A `documents` record tracks metadata (title, source, chunk count)
+5. If embeddings are configured, chunks are vectorized for KNN search
+
+All of this runs through the canonical operation pipeline — policy-checked
+and audited.
+
+## External Event Ingestion
+
+Moneypenny can ingest runtime event logs from external agent runtimes like
+OpenClaw. Events are stored raw for replay and projected into native tables.
+
+```bash
+mp ingest --openclaw-file events.jsonl
+```
+
+### Replay and Forensics
+
+Every ingest run is tracked. You can replay previous runs:
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    # View recent ingest runs
+    mp ingest --status
+
+    # Replay a specific run
+    mp ingest --replay-run <run-id>
+
+    # Replay the latest run matching filters
+    mp ingest --replay-latest --source openclaw
+
+    # Dry-run replay (preview without writing)
+    mp ingest --replay-latest --dry-run
+
+    # Apply replay writes
+    mp ingest --replay-latest --apply
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Show me recent ingest runs
+
+    > Replay the latest ingest run
+
+    > Replay the latest OpenClaw ingest run as a dry run
+  </TabItem>
+</Tabs>
+
+### Filtering Ingest History
+
+```bash
+# Filter by status
+mp ingest --status --status-filter completed
+
+# Filter by file name
+mp ingest --status --file-filter "events"
+
+# Control output limit
+mp ingest --status --limit 50
+```
+
+## Via Canonical Operations
+
+Ingestion is also available through the sidecar operation interface:
+
+```bash
+echo '{"op":"knowledge.ingest","args":{"path":"docs/architecture.md"}}' | mp sidecar
+```
+
+For external events:
+
+```bash
+echo '{"op":"ingest.events","args":{"source":"openclaw","file":"events.jsonl"}}' | mp sidecar
+echo '{"op":"ingest.status","args":{"source":"openclaw","limit":10}}' | mp sidecar
+echo '{"op":"ingest.replay","args":{"run_id":"...","dry_run":true}}' | mp sidecar
+```
+
+## Idempotent Ingestion
+
+Events are deduplicated by event ID or content hash. Re-ingesting the same
+file or replaying the same run will not create duplicate records.
+
+<Aside type="tip">
+  For large document sets, ingest a directory at once — Moneypenny processes
+  files in sequence within a single transaction, keeping the knowledge base
+  consistent.
+</Aside>
+
+## Listing Ingested Content
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp knowledge list
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > What documents are in my knowledge base?
+  </TabItem>
+</Tabs>
+
+Shows each document with its title, source path, and chunk count.

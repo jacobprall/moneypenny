@@ -3,7 +3,7 @@ title: Introduction
 description: The enterprise-grade dynamic intelligence layer for agents
 ---
 
-import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+import { Card, CardGrid, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
 
 Moneypenny is the intelligence and governance core for AI agents. It provides
 structured memory, policy-governed execution, explainable audit, and portable
@@ -22,6 +22,11 @@ Most agent frameworks solve orchestration. Moneypenny solves what happens
 - Why was that tool call denied?
 - How do two agents share knowledge without a central server?
 - Can I back up my agent by copying one file?
+
+Everything Moneypenny can do is exposed as an **MCP server**, so you can
+interact with it through natural language in any MCP-compatible client — Claude
+Desktop, Cursor, or any tool that speaks the Model Context Protocol. No CLI
+memorization required.
 
 ## Four Pillars
 
@@ -51,7 +56,7 @@ tools live inside the same transactional boundary. The orchestrator is a thin
 loop; the intelligence sits between the DB and the LLM.
 
 ```
-User message
+User message (CLI, MCP, or HTTP)
   → Context assembly (facts + knowledge + history + skills)
   → Policy evaluation
   → LLM generation
@@ -61,6 +66,49 @@ User message
 ```
 
 Every step operates on the same SQLite file. No external services required.
+The entire surface area is available over **MCP**, so every operation — memory
+writes, fact searches, policy checks, ingestion — can be triggered by
+natural-language requests in an MCP-connected chat client.
+
+## Use It Your Way
+
+Moneypenny exposes three equal access paths. Pick whichever fits your workflow,
+or mix and match.
+
+<Tabs>
+  <TabItem label="MCP / Natural Language">
+    Connect Moneypenny as an MCP server in Claude Desktop, Cursor, or any
+    MCP-compatible client. Then just ask:
+
+    > Ingest the README from our docs repo.
+
+    > What do you know about rate limits?
+
+    > List all active policies.
+
+    The client translates your request into the right MCP tool call
+    automatically.
+  </TabItem>
+  <TabItem label="CLI">
+    The `mp` binary gives you direct access from any terminal:
+
+    ```bash
+    mp ingest path/to/document.md
+    mp facts search "rate limit"
+    mp policies list
+    ```
+  </TabItem>
+  <TabItem label="HTTP API">
+    Start the gateway and hit the REST endpoints:
+
+    ```bash
+    mp start
+    curl http://localhost:8080/v1/agents/main/facts?q=rate+limit
+    ```
+
+    Useful for integrations, CI pipelines, and custom dashboards.
+  </TabItem>
+</Tabs>
 
 ## Built On
 

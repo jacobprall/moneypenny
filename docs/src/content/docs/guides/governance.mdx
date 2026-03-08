@@ -1,0 +1,292 @@
+---
+title: Governance
+description: Design and enforce governance policies for your agents
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+This guide walks through practical patterns for governing agent behavior
+with Moneypenny's policy engine, secret redaction, and audit trail.
+
+Because Moneypenny exposes governance operations over MCP, you can manage
+policies conversationally through any MCP-connected client (Claude Desktop,
+Cursor, etc.) alongside the CLI.
+
+## Setting the Default Mode
+
+Each agent has a base policy mode that determines what happens when no rule
+matches a given action:
+
+```toml
+[[agents]]
+name = "main"
+policy_mode = "allow"   # "allow" or "deny"
+```
+
+- **`allow`** (default) — actions are permitted unless a policy explicitly denies them
+- **`deny`** — actions are blocked unless a policy explicitly allows them
+
+Use `deny` for high-security environments where every permitted action must
+be explicitly declared.
+
+## Common Policy Patterns
+
+### Block Destructive SQL
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp policy add \
+      --name "no-drop" \
+      --effect deny \
+      --action "execute" \
+      --resource "sql:*DROP*" \
+      --message "DROP statements are prohibited"
+
+    mp policy add \
+      --name "require-where" \
+      --effect deny \
+      --action "execute" \
+      --sql "^DELETE\s+FROM\s+\w+\s*$" \
+      --message "DELETE without WHERE clause is prohibited"
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Add a policy that blocks any SQL containing DROP statements.
+
+    > Add a policy that denies DELETE queries without a WHERE clause.
+  </TabItem>
+</Tabs>
+
+### Restrict Shell Access
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp policy add \
+      --name "no-shell" \
+      --effect deny \
+      --action "call" \
+      --resource "shell_exec" \
+      --message "Shell access is disabled for this agent"
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Block shell access for this agent.
+  </TabItem>
+</Tabs>
+
+### Scope by Channel
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp policy add \
+      --name "slack-read-only" \
+      --effect deny \
+      --channel "slack" \
+      --action "call" \
+      --resource "file_write" \
+      --message "Write operations not allowed from Slack"
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Only allow read operations from Slack — deny any file writes from the Slack channel.
+  </TabItem>
+</Tabs>
+
+### Scope by Trust Level
+
+```bash
+mp policy add \
+  --name "admin-only-delete" \
+  --effect deny \
+  --action "call" \
+  --resource "fact_delete" \
+  --message "Only admin agents can delete facts"
+  # Then allow for admin:
+mp policy add \
+  --name "admin-delete-ok" \
+  --effect allow \
+  --actor "admin-bot" \
+  --action "call" \
+  --resource "fact_delete" \
+  --priority 10
+```
+
+Higher priority policies are evaluated first. The first match wins.
+
+## Behavioral Rules
+
+### Rate Limiting
+
+Cap how often an agent can call a tool in a given time window:
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp policy add \
+      --name "rate-limit-shell" \
+      --effect deny \
+      --action "call" \
+      --resource "shell_exec" \
+      --rule-type rate_limit \
+      --rule-config '{"max_calls":5,"window_secs":60}' \
+      --message "Shell access rate limited to 5 calls per minute"
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Add a rate limit of 5 shell calls per minute.
+  </TabItem>
+</Tabs>
+
+### Token Budget
+
+Set a per-session token spending limit:
+
+```bash
+mp policy add \
+  --name "token-budget" \
+  --rule-type token_budget \
+  --rule-config '{"max_tokens":100000}' \
+  --message "Session token budget exceeded"
+```
+
+### Time Windows
+
+Restrict operations to business hours:
+
+```bash
+mp policy add \
+  --name "business-hours-only" \
+  --effect deny \
+  --action "call" \
+  --resource "deploy_*" \
+  --rule-type time_window \
+  --rule-config '{"cron":"0 0-8,18-23 * * *"}' \
+  --message "Deployments only allowed during business hours (9am-6pm)"
+```
+
+## Secret Redaction
+
+Moneypenny automatically scrubs sensitive content before it touches disk.
+Eighteen regex patterns detect and redact:
+
+- API keys (AWS, GitHub, Slack, Stripe, etc.)
+- JWTs
+- PEM private keys
+- Database connection strings
+- Bearer tokens
+
+Redaction is always active and cannot be disabled. Redacted content is
+replaced with `[REDACTED:<type>]` markers.
+
+## Auditing Everything
+
+Every policy decision is recorded in the `policy_audit` table:
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    # View recent audit entries
+    mp audit
+
+    # Search for specific events
+    mp audit search "deny"
+    mp audit search "shell_exec"
+
+    # Export for external analysis
+    mp audit export --format json
+    mp audit export --format csv
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Show me the audit trail.
+
+    > Search the audit log for denied actions.
+
+    > Search audit for shell_exec events.
+  </TabItem>
+</Tabs>
+
+### Querying the Audit Trail Programmatically
+
+```bash
+echo '{"op":"audit.query","args":{"query":"deny","limit":20}}' | mp sidecar
+```
+
+The audit record includes: actor, action, resource, effect, matching policy
+ID, reason text, timestamp, and session context.
+
+## Testing Before Deploying
+
+Dry-run policy evaluations without executing anything:
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp policy test "DROP TABLE users"
+    # → denied by policy "no-drop"
+
+    mp policy test "SELECT * FROM facts"
+    # → allowed
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Would a DROP TABLE query be allowed?
+
+    > Test if a SELECT on the facts table passes policy checks.
+  </TabItem>
+</Tabs>
+
+<Aside type="tip">
+  When setting up a new agent, start with `policy_mode = "allow"` and add
+  deny rules incrementally. Review the audit trail to find actions you want
+  to restrict. Once you're confident in your rules, switch to `policy_mode = "deny"`
+  for defense-in-depth.
+</Aside>
+
+## Bulk-Loading Policies
+
+For reproducible setups, define policies in a JSON file and load them:
+
+<Tabs>
+  <TabItem label="CLI">
+    ```bash
+    mp policy load policies.json
+    ```
+  </TabItem>
+  <TabItem label="Natural Language">
+    Ask your MCP-connected agent:
+    > Load policies from policies.json
+  </TabItem>
+</Tabs>
+
+Example `policies.json`:
+
+```json
+[
+  {
+    "name": "no-drop",
+    "effect": "deny",
+    "action": "execute",
+    "resource": "sql:*DROP*",
+    "message": "DROP statements are prohibited"
+  },
+  {
+    "name": "audit-all-writes",
+    "effect": "audit",
+    "action": "call",
+    "resource": "file_write"
+  }
+]
+```
+
+Policies sync across agents via CRDT, so governance rules defined on one
+agent propagate to the fleet automatically.
