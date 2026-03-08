@@ -165,6 +165,13 @@ pub enum Command {
         #[arg(long)]
         agent: String,
     },
+
+    /// Run canonical operation sidecar over stdio (JSONL)
+    Sidecar {
+        /// Agent name (defaults to first configured agent)
+        #[arg(long)]
+        agent: Option<String>,
+    },
 }
 
 // -- Agent subcommands --

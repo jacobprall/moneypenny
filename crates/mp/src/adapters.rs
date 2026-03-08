@@ -41,6 +41,15 @@ pub type DispatchFn = Arc<
         + Sync,
 >;
 
+/// Async function that executes a canonical operation request payload and
+/// returns the canonical operation response as JSON.
+pub type OpDispatchFn = Arc<
+    dyn Fn(serde_json::Value)
+            -> Pin<Box<dyn Future<Output = anyhow::Result<serde_json::Value>> + Send>>
+        + Send
+        + Sync,
+>;
+
 // ---------------------------------------------------------------------------
 // Auth helper
 // ---------------------------------------------------------------------------
@@ -64,6 +73,7 @@ fn check_auth(headers: &HeaderMap, expected: &Option<String>) -> bool {
 #[derive(Clone)]
 struct HttpState {
     dispatch: DispatchFn,
+    op_dispatch: OpDispatchFn,
     default_agent: String,
     api_key: Option<String>,
 }
@@ -99,6 +109,38 @@ async fn http_chat(
         Err(e) => {
             error!("http_chat error: {e}");
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+        }
+    }
+}
+
+// POST /v1/ops
+//
+// Canonical operation HTTP parity endpoint.
+async fn http_ops(
+    State(state): State<HttpState>,
+    headers: HeaderMap,
+    Json(req): Json<serde_json::Value>,
+) -> Response {
+    if !check_auth(&headers, &state.api_key) {
+        return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
+    }
+
+    match (state.op_dispatch)(req).await {
+        Ok(resp) => Json(resp).into_response(),
+        Err(e) => {
+            error!("http_ops error: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "code": "http_ops_error",
+                    "message": e.to_string(),
+                    "data": {},
+                    "policy": null,
+                    "audit": { "recorded": false }
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -505,6 +547,7 @@ pub async fn run_http_server(
     web_ui_dir: Option<PathBuf>,
     default_agent: String,
     dispatch: DispatchFn,
+    op_dispatch: OpDispatchFn,
     mut shutdown: broadcast::Receiver<()>,
 ) -> anyhow::Result<()> {
     let port = http_cfg.map(|c| c.port).unwrap_or(8080);
@@ -518,11 +561,13 @@ pub async fn run_http_server(
     // HTTP API routes
     let http_state = HttpState {
         dispatch: Arc::clone(&dispatch),
+        op_dispatch,
         default_agent: default_agent.clone(),
         api_key,
     };
     let http_router: Router = Router::new()
         .route("/v1/chat", post(http_chat))
+        .route("/v1/ops", post(http_ops))
         .route("/v1/chat/stream", get(http_chat_stream))
         .route("/v1/ws", get(http_ws))
         .with_state(http_state);

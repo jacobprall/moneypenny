@@ -19,10 +19,10 @@ Status: active single source of truth for outstanding work.
    - [x] Add replay safety command ergonomics (clear run selection/filtering, operator-safe preview defaults).
 
 2. **Runtime integration parity (adapters + contracts)**
-   - [ ] Add stdio sidecar operation endpoint for CLI runtime integration.
-   - [ ] Map MCP adapter to canonical operations (translation only, no business logic).
-   - [ ] Expose canonical operations via HTTP/gRPC parity layer.
-   - [ ] Add parity contract tests across CLI/MCP/API/ingest for same-op same-outcome guarantees.
+   - [x] Add stdio sidecar operation endpoint for CLI runtime integration.
+   - [x] Map MCP adapter to canonical operations (translation only, no business logic).
+   - [ ] Expose canonical operations via HTTP/gRPC parity layer (HTTP shipped; gRPC pending).
+   - [ ] Add parity contract tests across CLI/MCP/API/ingest for same-op same-outcome guarantees (HTTP <-> sidecar parity test shipped; MCP/ingest parity tests pending).
 
 3. **Agent-first JS jobs (M4)**
    - [ ] Define schema for agent-generated job specs.
@@ -50,10 +50,10 @@ Status: active single source of truth for outstanding work.
 
 ## Surface Parity (Adapters)
 
-- [ ] Add stdio sidecar operation endpoint for CLI runtime integration.
-- [ ] Map MCP adapter to canonical operations (translation only, no business logic).
-- [ ] Expose canonical operations via HTTP/gRPC parity layer.
-- [ ] Add parity contract tests across CLI/MCP/API/ingest for same-op same-outcome guarantees.
+- [x] Add stdio sidecar operation endpoint for CLI runtime integration.
+- [x] Map MCP adapter to canonical operations (translation only, no business logic).
+- [ ] Expose canonical operations via HTTP/gRPC parity layer (HTTP shipped; gRPC pending).
+- [ ] Add parity contract tests across CLI/MCP/API/ingest for same-op same-outcome guarantees (HTTP <-> sidecar parity test shipped; MCP/ingest parity tests pending).
 
 ## M4 — Agent-First JS Jobs
 

@@ -6,6 +6,7 @@ use clap::Parser;
 use cli::{Cli, Command};
 use mp_core::config::Config;
 use mp_llm::provider::{EmbeddingProvider, LlmProvider};
+use serde::Deserialize;
 use std::collections::HashSet;
 use std::io::Write;
 use std::path::Path;
@@ -88,6 +89,7 @@ async fn main() -> Result<()> {
         Command::Db(cmd) => cmd_db(&config, cmd).await,
         Command::Health => cmd_health(&config).await,
         Command::Worker { agent } => cmd_worker(&config, &agent).await,
+        Command::Sidecar { agent } => cmd_sidecar(&config, agent).await,
     }
 }
 
@@ -1188,6 +1190,39 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
         })
     });
 
+    // Canonical operation HTTP parity dispatcher.
+    let config_for_ops = config.clone();
+    let op_dispatch: adapters::OpDispatchFn = Arc::new(move |payload| {
+        let config = config_for_ops.clone();
+        Box::pin(async move {
+            let default_agent = config
+                .agents
+                .first()
+                .map(|a| a.name.clone())
+                .unwrap_or_else(|| "main".into());
+
+            let req = match build_sidecar_request(payload, &default_agent) {
+                Ok(r) => r,
+                Err(e) => return Ok(sidecar_error_response("invalid_request", e.to_string())),
+            };
+
+            let conn = match open_agent_db(&config, &req.actor.agent_id) {
+                Ok(c) => c,
+                Err(e) => return Ok(sidecar_error_response("invalid_agent", e.to_string())),
+            };
+
+            let resp = match mp_core::operations::execute(&conn, &req) {
+                Ok(r) => r,
+                Err(e) => return Ok(sidecar_error_response("http_ops_execute_error", e.to_string())),
+            };
+
+            Ok(
+                serde_json::to_value(resp)
+                    .unwrap_or_else(|e| sidecar_error_response("serialization_error", e.to_string())),
+            )
+        })
+    });
+
     // Spawn the combined HTTP/Slack/Discord server if any HTTP-facing channel is configured.
     let has_http_channel = config.channels.http.is_some()
         || config.channels.slack.is_some()
@@ -1211,6 +1246,7 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
             .map(|a| a.name.clone())
             .unwrap_or_else(|| "main".into());
         let dispatch_clone = Arc::clone(&dispatch);
+        let op_dispatch_clone = Arc::clone(&op_dispatch);
         let srv_shutdown = shutdown.subscribe();
         tokio::spawn(async move {
             if let Err(e) = adapters::run_http_server(
@@ -1220,6 +1256,7 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
                 web_ui_dir,
                 default_agent,
                 dispatch_clone,
+                op_dispatch_clone,
                 srv_shutdown,
             )
             .await
@@ -1302,7 +1339,7 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
     println!("  Gateway ready. {} agent(s) running.", config.agents.len());
     if has_http_channel {
         let port = config.channels.http.as_ref().map(|h| h.port).unwrap_or(8080);
-        println!("  HTTP API listening on port {port}  (POST /v1/chat, WS /v1/ws, GET /health)");
+        println!("  HTTP API listening on port {port}  (POST /v1/chat, POST /v1/ops, WS /v1/ws, GET /health)");
         let web_ui_served = config.channels.http.as_ref()
             .and_then(|h| h.web_ui_dir.as_ref())
             .map(|p| p.exists())
@@ -2356,6 +2393,431 @@ fn op_request(agent_id: &str, op: &str, args: serde_json::Value) -> mp_core::ope
             timestamp: Some(chrono::Utc::now().timestamp()),
         },
         args,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct SidecarOperationInput {
+    op: String,
+    #[serde(default)]
+    op_version: Option<String>,
+    #[serde(default)]
+    request_id: Option<String>,
+    #[serde(default)]
+    idempotency_key: Option<String>,
+    #[serde(default)]
+    actor: Option<mp_core::operations::ActorContext>,
+    #[serde(default)]
+    context: Option<mp_core::operations::OperationContext>,
+    #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default)]
+    tenant_id: Option<String>,
+    #[serde(default)]
+    user_id: Option<String>,
+    #[serde(default)]
+    channel: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    trace_id: Option<String>,
+    #[serde(default = "default_sidecar_args")]
+    args: serde_json::Value,
+}
+
+fn default_sidecar_args() -> serde_json::Value {
+    serde_json::json!({})
+}
+
+fn sidecar_error_response(code: &str, message: impl Into<String>) -> serde_json::Value {
+    serde_json::json!({
+        "ok": false,
+        "code": code,
+        "message": message.into(),
+        "data": {},
+        "policy": null,
+        "audit": { "recorded": false }
+    })
+}
+
+fn canonical_operation_catalog() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("job.create", "Create a scheduled job"),
+        ("job.list", "List scheduled jobs"),
+        ("job.run", "Run a job immediately"),
+        ("job.pause", "Pause a scheduled job"),
+        ("policy.add", "Add a policy rule"),
+        ("policy.evaluate", "Evaluate policy decision"),
+        ("policy.explain", "Explain policy decision"),
+        ("knowledge.ingest", "Ingest knowledge content"),
+        ("memory.search", "Search memory across stores"),
+        ("memory.fact.add", "Create a fact"),
+        ("memory.fact.update", "Update a fact"),
+        ("memory.fact.get", "Get full fact content"),
+        ("memory.fact.compaction.reset", "Reset fact compaction state"),
+        ("skill.add", "Add a skill"),
+        ("skill.promote", "Promote a skill"),
+        ("fact.delete", "Delete a fact"),
+        ("audit.query", "Query audit records"),
+        ("audit.append", "Append an audit record"),
+        ("session.resolve", "Resolve or create session"),
+        ("session.list", "List sessions"),
+        ("js.tool.add", "Add JavaScript tool"),
+        ("js.tool.list", "List JavaScript tools"),
+        ("js.tool.delete", "Delete JavaScript tool"),
+        ("agent.create", "Create an agent"),
+        ("agent.delete", "Delete an agent"),
+        ("agent.config", "Update agent config"),
+        ("ingest.events", "Ingest external events"),
+        ("ingest.status", "List ingest runs"),
+        ("ingest.replay", "Replay an ingest run"),
+    ]
+}
+
+fn mcp_tools_list_result() -> serde_json::Value {
+    let tools: Vec<serde_json::Value> = canonical_operation_catalog()
+        .iter()
+        .map(|(name, description)| {
+            serde_json::json!({
+                "name": name,
+                "description": description,
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "args": { "type": "object", "default": {} },
+                        "request_id": { "type": "string" },
+                        "idempotency_key": { "type": "string" },
+                        "agent_id": { "type": "string" },
+                        "tenant_id": { "type": "string" },
+                        "user_id": { "type": "string" },
+                        "channel": { "type": "string" },
+                        "session_id": { "type": "string" },
+                        "trace_id": { "type": "string" }
+                    },
+                    "additionalProperties": true
+                }
+            })
+        })
+        .collect();
+    serde_json::json!({ "tools": tools })
+}
+
+fn jsonrpc_result(id: Option<serde_json::Value>, result: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id.unwrap_or(serde_json::Value::Null),
+        "result": result
+    })
+}
+
+fn jsonrpc_error(
+    id: Option<serde_json::Value>,
+    code: i64,
+    message: impl Into<String>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id.unwrap_or(serde_json::Value::Null),
+        "error": {
+            "code": code,
+            "message": message.into()
+        }
+    })
+}
+
+fn request_id_from_jsonrpc(input: &serde_json::Value) -> Option<String> {
+    let id = input.get("id")?;
+    match id {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+fn build_sidecar_request_from_mcp_call(
+    input: &serde_json::Value,
+    default_agent_id: &str,
+) -> anyhow::Result<mp_core::operations::OperationRequest> {
+    let params = input
+        .get("params")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| anyhow::anyhow!("missing object params for tools/call"))?;
+    let op = params
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("missing params.name"))?;
+    let args = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let request_id = params
+        .get("request_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .or_else(|| request_id_from_jsonrpc(input));
+
+    build_sidecar_request(
+        serde_json::json!({
+            "op": op,
+            "request_id": request_id,
+            "idempotency_key": params.get("idempotency_key").cloned(),
+            "agent_id": params.get("agent_id").cloned(),
+            "tenant_id": params.get("tenant_id").cloned(),
+            "user_id": params.get("user_id").cloned(),
+            "channel": params.get("channel").cloned(),
+            "session_id": params.get("session_id").cloned(),
+            "trace_id": params.get("trace_id").cloned(),
+            "args": args
+        }),
+        default_agent_id,
+    )
+}
+
+fn handle_sidecar_mcp_request(
+    conn: &rusqlite::Connection,
+    input: &serde_json::Value,
+    default_agent_id: &str,
+) -> anyhow::Result<Option<serde_json::Value>> {
+    let method = match input.get("method").and_then(serde_json::Value::as_str) {
+        Some(m) => m,
+        None => return Ok(None),
+    };
+    let id = input.get("id").cloned();
+    if method == "notifications/initialized" && id.is_none() {
+        return Ok(None);
+    }
+
+    let response = match method {
+        "initialize" => jsonrpc_result(
+            id,
+            serde_json::json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {
+                    "tools": { "listChanged": false }
+                },
+                "serverInfo": {
+                    "name": "moneypenny-sidecar",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            }),
+        ),
+        "tools/list" => jsonrpc_result(id, mcp_tools_list_result()),
+        "tools/call" => {
+            let req = match build_sidecar_request_from_mcp_call(input, default_agent_id) {
+                Ok(r) => r,
+                Err(e) => {
+                    return Ok(Some(jsonrpc_error(
+                        id,
+                        -32602,
+                        format!("invalid tools/call params: {e}"),
+                    )));
+                }
+            };
+            let op_resp = match mp_core::operations::execute(conn, &req) {
+                Ok(resp) => resp,
+                Err(e) => {
+                    let err = sidecar_error_response("sidecar_execute_error", e.to_string());
+                    return Ok(Some(jsonrpc_result(
+                        id,
+                        serde_json::json!({
+                            "content": [{ "type": "text", "text": err.to_string() }],
+                            "isError": true
+                        }),
+                    )));
+                }
+            };
+            jsonrpc_result(
+                id,
+                serde_json::json!({
+                    "content": [{
+                        "type": "text",
+                        "text": serde_json::to_string(&op_resp).unwrap_or_else(|_| "{}".to_string())
+                    }],
+                    "isError": !op_resp.ok
+                }),
+            )
+        }
+        unknown if unknown.starts_with("notifications/") && id.is_none() => return Ok(None),
+        _ => jsonrpc_error(id, -32601, format!("method not found: {method}")),
+    };
+
+    Ok(Some(response))
+}
+
+fn build_sidecar_request(
+    input: serde_json::Value,
+    default_agent_id: &str,
+) -> anyhow::Result<mp_core::operations::OperationRequest> {
+    if let Ok(req) = serde_json::from_value::<mp_core::operations::OperationRequest>(input.clone()) {
+        return Ok(req);
+    }
+
+    let compact: SidecarOperationInput = serde_json::from_value(input)?;
+    let request_id = compact
+        .request_id
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+    let actor = compact.actor.unwrap_or(mp_core::operations::ActorContext {
+        agent_id: compact
+            .agent_id
+            .unwrap_or_else(|| default_agent_id.to_string()),
+        tenant_id: compact.tenant_id,
+        user_id: compact.user_id,
+        channel: compact.channel.or(Some("mcp-stdio".into())),
+    });
+
+    let mut context = compact.context.unwrap_or_default();
+    if context.session_id.is_none() {
+        context.session_id = compact.session_id;
+    }
+    if context.trace_id.is_none() {
+        context.trace_id = compact.trace_id.or(Some(request_id.clone()));
+    }
+    if context.timestamp.is_none() {
+        context.timestamp = Some(chrono::Utc::now().timestamp());
+    }
+
+    Ok(mp_core::operations::OperationRequest {
+        op: compact.op,
+        op_version: compact.op_version.or(Some("v1".into())),
+        request_id: Some(request_id),
+        idempotency_key: compact.idempotency_key,
+        actor,
+        context,
+        args: compact.args,
+    })
+}
+
+async fn cmd_sidecar(config: &Config, agent: Option<String>) -> Result<()> {
+    let ag = resolve_agent(config, agent.as_deref())?;
+    let conn = open_agent_db(config, &ag.name)?;
+
+    let stdin = tokio::io::stdin();
+    let reader = tokio::io::BufReader::new(stdin);
+    let mut lines = tokio::io::AsyncBufReadExt::lines(reader);
+    let mut stdout = tokio::io::stdout();
+
+    while let Ok(Some(line)) = lines.next_line().await {
+        let parsed: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(e) => {
+                let err = sidecar_error_response("invalid_json", e.to_string());
+                tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{err}\n").as_bytes()).await?;
+                tokio::io::AsyncWriteExt::flush(&mut stdout).await?;
+                continue;
+            }
+        };
+
+        if let Some(mcp_response) = handle_sidecar_mcp_request(&conn, &parsed, &ag.name)? {
+            tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{mcp_response}\n").as_bytes()).await?;
+            tokio::io::AsyncWriteExt::flush(&mut stdout).await?;
+            continue;
+        }
+
+        let request = match build_sidecar_request(parsed, &ag.name) {
+            Ok(r) => r,
+            Err(e) => {
+                let err = sidecar_error_response("invalid_request", e.to_string());
+                tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{err}\n").as_bytes()).await?;
+                tokio::io::AsyncWriteExt::flush(&mut stdout).await?;
+                continue;
+            }
+        };
+
+        let response = match mp_core::operations::execute(&conn, &request) {
+            Ok(resp) => serde_json::to_value(resp)
+                .unwrap_or_else(|e| sidecar_error_response("serialization_error", e.to_string())),
+            Err(e) => sidecar_error_response("sidecar_execute_error", e.to_string()),
+        };
+
+        tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{response}\n").as_bytes()).await?;
+        tokio::io::AsyncWriteExt::flush(&mut stdout).await?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_sidecar_request, build_sidecar_request_from_mcp_call, mcp_tools_list_result};
+
+    #[test]
+    fn sidecar_compact_request_uses_defaults() {
+        let req = build_sidecar_request(
+            serde_json::json!({
+                "op": "job.list",
+                "args": { "agent_id": "main" }
+            }),
+            "default-agent",
+        )
+        .expect("build sidecar request");
+        assert_eq!(req.op, "job.list");
+        assert_eq!(req.op_version.as_deref(), Some("v1"));
+        assert_eq!(req.actor.agent_id, "default-agent");
+        assert_eq!(req.actor.channel.as_deref(), Some("mcp-stdio"));
+        assert!(req.request_id.is_some());
+        assert!(req.context.trace_id.is_some());
+    }
+
+    #[test]
+    fn sidecar_full_operation_request_passes_through() {
+        let req = build_sidecar_request(
+            serde_json::json!({
+                "op": "session.list",
+                "op_version": "v1",
+                "request_id": "rid-1",
+                "idempotency_key": null,
+                "actor": {
+                    "agent_id": "main",
+                    "tenant_id": null,
+                    "user_id": null,
+                    "channel": "cli"
+                },
+                "context": {
+                    "session_id": null,
+                    "trace_id": "trace-1",
+                    "timestamp": 123
+                },
+                "args": { "limit": 3 }
+            }),
+            "default-agent",
+        )
+        .expect("parse full canonical request");
+        assert_eq!(req.request_id.as_deref(), Some("rid-1"));
+        assert_eq!(req.context.trace_id.as_deref(), Some("trace-1"));
+        assert_eq!(req.actor.channel.as_deref(), Some("cli"));
+        assert_eq!(req.args["limit"], 3);
+    }
+
+    #[test]
+    fn sidecar_mcp_tools_call_translates_to_canonical_request() {
+        let req = build_sidecar_request_from_mcp_call(
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "rpc-42",
+                "method": "tools/call",
+                "params": {
+                    "name": "ingest.status",
+                    "arguments": { "limit": 5 },
+                    "agent_id": "main"
+                }
+            }),
+            "default-agent",
+        )
+        .expect("translate tools/call to operation request");
+        assert_eq!(req.op, "ingest.status");
+        assert_eq!(req.request_id.as_deref(), Some("rpc-42"));
+        assert_eq!(req.actor.agent_id, "main");
+        assert_eq!(req.args["limit"], 5);
+    }
+
+    #[test]
+    fn sidecar_mcp_tools_list_exposes_canonical_ops() {
+        let result = mcp_tools_list_result();
+        let tools = result["tools"].as_array().cloned().unwrap_or_default();
+        assert!(!tools.is_empty());
+        assert!(tools.iter().any(|t| t["name"] == "job.create"));
+        assert!(tools.iter().any(|t| t["name"] == "ingest.replay"));
     }
 }
 

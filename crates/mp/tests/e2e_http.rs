@@ -3,12 +3,15 @@
 mod common;
 
 use common::{enable_http_channel, init_project, spawn_gateway};
+use std::io::Write;
+use std::process::{Command, Stdio};
 use std::io::Read;
 use std::time::Duration;
 
 const HTTP_PORT: u16 = 18999;
 const HEALTH_URL: &str = "http://127.0.0.1:18999/health";
 const CHAT_URL: &str = "http://127.0.0.1:18999/v1/chat";
+const OPS_URL: &str = "http://127.0.0.1:18999/v1/ops";
 
 /// Wait for the server to respond on the given URL, up to `timeout`.
 fn wait_for_http(url: &str, timeout: Duration) -> bool {
@@ -22,6 +25,49 @@ fn wait_for_http(url: &str, timeout: Duration) -> bool {
         std::thread::sleep(Duration::from_millis(100));
     }
     false
+}
+
+fn run_sidecar_once(
+    config_path: &std::path::Path,
+    request: &serde_json::Value,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let cwd = config_path.parent().unwrap_or(std::path::Path::new("."));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_mp"))
+        .args([
+            "--config",
+            config_path.to_str().unwrap_or("moneypenny.toml"),
+            "sidecar",
+            "--agent",
+            "main",
+        ])
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        let line = format!("{}\n", serde_json::to_string(request)?);
+        stdin.write_all(line.as_bytes())?;
+    }
+
+    let output = child.wait_with_output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "sidecar failed: status={} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout
+        .lines()
+        .next()
+        .ok_or("sidecar produced no response line")?;
+    let parsed: serde_json::Value = serde_json::from_str(line)?;
+    Ok(parsed)
 }
 
 #[test]
@@ -84,4 +130,52 @@ fn gateway_http_chat_endpoint() {
         let body: serde_json::Value = resp.json().unwrap_or(serde_json::Value::Null);
         assert!(body.get("response").is_some() || body.get("session_id").is_some());
     }
+}
+
+#[test]
+fn gateway_http_ops_parity_with_sidecar() {
+    let (_temp, config_path) = init_project().unwrap();
+    enable_http_channel(&config_path, HTTP_PORT).unwrap();
+
+    let mut child = spawn_gateway(&config_path).unwrap();
+    if !wait_for_http(HEALTH_URL, Duration::from_secs(10)) {
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("gateway did not start for /v1/ops parity test");
+    }
+
+    let request = serde_json::json!({
+        "op": "session.list",
+        "request_id": "parity-session-list-1",
+        "agent_id": "main",
+        "args": { "agent_id": "main", "limit": 5 }
+    });
+
+    let sidecar_resp = run_sidecar_once(&config_path, &request).expect("sidecar response");
+    let http_resp = reqwest::blocking::Client::new()
+        .post(OPS_URL)
+        .json(&request)
+        .timeout(Duration::from_secs(20))
+        .send()
+        .expect("http /v1/ops response");
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert!(
+        http_resp.status().is_success(),
+        "http status must be success, got {}",
+        http_resp.status()
+    );
+    let http_json: serde_json::Value = http_resp.json().expect("json body");
+
+    assert_eq!(sidecar_resp["ok"], http_json["ok"]);
+    assert_eq!(sidecar_resp["code"], http_json["code"]);
+    assert_eq!(sidecar_resp["message"], http_json["message"]);
+    assert!(sidecar_resp["data"].is_array());
+    assert!(http_json["data"].is_array());
+    assert_eq!(
+        sidecar_resp["data"].as_array().map(|a| a.len()),
+        http_json["data"].as_array().map(|a| a.len())
+    );
 }
