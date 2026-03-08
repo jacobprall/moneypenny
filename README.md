@@ -1,8 +1,10 @@
 # Moneypenny
 
-**Enterprise-grade Edge AI agent runtime.**
+**The Edge AI intelligence layer**
 
-Moneypenny is an open-source agent platform with structured memory, context optimization, policy-governed execution, single-transaction ACID turns, local-first/offline operation, and selective multi-agent knowledge sync.
+__We make every agent runtime smarter, safer, and stateful by default__
+
+Moneypenny is an agent platform with structured memory, context optimization, policy-governed execution, single-transaction ACID turns, local-first/offline operation, and selective multi-agent knowledge sync.
 
 ## Quick Start
 
