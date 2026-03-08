@@ -98,19 +98,19 @@ fn set_schema_version(conn: &Connection, version: i64) -> anyhow::Result<()> {
 const AGENT_SCHEMA_V1: &str = "
 -- Facts store: distilled, curated knowledge
 CREATE TABLE IF NOT EXISTS facts (
-    id                  TEXT PRIMARY KEY,
-    agent_id            TEXT NOT NULL,
-    content             TEXT NOT NULL,
-    summary             TEXT NOT NULL,
-    pointer             TEXT NOT NULL,
+    id                  TEXT NOT NULL PRIMARY KEY,
+    agent_id            TEXT NOT NULL DEFAULT '',
+    content             TEXT NOT NULL DEFAULT '',
+    summary             TEXT NOT NULL DEFAULT '',
+    pointer             TEXT NOT NULL DEFAULT '',
     content_embedding   BLOB,
     summary_embedding   BLOB,
     pointer_embedding   BLOB,
     keywords            TEXT,
     source_message_id   TEXT,
     confidence          REAL DEFAULT 1.0,
-    created_at          INTEGER NOT NULL,
-    updated_at          INTEGER NOT NULL,
+    created_at          INTEGER NOT NULL DEFAULT 0,
+    updated_at          INTEGER NOT NULL DEFAULT 0,
     superseded_at       INTEGER,
     version             INTEGER DEFAULT 1
 );
@@ -197,17 +197,17 @@ CREATE TABLE IF NOT EXISTS edges (
 );
 
 CREATE TABLE IF NOT EXISTS skills (
-    id                  TEXT PRIMARY KEY,
-    name                TEXT NOT NULL,
-    description         TEXT NOT NULL,
-    content             TEXT NOT NULL,
+    id                  TEXT NOT NULL PRIMARY KEY,
+    name                TEXT NOT NULL DEFAULT '',
+    description         TEXT NOT NULL DEFAULT '',
+    content             TEXT NOT NULL DEFAULT '',
     tool_id             TEXT,
     content_embedding   BLOB,
     usage_count         INTEGER DEFAULT 0,
     success_rate        REAL,
     promoted            INTEGER DEFAULT 0,
-    created_at          INTEGER NOT NULL,
-    updated_at          INTEGER NOT NULL
+    created_at          INTEGER NOT NULL DEFAULT 0,
+    updated_at          INTEGER NOT NULL DEFAULT 0
 );
 
 -- Scratch: session-scoped working memory
@@ -222,11 +222,11 @@ CREATE TABLE IF NOT EXISTS scratch (
 
 -- Policies
 CREATE TABLE IF NOT EXISTS policies (
-    id                  TEXT PRIMARY KEY,
-    name                TEXT NOT NULL,
+    id                  TEXT NOT NULL PRIMARY KEY,
+    name                TEXT NOT NULL DEFAULT '',
     priority            INTEGER NOT NULL DEFAULT 0,
     phase               TEXT NOT NULL DEFAULT 'pre',
-    effect              TEXT NOT NULL,
+    effect              TEXT NOT NULL DEFAULT 'deny',
     actor_pattern       TEXT,
     action_pattern      TEXT,
     resource_pattern    TEXT,
@@ -237,7 +237,7 @@ CREATE TABLE IF NOT EXISTS policies (
     schedule            TEXT,
     message             TEXT,
     enabled             INTEGER DEFAULT 1,
-    created_at          INTEGER NOT NULL
+    created_at          INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS policy_audit (

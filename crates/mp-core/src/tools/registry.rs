@@ -368,6 +368,31 @@ pub fn register_builtins(conn: &Connection) -> anyhow::Result<()> {
 /// can reason about when and how to use it.
 pub fn register_runtime_skills(conn: &Connection) -> anyhow::Result<()> {
     let runtime_tools = vec![
+        ToolDef {
+            name: "web_search".into(),
+            description: "Search the public web for current information and cite sources.".into(),
+            source: ToolSource::Runtime,
+            parameters_schema: Some(concat!(
+                "# web_search\n\n",
+                "Search the public web when current or external information is required.\n\n",
+                "## When to use\n",
+                "- The user asks for recent events, version updates, docs links, or external facts\n",
+                "- You need a source URL to support an answer\n\n",
+                "## When NOT to use\n",
+                "- The answer can be derived from memory or current conversation context\n",
+                "- The user asked for local project analysis only\n\n",
+                "## Parameters\n",
+                "| Name  | Type   | Required | Default | Description |\n",
+                "|-------|--------|----------|---------|-------------|\n",
+                "| query | string | yes      |         | Search query |\n",
+                "| limit | number | no       | 5       | Max results (1-20) |\n\n",
+                "## Example\n",
+                "Call: web_search({\"query\": \"SQLite 3.49 release notes\", \"limit\": 3})\n\n",
+                "## Returns\n",
+                "A JSON array of {title, snippet, url, source} objects."
+            ).into()),
+            enabled: true,
+        },
         // =================================================================
         // Memory
         // =================================================================
@@ -1048,12 +1073,13 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn register_runtime_skills_creates_seventeen_tools() {
+    fn register_runtime_skills_creates_eighteen_tools() {
         let conn = setup();
         register_runtime_skills(&conn).unwrap();
         let tools = list_tools(&conn).unwrap();
-        assert_eq!(tools.len(), 17);
+        assert_eq!(tools.len(), 18);
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"web_search"));
         assert!(names.contains(&"memory_search"));
         assert!(names.contains(&"fact_add"));
         assert!(names.contains(&"fact_update"));
@@ -1087,7 +1113,7 @@ mod tests {
         register_builtins(&conn).unwrap();
         register_runtime_skills(&conn).unwrap();
         let tools = list_tools(&conn).unwrap();
-        assert_eq!(tools.len(), 22); // 5 builtins + 17 runtime (14 + 3 JS tools)
+        assert_eq!(tools.len(), 23); // 5 builtins + 18 runtime (15 + 3 JS tools)
     }
 
     #[test]

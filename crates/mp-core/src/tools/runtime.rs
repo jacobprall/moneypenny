@@ -6,6 +6,7 @@ use super::registry::ToolResult;
 /// scheduling, policy, and audit — giving the agent self-awareness.
 pub fn dispatch(conn: &Connection, agent_id: &str, session_id: &str, tool_name: &str, arguments: &str) -> anyhow::Result<ToolResult> {
     match tool_name {
+        "web_search"        => web_search(arguments),
         "memory_search"     => memory_search(conn, agent_id, arguments),
         "fact_add"          => fact_add(conn, agent_id, arguments),
         "fact_update"       => fact_update(conn, arguments),
@@ -31,7 +32,7 @@ pub fn dispatch(conn: &Connection, agent_id: &str, session_id: &str, tool_name: 
 /// this module, NOT a user-defined JS tool stored in the DB).
 pub fn is_runtime_tool(name: &str) -> bool {
     matches!(name,
-        "memory_search" | "fact_add" | "fact_update" | "fact_list"
+        "web_search" | "memory_search" | "fact_add" | "fact_update" | "fact_list"
         | "scratch_set" | "scratch_get"
         | "knowledge_ingest" | "knowledge_list"
         | "job_create" | "job_list" | "job_pause" | "job_resume"
@@ -118,6 +119,116 @@ fn run_js_engine(script: &str) -> anyhow::Result<std::process::Output> {
     anyhow::bail!(
         "No JavaScript runtime found. Install Node.js (node) or Deno (deno) to use JS tools."
     )
+}
+
+// =========================================================================
+// Web search
+// =========================================================================
+
+fn web_search(arguments: &str) -> anyhow::Result<ToolResult> {
+    let args: serde_json::Value = serde_json::from_str(arguments)?;
+    let query = args["query"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'query'"))?;
+    let limit = args["limit"].as_u64().unwrap_or(5).clamp(1, 20) as usize;
+
+    let client = reqwest::blocking::Client::new();
+    let response = client
+        .get("https://api.duckduckgo.com/")
+        .query(&[
+            ("q", query),
+            ("format", "json"),
+            ("no_redirect", "1"),
+            ("no_html", "1"),
+        ])
+        .send();
+
+    let resp = match response {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(ToolResult {
+                output: format!("Web search request failed: {e}"),
+                success: false,
+                duration_ms: 0,
+            })
+        }
+    };
+
+    let body: serde_json::Value = match resp.json() {
+        Ok(v) => v,
+        Err(e) => {
+            return Ok(ToolResult {
+                output: format!("Web search response parse failed: {e}"),
+                success: false,
+                duration_ms: 0,
+            })
+        }
+    };
+
+    let mut results: Vec<serde_json::Value> = Vec::new();
+
+    if let Some(abs) = body["AbstractText"].as_str() {
+        let abs = abs.trim();
+        if !abs.is_empty() {
+            results.push(serde_json::json!({
+                "title": body["Heading"].as_str().unwrap_or("Instant answer"),
+                "snippet": abs,
+                "url": body["AbstractURL"].as_str().unwrap_or(""),
+                "source": body["AbstractSource"].as_str().unwrap_or("DuckDuckGo"),
+            }));
+        }
+    }
+
+    if let Some(arr) = body["RelatedTopics"].as_array() {
+        for item in arr {
+            if results.len() >= limit {
+                break;
+            }
+
+            // Flat related topic.
+            if let Some(text) = item["Text"].as_str() {
+                results.push(serde_json::json!({
+                    "title": text.split(" - ").next().unwrap_or(text),
+                    "snippet": text,
+                    "url": item["FirstURL"].as_str().unwrap_or(""),
+                    "source": "DuckDuckGo",
+                }));
+                continue;
+            }
+
+            // Nested topic group with "Topics".
+            if let Some(topics) = item["Topics"].as_array() {
+                for sub in topics {
+                    if results.len() >= limit {
+                        break;
+                    }
+                    if let Some(text) = sub["Text"].as_str() {
+                        results.push(serde_json::json!({
+                            "title": text.split(" - ").next().unwrap_or(text),
+                            "snippet": text,
+                            "url": sub["FirstURL"].as_str().unwrap_or(""),
+                            "source": "DuckDuckGo",
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    if results.is_empty() {
+        return Ok(ToolResult {
+            output: format!("No web results found for query: {query}"),
+            success: true,
+            duration_ms: 0,
+        });
+    }
+
+    results.truncate(limit);
+    Ok(ToolResult {
+        output: serde_json::to_string_pretty(&results)?,
+        success: true,
+        duration_ms: 0,
+    })
 }
 
 // =========================================================================
@@ -573,6 +684,7 @@ mod tests {
 
     #[test]
     fn is_runtime_tool_identifies_all() {
+        assert!(is_runtime_tool("web_search"));
         assert!(is_runtime_tool("memory_search"));
         assert!(is_runtime_tool("fact_add"));
         assert!(is_runtime_tool("job_create"));

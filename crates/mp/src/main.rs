@@ -6,6 +6,7 @@ use clap::Parser;
 use cli::{Cli, Command};
 use mp_core::config::Config;
 use mp_llm::provider::LlmProvider;
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
@@ -32,13 +33,16 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Init => unreachable!(),
-        Command::Start => cmd_start(&config).await,
+        Command::Start => cmd_start(&config, config_path).await,
         Command::Stop => cmd_stop(&config).await,
         Command::Agent(cmd) => cmd_agent(&config, cmd).await,
-        Command::Chat { agent } => cmd_chat(&config, agent).await,
-        Command::Send { agent, message } => cmd_send(&config, &agent, &message).await,
+        Command::Chat { agent, session_id } => cmd_chat(&config, agent, session_id).await,
+        Command::Send { agent, message, session_id } => {
+            cmd_send(&config, &agent, &message, session_id).await
+        },
         Command::Facts(cmd) => cmd_facts(&config, cmd).await,
         Command::Ingest { path, url, agent } => cmd_ingest(&config, path, url, agent).await,
+        Command::Session(cmd) => cmd_session(&config, cmd).await,
         Command::Knowledge(cmd) => cmd_knowledge(&config, cmd).await,
         Command::Skill(cmd) => cmd_skill(&config, cmd).await,
         Command::Policy(cmd) => cmd_policy(&config, cmd).await,
@@ -120,6 +124,18 @@ fn build_embedding_provider(
 
 fn build_llm_tools() -> Vec<mp_llm::types::ToolDef> {
     vec![
+        mp_llm::types::ToolDef {
+            name: "web_search".into(),
+            description: "Search the public web for up-to-date information and return result snippets with URLs.".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Search query" },
+                    "limit": { "type": "integer", "description": "Maximum number of results", "default": 5 }
+                },
+                "required": ["query"]
+            }),
+        },
         mp_llm::types::ToolDef {
             name: "memory_search".into(),
             description: "Search the agent's memory across facts, conversation history, and knowledge base.".into(),
@@ -273,6 +289,131 @@ fn build_llm_tools() -> Vec<mp_llm::types::ToolDef> {
     ]
 }
 
+fn contains_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|n| haystack.contains(n))
+}
+
+/// Prefer text-only responses for explain/plan questions that don't request actions.
+fn is_text_first_intent(user_message: &str) -> bool {
+    let s = user_message.to_lowercase();
+    let asks_explain_or_plan = contains_any(
+        &s,
+        &[
+            "explain",
+            "why ",
+            "what happened",
+            "how does",
+            "how do",
+            "walk me through",
+            "step by step",
+            "plan",
+            "summarize",
+            "summary",
+            "what should i do",
+            "can you think of",
+            "think of a good task",
+            "suggest",
+            "idea",
+            "recommended task",
+            "what would be a good task",
+        ],
+    );
+    let asks_action = contains_any(
+        &s,
+        &[
+            "create ",
+            "add ",
+            "update ",
+            "delete ",
+            "remove ",
+            "ingest ",
+            "schedule ",
+            "run ",
+            "execute ",
+            "use tool",
+            "call tool",
+            "save ",
+            "remember ",
+            "set ",
+        ],
+    );
+    asks_explain_or_plan && !asks_action
+}
+
+/// "Write confirmation" is treated as explicit user intent to perform mutations.
+fn has_write_confirmation(user_message: &str) -> bool {
+    let s = user_message.to_lowercase();
+    contains_any(
+        &s,
+        &[
+            "confirm",
+            "approved",
+            "go ahead",
+            "yes do it",
+            "please do it",
+            "create ",
+            "add ",
+            "update ",
+            "delete ",
+            "remove ",
+            "ingest ",
+            "schedule ",
+            "save ",
+            "remember ",
+            "set ",
+            "run ",
+            "execute ",
+        ],
+    )
+}
+
+fn allow_multi_tool_calls(user_message: &str) -> bool {
+    let s = user_message.to_lowercase();
+    contains_any(
+        &s,
+        &[
+            "use multiple tools",
+            "use many tools",
+            "run all tools",
+            "show off all features",
+            "full workflow",
+        ],
+    )
+}
+
+fn is_mutating_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "fact_add"
+            | "fact_update"
+            | "scratch_set"
+            | "knowledge_ingest"
+            | "job_create"
+            | "job_pause"
+            | "job_resume"
+            | "job_run"
+            | "js_tool_add"
+            | "js_tool_delete"
+            | "shell_exec"
+            | "delegate_to_agent"
+    ) || name.starts_with("mcp:")
+}
+
+fn is_read_only_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "web_search"
+            | "memory_search"
+            | "fact_list"
+            | "scratch_get"
+            | "knowledge_list"
+            | "job_list"
+            | "file_read"
+            | "policy_list"
+            | "audit_query"
+    )
+}
+
 /// Load user-defined JS tools from the skills table as LLM ToolDefs.
 fn load_js_tool_defs(conn: &rusqlite::Connection) -> Vec<(String, String, serde_json::Value)> {
     let mut stmt = match conn.prepare(
@@ -346,6 +487,10 @@ async fn agent_turn(
         return Ok(denial);
     }
 
+    let text_first = is_text_first_intent(user_message);
+    let write_confirmed = has_write_confirmation(user_message);
+    let multi_tool_opt_in = allow_multi_tool_calls(user_message);
+
     let mut tools = build_llm_tools();
     // Append dynamically-discovered MCP tools so the LLM can call them.
     for (name, desc, schema) in mp_core::mcp::load_tool_defs(conn) {
@@ -364,8 +509,30 @@ async fn agent_turn(
         });
     }
 
+    if text_first {
+        // For explanation/planning requests, force a direct response.
+        tools.clear();
+        messages.push(mp_llm::types::Message::system(
+            "This request is explanatory/planning. Do NOT call tools. Respond directly.",
+        ));
+    } else if !write_confirmed {
+        // Default-safe mode: expose only read-only tools unless user clearly confirms writes.
+        tools.retain(|t| is_read_only_tool(&t.name));
+        messages.push(mp_llm::types::Message::system(
+            "Use read-only tools only unless the user explicitly confirms write actions.",
+        ));
+    }
+
+    let allowed_tool_names: HashSet<String> = tools.iter().map(|t| t.name.clone()).collect();
+
     let config = mp_llm::types::GenerateConfig::default();
     let max_rounds = 10;
+    let max_tool_calls_total = if multi_tool_opt_in { 8 } else { 2 };
+    let mut total_tool_calls = 0usize;
+    let mut consecutive_tool_failures = 0usize;
+    let mut last_tool_name: Option<String> = None;
+    let mut same_tool_streak = 0usize;
+    let mut loop_broken = false;
 
     for _ in 0..max_rounds {
         let response = provider.generate(&messages, &tools, &config).await?;
@@ -377,16 +544,63 @@ async fn agent_turn(
             return Ok(redacted);
         }
 
+        let mut planned_calls = response.tool_calls;
+        if total_tool_calls >= max_tool_calls_total {
+            loop_broken = true;
+            break;
+        }
+        let remaining = max_tool_calls_total.saturating_sub(total_tool_calls);
+        if planned_calls.len() > remaining {
+            planned_calls.truncate(remaining);
+        }
+        if !multi_tool_opt_in && planned_calls.len() > 1 {
+            planned_calls.truncate(1);
+        }
+        if planned_calls.is_empty() {
+            loop_broken = true;
+            break;
+        }
+
         messages.push(mp_llm::types::Message::assistant_with_tool_calls(
             response.content.clone(),
-            response.tool_calls.iter().map(|tc| mp_llm::types::ToolCall {
+            planned_calls.iter().map(|tc| mp_llm::types::ToolCall {
                 id: tc.id.clone(),
                 name: tc.name.clone(),
                 arguments: tc.arguments.clone(),
             }).collect(),
         ));
 
-        for tc in &response.tool_calls {
+        for tc in planned_calls {
+            total_tool_calls += 1;
+
+            if !allowed_tool_names.contains(&tc.name) {
+                consecutive_tool_failures += 1;
+                let blocked = format!(
+                    "Tool '{}' is not available for this request. Ask explicitly to use it.",
+                    tc.name
+                );
+                messages.push(mp_llm::types::Message::tool(&blocked, &tc.id));
+                if consecutive_tool_failures >= 3 {
+                    loop_broken = true;
+                    break;
+                }
+                continue;
+            }
+
+            if is_mutating_tool(&tc.name) && !write_confirmed {
+                consecutive_tool_failures += 1;
+                let blocked = format!(
+                    "Blocked mutating tool '{}'. Please ask explicitly and confirm the write action.",
+                    tc.name
+                );
+                messages.push(mp_llm::types::Message::tool(&blocked, &tc.id));
+                if consecutive_tool_failures >= 3 {
+                    loop_broken = true;
+                    break;
+                }
+                continue;
+            }
+
             let msg_id = mp_core::store::log::append_message(
                 conn, session_id, "assistant",
                 &format!("[tool: {}]", tc.name),
@@ -423,7 +637,50 @@ async fn agent_turn(
             )?;
 
             tracing::info!(tool = %tc.name, success = result.success, "tool call");
+            if result.success {
+                consecutive_tool_failures = 0;
+            } else {
+                consecutive_tool_failures += 1;
+            }
+
+            if last_tool_name.as_deref() == Some(tc.name.as_str()) {
+                same_tool_streak += 1;
+            } else {
+                same_tool_streak = 1;
+                last_tool_name = Some(tc.name.clone());
+            }
+
             messages.push(mp_llm::types::Message::tool(&result.output, &tc.id));
+
+            if consecutive_tool_failures >= 3 || same_tool_streak >= 4 {
+                loop_broken = true;
+                break;
+            }
+            if total_tool_calls >= max_tool_calls_total {
+                loop_broken = true;
+                break;
+            }
+        }
+
+        if loop_broken {
+            break;
+        }
+    }
+
+    if loop_broken {
+        // Final best-effort natural-language answer with tools disabled so the
+        // user still gets a useful response without needing to rephrase.
+        let mut final_messages = messages.clone();
+        final_messages.push(mp_llm::types::Message::system(
+            "Tool execution was halted. Respond directly in plain language with \
+the best possible answer. If a write action is required, clearly mention it \
+and ask for explicit confirmation.",
+        ));
+        if let Ok(final_resp) = provider.generate(&final_messages, &[], &config).await {
+            let text = final_resp.content.unwrap_or_default();
+            let redacted = mp_core::store::redact::redact(&text);
+            mp_core::store::log::append_message(conn, session_id, "assistant", &redacted)?;
+            return Ok(redacted);
         }
     }
 
@@ -748,7 +1005,7 @@ async fn cmd_init(config_path: &str) -> Result<()> {
 // Start / Stop
 // =========================================================================
 
-async fn cmd_start(config: &Config) -> Result<()> {
+async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
     println!();
     println!("  Moneypenny v{}", env!("CARGO_PKG_VERSION"));
     println!();
@@ -759,7 +1016,7 @@ async fn cmd_start(config: &Config) -> Result<()> {
     let bus = WorkerBus::new();
     let mut workers: Vec<WorkerHandle> = Vec::new();
     for agent in &config.agents {
-        let (handle, w_stdin, w_stdout) = spawn_worker(config, &agent.name)?;
+        let (handle, w_stdin, w_stdout) = spawn_worker(config, config_path, &agent.name)?;
         println!("  Worker \"{}\" started (pid {})", agent.name, handle.pid);
         bus.register(agent.name.clone(), w_stdin, w_stdout).await;
         workers.push(handle);
@@ -1107,14 +1364,25 @@ impl WorkerBus {
 /// Spawn a worker subprocess for `agent_name`.
 /// Returns the handle (for lifecycle management) plus the piped stdio channels
 /// (to be registered in a `WorkerBus`).
+/// The worker runs with CWD set to the config file's directory so relative
+/// data_dir (e.g. mp-data) resolves correctly.
 fn spawn_worker(
-    config: &Config,
+    _config: &Config,
+    config_path: &Path,
     agent_name: &str,
 ) -> Result<(WorkerHandle, tokio::process::ChildStdin, tokio::process::ChildStdout)> {
     let exe = std::env::current_exe()?;
+    // Resolve config path to absolute so worker can load it; worker CWD = config dir so data_dir resolves.
+    let config_abs = if config_path.is_absolute() {
+        config_path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(config_path)
+    };
+    let config_dir = config_abs.parent().unwrap_or_else(|| Path::new("."));
     let mut child = tokio::process::Command::new(&exe)
+        .current_dir(config_dir)
         .arg("--config")
-        .arg(config.data_dir.parent().unwrap_or(Path::new(".")).join("moneypenny.toml"))
+        .arg(&config_abs)
         .arg("worker")
         .arg("--agent")
         .arg(agent_name)
@@ -1183,6 +1451,28 @@ async fn cmd_worker(config: &Config, agent_name: &str) -> Result<()> {
 
     tracing::info!(agent = agent_name, "worker exiting");
     Ok(())
+}
+
+fn resolve_or_create_session(
+    conn: &rusqlite::Connection,
+    agent_name: &str,
+    channel: Option<&str>,
+    requested_session_id: Option<String>,
+) -> Result<String> {
+    if let Some(sid) = requested_session_id {
+        let exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE id = ?1 AND agent_id = ?2",
+            rusqlite::params![sid, agent_name],
+            |r| r.get(0),
+        )?;
+        if exists > 0 {
+            return Ok(sid);
+        }
+        anyhow::bail!(
+            "Session '{sid}' not found for agent '{agent_name}'. Use /session in chat to copy a valid ID, or omit --session-id to create a new session."
+        );
+    }
+    mp_core::store::log::create_session(conn, agent_name, channel)
 }
 
 // =========================================================================
@@ -1306,12 +1596,12 @@ async fn cmd_agent(config: &Config, cmd: cli::AgentCommand) -> Result<()> {
 // Chat & Send
 // =========================================================================
 
-async fn cmd_chat(config: &Config, agent: Option<String>) -> Result<()> {
+async fn cmd_chat(config: &Config, agent: Option<String>, session_id: Option<String>) -> Result<()> {
     let ag = resolve_agent(config, agent.as_deref())?;
     let conn = open_agent_db(config, &ag.name)?;
     let provider = build_provider(ag)?;
     let embed = build_embedding_provider(config, ag).ok();
-    let sid = mp_core::store::log::create_session(&conn, &ag.name, Some("cli"))?;
+    let sid = resolve_or_create_session(&conn, &ag.name, Some("cli"), session_id)?;
 
     println!();
     println!("  Moneypenny v{} — agent: {}", env!("CARGO_PKG_VERSION"), ag.name);
@@ -1411,12 +1701,17 @@ async fn cmd_chat(config: &Config, agent: Option<String>) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_send(config: &Config, agent_name: &str, message: &str) -> Result<()> {
+async fn cmd_send(
+    config: &Config,
+    agent_name: &str,
+    message: &str,
+    session_id: Option<String>,
+) -> Result<()> {
     let agent = resolve_agent(config, Some(agent_name))?;
     let conn = open_agent_db(config, &agent.name)?;
     let provider = build_provider(agent)?;
     let embed = build_embedding_provider(config, agent).ok();
-    let sid = mp_core::store::log::create_session(&conn, &agent.name, Some("cli"))?;
+    let sid = resolve_or_create_session(&conn, &agent.name, Some("cli"), session_id)?;
 
     let response = agent_turn(
         &conn, provider.as_ref(), &agent.name, &sid,
@@ -2104,6 +2399,64 @@ async fn cmd_db(config: &Config, cmd: cli::DbCommand) -> Result<()> {
                         println!("  {line}");
                     }
                 }
+                println!();
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn cmd_session(config: &Config, cmd: cli::SessionCommand) -> Result<()> {
+    match cmd {
+        cli::SessionCommand::List { agent, limit } => {
+            let ag = resolve_agent(config, agent.as_deref())?;
+            let conn = open_agent_db(config, &ag.name)?;
+            let limit = limit.max(1).min(200);
+
+            let mut stmt = conn.prepare(
+                "SELECT s.id, s.channel, s.started_at, s.ended_at,
+                        COUNT(m.id) AS message_count,
+                        COALESCE(MAX(m.created_at), s.started_at) AS last_activity
+                 FROM sessions s
+                 LEFT JOIN messages m ON m.session_id = s.id
+                 WHERE s.agent_id = ?1
+                 GROUP BY s.id, s.channel, s.started_at, s.ended_at
+                 ORDER BY last_activity DESC
+                 LIMIT ?2"
+            )?;
+
+            let rows = stmt.query_map(rusqlite::params![ag.name, limit as i64], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, Option<i64>>(3)?,
+                    r.get::<_, i64>(4)?,
+                    r.get::<_, i64>(5)?,
+                ))
+            })?.collect::<Result<Vec<_>, _>>()?;
+
+            if rows.is_empty() {
+                println!("  No sessions found for agent '{}'.", ag.name);
+                return Ok(());
+            }
+
+            let fmt_ts = |ts: i64| -> String {
+                chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0)
+                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                    .unwrap_or_else(|| ts.to_string())
+            };
+
+            println!();
+            println!("  Recent sessions for agent '{}':", ag.name);
+            println!();
+            for (id, channel, started_at, ended_at, message_count, last_activity) in rows {
+                println!("  Session: {}", id);
+                println!("    Channel:      {}", channel.unwrap_or_else(|| "unknown".into()));
+                println!("    Started:      {}", fmt_ts(started_at));
+                println!("    Last activity:{}", format!(" {}", fmt_ts(last_activity)));
+                println!("    Messages:     {}", message_count);
+                println!("    Ended:        {}", ended_at.map(fmt_ts).unwrap_or_else(|| "active".into()));
                 println!();
             }
         }

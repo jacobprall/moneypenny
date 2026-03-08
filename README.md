@@ -1,8 +1,8 @@
 # Moneypenny
 
-**Local-first AI agent runtime. Single binary. Single SQLite file.**
+**Enterprise-grade Edge AI agent runtime.**
 
-Moneypenny is an open-source agent platform with structured memory, context optimization, policy governance, and multi-agent sync. Everything runs in one Rust binary and one database file. No Docker, no Postgres, no Redis. Three commands: `mp init` → `mp start` → chat.
+Moneypenny is an open-source agent platform with structured memory, context optimization, policy-governed execution, single-transaction ACID turns, local-first/offline operation, and selective multi-agent knowledge sync.
 
 ## Quick Start
 
@@ -18,15 +18,24 @@ mp start      # starts gateway (CLI chat, HTTP API, optional Web UI)
 > what time is standup?
 ```
 
-Embeddings run locally by default. Optional Web UI: build `web-ui` and serve from the same port when `web-ui/dist` exists.
+Embeddings are generated locally by default. Optional Web UI: build `web-ui` and serve `web-ui/dist` from the same port.
+
+---
+
+## Four Natural Groupings
+
+- **Correctness Core.** Single ACID turn semantics, database-as-runtime execution, and rollback guarantees that prevent partial state.
+- **Governance and Security.** Policy checks on every action, denial-aware control flow, auditable decisions, secret redaction, and encryption at rest.
+- **Intelligence System.** Structured memory, adaptive compression, hybrid retrieval, and graph-linked facts that improve quality over time.
+- **Scale and Portability.** CRDT sync, scoped knowledge sharing, and one-file portability across devices and deployment environments.
 
 ---
 
 ## Features & Capabilities
 
-### Memory that compounds, not just persists
+### Memory that persists, propagates and compounds
 
-- **Structured, compressed, self-curating.** After every turn, an extraction pipeline distills new knowledge into curated facts — add, update, delete, or ignore based on what the agent already knows. No manual saving. Facts evolve; confidence grows when re-extracted, stale knowledge decays with configurable half-life.
+- **Structured, compressed, self-curating.** After every turn, an extraction pipeline distills new knowledge into curated facts — add, update, delete, or ignore based on what the agent already knows. Facts evolve; confidence grows when re-extracted, stale knowledge decays with configurable half-life.
 - **Three compression levels.** Full detail, summary, and 2–5 word pointers. The agent loads all knowledge as pointers (~2K tokens for 500 facts), then auto-expands only what’s relevant.
 - **Graph-linked facts.** Traversable edges between related facts. “What do I know about X?” follows the graph without independent retrieval.
 - **Hybrid retrieval.** Vector similarity + full-text via Reciprocal Rank Fusion. Results deduplicated, MMR diversity-ranked, policy-filtered at SQL. Store weights adapt by intent (facts vs knowledge vs history).

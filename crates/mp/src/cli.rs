@@ -35,6 +35,10 @@ pub enum Command {
     Chat {
         /// Agent name (defaults to first configured agent)
         agent: Option<String>,
+
+        /// Resume an existing session by ID (if omitted, creates a new session)
+        #[arg(long)]
+        session_id: Option<String>,
     },
 
     /// Send a one-off message and print the response
@@ -43,7 +47,15 @@ pub enum Command {
         agent: String,
         /// Message to send
         message: String,
+
+        /// Resume an existing session by ID (if omitted, creates a new session)
+        #[arg(long)]
+        session_id: Option<String>,
     },
+
+    /// Manage conversation sessions
+    #[command(subcommand)]
+    Session(SessionCommand),
 
     /// Manage facts (extracted knowledge)
     #[command(subcommand)]
@@ -417,5 +429,20 @@ pub enum DbCommand {
     Schema {
         /// Agent name
         agent: Option<String>,
+    },
+}
+
+// -- Session subcommands --
+
+#[derive(Subcommand)]
+pub enum SessionCommand {
+    /// List recent sessions for an agent
+    List {
+        /// Agent name (defaults to first configured agent)
+        agent: Option<String>,
+
+        /// Max sessions to return
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
     },
 }
