@@ -102,6 +102,7 @@ pub fn route_message(
             resource: &msg.target_agent,
             sql_content: None,
             channel: Some(&msg.channel),
+            arguments: None,
         };
         let decision = crate::policy::evaluate(&conn, &policy_req)?;
         if matches!(decision.effect, crate::policy::Effect::Deny) {

@@ -320,7 +320,7 @@ pub fn dispatch_job(
         let run_id = start_run(conn, &job.id, &job.agent_id)?;
         finish_run(conn, &run_id, "skipped", Some("overlap policy: skip"), None)?;
         let runs = get_runs(conn, &job.id, 1)?;
-        return Ok(runs.into_iter().next().unwrap());
+        return runs.into_iter().next().ok_or_else(|| anyhow::anyhow!("run disappeared after finish (overlap skip)"));
     }
 
     // Policy check
@@ -330,6 +330,7 @@ pub fn dispatch_job(
         resource: &format!("job:{}", job.name),
         sql_content: None,
         channel: None,
+        arguments: None,
     };
     let policy_decision = crate::policy::evaluate(conn, &policy_req)?;
 
@@ -343,7 +344,7 @@ pub fn dispatch_job(
         )?;
         update_schedule(conn, &job.id)?;
         let runs = get_runs(conn, &job.id, 1)?;
-        return Ok(runs.into_iter().next().unwrap());
+        return runs.into_iter().next().ok_or_else(|| anyhow::anyhow!("run disappeared after finish (policy denied)"));
     }
 
     // Execute with retry
@@ -357,7 +358,7 @@ pub fn dispatch_job(
                 finish_run(conn, &run_id, "success", Some(&output), Some("allowed"))?;
                 update_schedule(conn, &job.id)?;
                 let runs = get_runs(conn, &job.id, 1)?;
-                return Ok(runs.into_iter().next().unwrap());
+                return runs.into_iter().next().ok_or_else(|| anyhow::anyhow!("run disappeared after finish (success)"));
             }
             Err(e) => {
                 last_error = e.to_string();
@@ -376,7 +377,7 @@ pub fn dispatch_job(
     )?;
     update_schedule(conn, &job.id)?;
     let runs = get_runs(conn, &job.id, 1)?;
-    Ok(runs.into_iter().next().unwrap())
+    runs.into_iter().next().ok_or_else(|| anyhow::anyhow!("run disappeared after finish (error)"))
 }
 
 fn update_schedule(conn: &Connection, job_id: &str) -> anyhow::Result<()> {
@@ -387,6 +388,78 @@ fn update_schedule(conn: &Connection, job_id: &str) -> anyhow::Result<()> {
         params![now, job_id],
     )?;
     Ok(())
+}
+
+/// Execute a job based on its `job_type`.
+///
+/// - `js`: Evaluates the payload script via the in-process sqlite-js QuickJS
+///   engine (`js_eval`). The script has access to `db.exec(sql)`.
+/// - `prompt`: Returns the payload message for the caller to route to an LLM.
+/// - `tool`: Returns the tool invocation spec for the caller to dispatch.
+/// - Everything else: returns the payload as-is.
+pub fn execute_job_payload(conn: &Connection, job: &Job) -> anyhow::Result<String> {
+    match job.job_type.as_str() {
+        "js" => {
+            let payload: serde_json::Value = serde_json::from_str(&job.payload)
+                .unwrap_or_else(|_| serde_json::json!({ "script": &job.payload }));
+            let script = payload["script"]
+                .as_str()
+                .unwrap_or(&job.payload);
+            let wrapper = format!(
+                "(function() {{ {} }})()",
+                script,
+            );
+            crate::tools::runtime::eval_js(conn, &wrapper)
+        }
+        "prompt" => {
+            let payload: serde_json::Value = serde_json::from_str(&job.payload)
+                .unwrap_or_else(|_| serde_json::json!({ "message": &job.payload }));
+            let message = payload["message"]
+                .as_str()
+                .unwrap_or(&job.payload);
+            Ok(format!("prompt:{message}"))
+        }
+        "tool" => {
+            let payload: serde_json::Value = serde_json::from_str(&job.payload)
+                .unwrap_or_else(|_| serde_json::json!({}));
+            let tool_name = payload["tool"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("tool job payload missing 'tool' field"))?;
+            let arguments = payload.get("arguments")
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "{}".to_string());
+            let result = crate::tools::runtime::dispatch_js(conn, tool_name, &arguments)?;
+            Ok(result.output)
+        }
+        _ => Ok(format!("executed job '{}' (type={})", job.name, job.job_type)),
+    }
+}
+
+/// List recent job runs, optionally filtered by job ID.
+pub fn list_runs(conn: &Connection, job_id: Option<&str>, limit: usize) -> anyhow::Result<Vec<JobRun>> {
+    let lim = i64::try_from(limit).unwrap_or(20);
+    let mut stmt = conn.prepare(
+        "SELECT id, job_id, agent_id, started_at, ended_at, status, result, policy_decision, retry_count, created_at
+         FROM job_runs
+         WHERE (?1 IS NULL OR job_id = ?1)
+         ORDER BY created_at DESC
+         LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![job_id, lim], |r| {
+        Ok(JobRun {
+            id: r.get(0)?,
+            job_id: r.get(1)?,
+            agent_id: r.get(2)?,
+            started_at: r.get(3)?,
+            ended_at: r.get(4)?,
+            status: r.get(5)?,
+            result: r.get(6)?,
+            policy_decision: r.get(7)?,
+            retry_count: r.get(8)?,
+            created_at: r.get(9)?,
+        })
+    })?.collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
 }
 
 

@@ -1,0 +1,138 @@
+---
+title: Policy Engine
+description: Govern every action with allow/deny/audit rules
+---
+
+The policy engine evaluates every tool call, memory write, SQL query, and
+delegation before execution. It is the single enforcement point — no operation
+bypasses policy.
+
+## How It Works
+
+Every policy-relevant action is evaluated as a triple:
+
+```
+(actor, action, resource) → allow | deny | audit
+```
+
+Policies are ordered by priority. The first matching rule wins. If no rule
+matches, the default mode applies (`AllowByDefault` or `DenyByDefault`).
+
+## Adding Policies
+
+```bash
+mp policy add \
+  --name "no-destructive-sql" \
+  --effect deny \
+  --action "execute" \
+  --resource "sql:*DROP*" \
+  --message "Destructive SQL is blocked by policy"
+```
+
+```bash
+mp policy add \
+  --name "audit-memory-searches" \
+  --effect audit \
+  --action "search" \
+  --resource "memory"
+```
+
+## Pattern Matching
+
+Actor, action, and resource fields use glob patterns:
+
+| Pattern | Matches |
+|---|---|
+| `*` | Everything |
+| `main` | Exact match |
+| `sql:*DROP*` | Any SQL containing "DROP" |
+| `tool:shell_*` | Any shell-prefixed tool |
+
+## Three Effects
+
+| Effect | Behavior |
+|---|---|
+| **`allow`** | Permit the action (default for most setups) |
+| **`deny`** | Block the action; return a denial reason to the agent |
+| **`audit`** | Allow the action but log it explicitly in the audit trail |
+
+## Behavioral Rules
+
+Beyond simple allow/deny, policies support behavioral constraints:
+
+- **Rate limiting** — cap tool calls per time window
+- **Retry loop detection** — break agents stuck calling the same tool
+- **Token budgets** — per-session token spending limits
+- **Time windows** — restrict operations to specific hours (cron patterns)
+
+## Testing Policies
+
+Dry-run a policy evaluation without executing anything:
+
+```bash
+mp policy test "DROP TABLE users"
+mp policy test "SELECT * FROM facts"
+```
+
+## Listing and Inspecting
+
+```bash
+mp policy list
+mp policy violations              # recent denials
+mp policy violations --last 24h   # last 24 hours
+```
+
+## Policy Explanation
+
+Ask why a decision was made:
+
+```bash
+echo '{"op":"policy.explain","args":{
+  "actor":"main",
+  "action":"call",
+  "resource":"shell_exec"
+}}' | mp sidecar
+```
+
+The agent itself can ask "why was I denied?" — explanations are returned as
+structured data with the matching policy ID and reason.
+
+## Denials as Context
+
+When a tool call is denied, the denial is not an error — it's returned to the
+agent as context. The agent can adapt:
+
+- Explain to the user why it can't do something
+- Suggest an alternative approach
+- Ask for explicit confirmation
+
+Stuck detection breaks retry loops: if the agent calls the same denied tool
+three times in a row, the loop is halted and the agent is forced to respond
+in natural language.
+
+## Loading from Files
+
+Bulk-load policies from a JSON file:
+
+```bash
+mp policy load policies.json
+```
+
+## Audit Trail
+
+Every policy decision is recorded in the `policy_audit` table with:
+
+- Actor, action, resource
+- Effect (allow/deny/audit)
+- Matching policy ID
+- Reason text
+- Timestamp
+- Session context
+
+Query the audit trail:
+
+```bash
+mp audit
+mp audit search "deny"
+mp audit export --format json
+```

@@ -118,10 +118,14 @@ fn dispatch_operation(conn: &Connection, req: &OperationRequest) -> anyhow::Resu
         "job.list" => op_job_list(conn, req),
         "job.run" => op_job_run(conn, req),
         "job.pause" => op_job_pause(conn, req),
+        "job.history" => op_job_history(conn, req),
         "job.spec.plan" => op_job_spec_plan(conn, req),
         "job.spec.confirm" => op_job_spec_confirm(conn, req),
         "job.spec.apply" => op_job_spec_apply(conn, req),
         "policy.add" => op_policy_add(conn, req),
+        "policy.spec.plan" => op_policy_spec_plan(conn, req),
+        "policy.spec.confirm" => op_policy_spec_confirm(conn, req),
+        "policy.spec.apply" => op_policy_spec_apply(conn, req),
         "knowledge.ingest" => op_knowledge_ingest(conn, req),
         "memory.search" => op_memory_search(conn, req),
         "memory.fact.add" => op_memory_fact_add(conn, req),
@@ -177,6 +181,7 @@ fn op_job_create(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Op
             resource: "job",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -231,6 +236,7 @@ fn op_job_list(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Oper
             resource: "job",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -278,6 +284,7 @@ fn op_job_run(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Opera
             resource: "job",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -300,7 +307,7 @@ fn op_job_run(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Opera
     };
 
     let run = crate::scheduler::dispatch_job(conn, &job, &|j| {
-        Ok(format!("Manual trigger of {}", j.name))
+        crate::scheduler::execute_job_payload(conn, j)
     })?;
 
     Ok(OperationResponse {
@@ -313,6 +320,49 @@ fn op_job_run(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Opera
             "status": run.status,
             "result": run.result
         }),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
+fn op_job_history(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+    let job_id = req.args.get("id").and_then(|v| v.as_str());
+    let limit = req.args["limit"].as_u64().unwrap_or(20) as usize;
+
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "list",
+            resource: "job_run",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+            arguments: None,
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    let runs = crate::scheduler::list_runs(conn, job_id, limit)?;
+    let data: Vec<serde_json::Value> = runs.iter().map(|r| {
+        serde_json::json!({
+            "id": r.id,
+            "job_id": r.job_id,
+            "agent_id": r.agent_id,
+            "status": r.status,
+            "result": r.result,
+            "started_at": r.started_at,
+            "ended_at": r.ended_at,
+        })
+    }).collect();
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "job history".into(),
+        data: serde_json::json!(data),
         policy: Some(policy_meta(&decision)),
         audit: AuditMeta { recorded: true },
     })
@@ -331,6 +381,7 @@ fn op_job_pause(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Ope
             resource: "job",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -433,6 +484,7 @@ fn op_job_spec_plan(conn: &Connection, req: &OperationRequest) -> anyhow::Result
             resource: "job_spec",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -502,6 +554,7 @@ fn op_job_spec_confirm(conn: &Connection, req: &OperationRequest) -> anyhow::Res
             resource: "job_spec",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -589,6 +642,7 @@ fn op_job_spec_apply(conn: &Connection, req: &OperationRequest) -> anyhow::Resul
             resource: "job_spec",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -687,9 +741,15 @@ fn op_policy_add(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Op
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'name'"))?;
     let effect = req.args["effect"].as_str().unwrap_or("deny");
+    let priority = req.args["priority"].as_i64().unwrap_or(0);
     let actor_pattern = req.args["actor_pattern"].as_str();
     let action_pattern = req.args["action_pattern"].as_str();
     let resource_pattern = req.args["resource_pattern"].as_str();
+    let argument_pattern = req.args["argument_pattern"].as_str();
+    let channel_pattern = req.args["channel_pattern"].as_str();
+    let sql_pattern = req.args["sql_pattern"].as_str();
+    let rule_type = req.args["rule_type"].as_str();
+    let rule_config = req.args["rule_config"].as_str();
     let message = req.args["message"].as_str();
 
     let decision = evaluate_policy_with_request_context(
@@ -700,6 +760,7 @@ fn op_policy_add(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Op
             resource: "policy",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -710,9 +771,11 @@ fn op_policy_add(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Op
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
     conn.execute(
-        "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, message, created_at)
-         VALUES (?1, ?2, 0, ?3, ?4, ?5, ?6, ?7, ?8)",
-        rusqlite::params![id, name, effect, actor_pattern, action_pattern, resource_pattern, message, now],
+        "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern,
+         argument_pattern, channel_pattern, sql_pattern, rule_type, rule_config, message, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        rusqlite::params![id, name, priority, effect, actor_pattern, action_pattern, resource_pattern,
+            argument_pattern, channel_pattern, sql_pattern, rule_type, rule_config, message, now],
     )?;
 
     Ok(OperationResponse {
@@ -722,7 +785,339 @@ fn op_policy_add(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Op
         data: serde_json::json!({
             "id": id,
             "name": name,
-            "effect": effect
+            "effect": effect,
+            "priority": priority
+        }),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Policy spec: plan → confirm → apply (agent-proposed policy creation)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+struct PolicySpecRecord {
+    id: String,
+    agent_id: String,
+    intent: String,
+    policy_name: String,
+    effect: String,
+    priority: i64,
+    actor_pattern: Option<String>,
+    action_pattern: Option<String>,
+    resource_pattern: Option<String>,
+    argument_pattern: Option<String>,
+    channel_pattern: Option<String>,
+    sql_pattern: Option<String>,
+    rule_type: Option<String>,
+    rule_config: Option<String>,
+    message: Option<String>,
+    status: String,
+    applied_policy_id: Option<String>,
+}
+
+fn load_policy_spec(conn: &Connection, spec_id: &str) -> anyhow::Result<Option<PolicySpecRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, agent_id, intent, policy_name, effect, priority,
+                actor_pattern, action_pattern, resource_pattern, argument_pattern,
+                channel_pattern, sql_pattern, rule_type, rule_config, message,
+                status, applied_policy_id
+         FROM policy_specs WHERE id = ?1",
+    )?;
+    let row = stmt
+        .query_row([spec_id], |r| {
+            Ok(PolicySpecRecord {
+                id: r.get(0)?,
+                agent_id: r.get(1)?,
+                intent: r.get(2)?,
+                policy_name: r.get(3)?,
+                effect: r.get(4)?,
+                priority: r.get(5)?,
+                actor_pattern: r.get(6)?,
+                action_pattern: r.get(7)?,
+                resource_pattern: r.get(8)?,
+                argument_pattern: r.get(9)?,
+                channel_pattern: r.get(10)?,
+                sql_pattern: r.get(11)?,
+                rule_type: r.get(12)?,
+                rule_config: r.get(13)?,
+                message: r.get(14)?,
+                status: r.get(15)?,
+                applied_policy_id: r.get(16)?,
+            })
+        })
+        .ok();
+    Ok(row)
+}
+
+fn op_policy_spec_plan(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+    let intent = req.args["intent"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'intent'"))?;
+    let policy_name = req.args["policy_name"]
+        .as_str()
+        .or(req.args["name"].as_str())
+        .ok_or_else(|| anyhow::anyhow!("missing 'policy_name'"))?;
+    let effect = req.args["effect"].as_str().unwrap_or("deny");
+    let priority = req.args["priority"].as_i64().unwrap_or(0);
+    let agent_id = req.args["agent_id"]
+        .as_str()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| req.actor.agent_id.clone());
+    let actor_pattern = req.args["actor_pattern"].as_str();
+    let action_pattern = req.args["action_pattern"].as_str();
+    let resource_pattern = req.args["resource_pattern"].as_str();
+    let argument_pattern = req.args["argument_pattern"].as_str();
+    let channel_pattern = req.args["channel_pattern"].as_str();
+    let sql_pattern = req.args["sql_pattern"].as_str();
+    let rule_type = req.args["rule_type"].as_str();
+    let rule_config = req.args["rule_config"].as_str();
+    let message = req.args["message"].as_str();
+    let plan_json = match req.args.get("plan") {
+        Some(v) if v.is_string() => v.as_str().unwrap_or("{}").to_string(),
+        Some(v) => serde_json::to_string(v).unwrap_or_else(|_| "{}".to_string()),
+        None => "{}".to_string(),
+    };
+    let proposed_by = req.args["proposed_by"].as_str().unwrap_or("agent");
+    let source_session_id = req.args.get("source_session_id")
+        .and_then(|v| v.as_str())
+        .or(req.context.session_id.as_deref());
+    let source_message_id = req.args["source_message_id"].as_str();
+
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "plan",
+            resource: "policy_spec",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+            arguments: None,
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO policy_specs
+         (id, agent_id, intent, plan_json, policy_name, effect, priority,
+          actor_pattern, action_pattern, resource_pattern, argument_pattern,
+          channel_pattern, sql_pattern, rule_type, rule_config, message,
+          status, proposed_by, source_session_id, source_message_id, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                 'planned', ?17, ?18, ?19, ?20, ?21)",
+        rusqlite::params![
+            id, agent_id, intent, plan_json, policy_name, effect, priority,
+            actor_pattern, action_pattern, resource_pattern, argument_pattern,
+            channel_pattern, sql_pattern, rule_type, rule_config, message,
+            proposed_by, source_session_id, source_message_id, now, now
+        ],
+    )?;
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "policy spec planned — awaiting confirmation".into(),
+        data: serde_json::json!({
+            "spec_id": id,
+            "status": "planned",
+            "policy_name": policy_name,
+            "effect": effect,
+            "priority": priority,
+            "intent": intent,
+            "resource_pattern": resource_pattern,
+            "argument_pattern": argument_pattern
+        }),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
+fn op_policy_spec_confirm(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+    let spec_id = req.args["spec_id"]
+        .as_str()
+        .or(req.args["id"].as_str())
+        .ok_or_else(|| anyhow::anyhow!("missing 'spec_id'"))?;
+    let confirmed = req.args["confirm"].as_bool().unwrap_or(true);
+    if !confirmed {
+        return Ok(fail_response(
+            "invalid_args",
+            "confirm=false is not supported; provide confirm=true to approve".to_string(),
+        ));
+    }
+
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "confirm",
+            resource: "policy_spec",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+            arguments: None,
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    let spec = match load_policy_spec(conn, spec_id)? {
+        Some(s) => s,
+        None => {
+            return Ok(OperationResponse {
+                ok: false,
+                code: "not_found".into(),
+                message: format!("policy spec '{spec_id}' not found"),
+                data: serde_json::json!({}),
+                policy: Some(policy_meta(&decision)),
+                audit: AuditMeta { recorded: true },
+            });
+        }
+    };
+    if spec.status == "applied" {
+        return Ok(OperationResponse {
+            ok: false,
+            code: "invalid_state".into(),
+            message: format!("policy spec '{spec_id}' is already applied"),
+            data: serde_json::json!({
+                "spec_id": spec.id,
+                "status": spec.status,
+                "applied_policy_id": spec.applied_policy_id
+            }),
+            policy: Some(policy_meta(&decision)),
+            audit: AuditMeta { recorded: true },
+        });
+    }
+    if spec.status != "planned" && spec.status != "confirmed" {
+        return Ok(OperationResponse {
+            ok: false,
+            code: "invalid_state".into(),
+            message: format!("policy spec '{spec_id}' cannot be confirmed from status '{}'", spec.status),
+            data: serde_json::json!({ "spec_id": spec.id, "status": spec.status }),
+            policy: Some(policy_meta(&decision)),
+            audit: AuditMeta { recorded: true },
+        });
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "UPDATE policy_specs SET status = 'confirmed', updated_at = ?2 WHERE id = ?1",
+        rusqlite::params![spec_id, now],
+    )?;
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "policy spec confirmed — ready to apply".into(),
+        data: serde_json::json!({
+            "spec_id": spec.id,
+            "status": "confirmed",
+            "policy_name": spec.policy_name,
+            "effect": spec.effect,
+            "priority": spec.priority,
+            "intent": spec.intent
+        }),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
+fn op_policy_spec_apply(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+    let spec_id = req.args["spec_id"]
+        .as_str()
+        .or(req.args["id"].as_str())
+        .ok_or_else(|| anyhow::anyhow!("missing 'spec_id'"))?;
+
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "apply",
+            resource: "policy_spec",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+            arguments: None,
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    let spec = match load_policy_spec(conn, spec_id)? {
+        Some(s) => s,
+        None => {
+            return Ok(OperationResponse {
+                ok: false,
+                code: "not_found".into(),
+                message: format!("policy spec '{spec_id}' not found"),
+                data: serde_json::json!({}),
+                policy: Some(policy_meta(&decision)),
+                audit: AuditMeta { recorded: true },
+            });
+        }
+    };
+    if spec.status == "applied" {
+        return Ok(OperationResponse {
+            ok: true,
+            code: "ok".into(),
+            message: "policy spec already applied".into(),
+            data: serde_json::json!({
+                "spec_id": spec.id,
+                "status": "applied",
+                "policy_id": spec.applied_policy_id
+            }),
+            policy: Some(policy_meta(&decision)),
+            audit: AuditMeta { recorded: true },
+        });
+    }
+    if spec.status != "confirmed" {
+        return Ok(OperationResponse {
+            ok: false,
+            code: "invalid_state".into(),
+            message: format!("policy spec '{spec_id}' must be confirmed before apply"),
+            data: serde_json::json!({ "spec_id": spec.id, "status": spec.status }),
+            policy: Some(policy_meta(&decision)),
+            audit: AuditMeta { recorded: true },
+        });
+    }
+
+    let policy_id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern,
+         argument_pattern, channel_pattern, sql_pattern, rule_type, rule_config, message, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        rusqlite::params![
+            policy_id, spec.policy_name, spec.priority, spec.effect,
+            spec.actor_pattern, spec.action_pattern, spec.resource_pattern,
+            spec.argument_pattern, spec.channel_pattern, spec.sql_pattern,
+            spec.rule_type, spec.rule_config, spec.message, now
+        ],
+    )?;
+    conn.execute(
+        "UPDATE policy_specs SET status = 'applied', applied_policy_id = ?2, updated_at = ?3 WHERE id = ?1",
+        rusqlite::params![spec.id, policy_id, now],
+    )?;
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "policy spec applied — policy is now active".into(),
+        data: serde_json::json!({
+            "spec_id": spec.id,
+            "status": "applied",
+            "policy_id": policy_id,
+            "policy_name": spec.policy_name,
+            "effect": spec.effect,
+            "priority": spec.priority
         }),
         policy: Some(policy_meta(&decision)),
         audit: AuditMeta { recorded: true },
@@ -752,6 +1147,7 @@ fn op_policy_evaluate(conn: &Connection, req: &OperationRequest) -> anyhow::Resu
                 resource,
                 sql_content,
                 channel,
+                arguments: None,
             },
             mode,
         )?
@@ -764,6 +1160,7 @@ fn op_policy_evaluate(conn: &Connection, req: &OperationRequest) -> anyhow::Resu
                 resource,
                 sql_content,
                 channel,
+                arguments: None,
             },
         )?
     };
@@ -813,6 +1210,7 @@ fn op_audit_query(conn: &Connection, req: &OperationRequest) -> anyhow::Result<O
             resource: "audit",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -890,6 +1288,7 @@ fn op_audit_append(conn: &Connection, req: &OperationRequest) -> anyhow::Result<
             resource: "audit",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -950,6 +1349,7 @@ fn op_session_resolve(conn: &Connection, req: &OperationRequest) -> anyhow::Resu
             resource: "session",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -1008,6 +1408,7 @@ fn op_session_list(conn: &Connection, req: &OperationRequest) -> anyhow::Result<
             resource: "session",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -1066,6 +1467,7 @@ fn op_js_tool_add(conn: &Connection, req: &OperationRequest) -> anyhow::Result<O
             resource: "js_tool",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -1113,6 +1515,7 @@ fn op_js_tool_list(conn: &Connection, req: &OperationRequest) -> anyhow::Result<
             resource: "js_tool",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -1157,6 +1560,7 @@ fn op_js_tool_delete(conn: &Connection, req: &OperationRequest) -> anyhow::Resul
             resource: "js_tool",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -1200,14 +1604,18 @@ fn op_knowledge_ingest(conn: &Connection, req: &OperationRequest) -> anyhow::Res
     let title = req.args["title"].as_str();
     let metadata = req.args["metadata"].as_str();
 
+    let is_url = path.map_or(false, |p| p.starts_with("http://") || p.starts_with("https://"));
+    let resource = if is_url { "knowledge:url" } else { "knowledge" };
+
     let decision = evaluate_policy_with_request_context(
         conn,
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "ingest",
-            resource: "knowledge",
+            resource,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: if is_url { path } else { None },
         },
         req,
     )?;
@@ -1248,6 +1656,7 @@ fn op_memory_search(conn: &Connection, req: &OperationRequest) -> anyhow::Result
             resource: "memory",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -1299,6 +1708,7 @@ fn op_memory_fact_add(conn: &Connection, req: &OperationRequest) -> anyhow::Resu
             resource: "fact",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -1356,6 +1766,7 @@ fn op_memory_fact_update(conn: &Connection, req: &OperationRequest) -> anyhow::R
             resource: "fact",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -1411,6 +1822,7 @@ fn op_memory_fact_get(conn: &Connection, req: &OperationRequest) -> anyhow::Resu
             resource: "fact",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -1468,6 +1880,7 @@ fn op_memory_fact_compaction_reset(conn: &Connection, req: &OperationRequest) ->
             resource: "fact",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -1535,6 +1948,7 @@ fn op_skill_add(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Ope
             resource: "skill",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -1569,6 +1983,7 @@ fn op_skill_promote(conn: &Connection, req: &OperationRequest) -> anyhow::Result
             resource: "skill",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -1615,6 +2030,7 @@ fn op_fact_delete(conn: &Connection, req: &OperationRequest) -> anyhow::Result<O
             resource: "fact",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -1670,6 +2086,7 @@ fn op_agent_create(conn: &Connection, req: &OperationRequest) -> anyhow::Result<
             resource: "agent",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -1737,6 +2154,7 @@ fn op_agent_delete(conn: &Connection, req: &OperationRequest) -> anyhow::Result<
             resource: "agent",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -1798,6 +2216,7 @@ fn op_agent_config(conn: &Connection, req: &OperationRequest) -> anyhow::Result<
             resource: "agent",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -1872,6 +2291,7 @@ fn op_ingest_events(conn: &Connection, req: &OperationRequest) -> anyhow::Result
             resource: "events",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -1956,6 +2376,7 @@ fn op_ingest_replay(conn: &Connection, req: &OperationRequest) -> anyhow::Result
             resource: "events",
             sql_content: None,
             channel: req.actor.channel.as_deref(),
+            arguments: None,
         },
         req,
     )?;
@@ -2059,10 +2480,14 @@ fn is_policy_required(op: &str) -> bool {
             | "job.list"
             | "job.run"
             | "job.pause"
+            | "job.history"
             | "job.spec.plan"
             | "job.spec.confirm"
             | "job.spec.apply"
             | "policy.add"
+            | "policy.spec.plan"
+            | "policy.spec.confirm"
+            | "policy.spec.apply"
             | "memory.search"
             | "memory.fact.add"
             | "memory.fact.update"
@@ -2099,6 +2524,9 @@ fn is_idempotent_mutation(op: &str) -> bool {
             | "job.spec.confirm"
             | "job.spec.apply"
             | "policy.add"
+            | "policy.spec.plan"
+            | "policy.spec.confirm"
+            | "policy.spec.apply"
             | "memory.fact.add"
             | "memory.fact.update"
             | "memory.fact.compaction.reset"
@@ -3133,6 +3561,151 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM policies WHERE name = 'deny-shell'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn policy_add_accepts_all_fields() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, created_at)
+             VALUES ('allow-all', 'allow all', 10, 'allow', '*', '*', '*', 1)",
+            [],
+        ).unwrap();
+
+        let resp = execute(&conn, &OperationRequest {
+            op: "policy.add".into(),
+            op_version: Some("v1".into()),
+            request_id: None,
+            idempotency_key: None,
+            actor: ActorContext { agent_id: "main".into(), tenant_id: None, user_id: None, channel: Some("cli".into()) },
+            context: OperationContext::default(),
+            args: serde_json::json!({
+                "name": "whitelist-docs",
+                "effect": "allow",
+                "priority": 100,
+                "action_pattern": "ingest",
+                "resource_pattern": "knowledge:url",
+                "argument_pattern": "https://docs.example.com/*",
+                "message": "Whitelisted domain"
+            }),
+        }).unwrap();
+        assert!(resp.ok);
+        assert_eq!(resp.data["priority"].as_i64(), Some(100));
+
+        let (pri, arg_pat): (i64, Option<String>) = conn.query_row(
+            "SELECT priority, argument_pattern FROM policies WHERE name = 'whitelist-docs'",
+            [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(pri, 100);
+        assert_eq!(arg_pat.as_deref(), Some("https://docs.example.com/*"));
+    }
+
+    #[test]
+    fn policy_spec_plan_confirm_apply_flow() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, created_at)
+             VALUES ('allow-all', 'allow all', 10, 'allow', '*', '*', '*', 1)",
+            [],
+        ).unwrap();
+
+        let actor = ActorContext { agent_id: "main".into(), tenant_id: None, user_id: None, channel: Some("agent".into()) };
+
+        let plan_resp = execute(&conn, &OperationRequest {
+            op: "policy.spec.plan".into(),
+            op_version: Some("v1".into()),
+            request_id: None, idempotency_key: None,
+            actor: actor.clone(),
+            context: OperationContext::default(),
+            args: serde_json::json!({
+                "intent": "only allow docs.example.com URLs",
+                "policy_name": "whitelist-docs",
+                "effect": "allow",
+                "priority": 100,
+                "action_pattern": "ingest",
+                "resource_pattern": "knowledge:url",
+                "argument_pattern": "https://docs.example.com/*",
+                "message": "Whitelisted"
+            }),
+        }).unwrap();
+        assert!(plan_resp.ok);
+        assert_eq!(plan_resp.data["status"].as_str(), Some("planned"));
+        let spec_id = plan_resp.data["spec_id"].as_str().unwrap().to_string();
+
+        let status: String = conn.query_row(
+            "SELECT status FROM policy_specs WHERE id = ?1", [&spec_id], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(status, "planned");
+
+        let confirm_resp = execute(&conn, &OperationRequest {
+            op: "policy.spec.confirm".into(),
+            op_version: Some("v1".into()),
+            request_id: None, idempotency_key: None,
+            actor: actor.clone(),
+            context: OperationContext::default(),
+            args: serde_json::json!({ "spec_id": spec_id }),
+        }).unwrap();
+        assert!(confirm_resp.ok);
+        assert_eq!(confirm_resp.data["status"].as_str(), Some("confirmed"));
+
+        let apply_resp = execute(&conn, &OperationRequest {
+            op: "policy.spec.apply".into(),
+            op_version: Some("v1".into()),
+            request_id: None, idempotency_key: None,
+            actor: actor.clone(),
+            context: OperationContext::default(),
+            args: serde_json::json!({ "spec_id": spec_id }),
+        }).unwrap();
+        assert!(apply_resp.ok);
+        assert_eq!(apply_resp.data["status"].as_str(), Some("applied"));
+
+        let policy_id = apply_resp.data["policy_id"].as_str().unwrap();
+        let (name, effect, pri, arg_pat): (String, String, i64, Option<String>) = conn.query_row(
+            "SELECT name, effect, priority, argument_pattern FROM policies WHERE id = ?1",
+            [policy_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        ).unwrap();
+        assert_eq!(name, "whitelist-docs");
+        assert_eq!(effect, "allow");
+        assert_eq!(pri, 100);
+        assert_eq!(arg_pat.as_deref(), Some("https://docs.example.com/*"));
+    }
+
+    #[test]
+    fn policy_spec_apply_requires_confirmed_state() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, created_at)
+             VALUES ('allow-all', 'allow all', 10, 'allow', '*', '*', '*', 1)",
+            [],
+        ).unwrap();
+
+        let actor = ActorContext { agent_id: "main".into(), tenant_id: None, user_id: None, channel: Some("agent".into()) };
+
+        let plan_resp = execute(&conn, &OperationRequest {
+            op: "policy.spec.plan".into(),
+            op_version: Some("v1".into()),
+            request_id: None, idempotency_key: None,
+            actor: actor.clone(),
+            context: OperationContext::default(),
+            args: serde_json::json!({
+                "intent": "test",
+                "policy_name": "test-policy",
+                "effect": "deny",
+            }),
+        }).unwrap();
+        assert!(plan_resp.ok);
+        let spec_id = plan_resp.data["spec_id"].as_str().unwrap().to_string();
+
+        let apply_resp = execute(&conn, &OperationRequest {
+            op: "policy.spec.apply".into(),
+            op_version: Some("v1".into()),
+            request_id: None, idempotency_key: None,
+            actor: actor.clone(),
+            context: OperationContext::default(),
+            args: serde_json::json!({ "spec_id": spec_id }),
+        }).unwrap();
+        assert!(!apply_resp.ok, "apply should fail on unconfirmed spec");
+        assert_eq!(apply_resp.code, "invalid_state");
     }
 
     #[test]

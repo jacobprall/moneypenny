@@ -1,0 +1,81 @@
+---
+title: Search
+description: Hybrid retrieval across all memory stores
+---
+
+Moneypenny provides a unified search system that queries across all data
+stores in a single call — facts, messages, tool calls, knowledge chunks, and
+policy audit records.
+
+## Hybrid Search
+
+Search combines two retrieval methods:
+
+1. **FTS5 full-text search** — keyword and phrase matching with BM25 ranking
+2. **Vector KNN search** — semantic similarity using embeddings
+
+Results from both methods are fused using **Reciprocal Rank Fusion (RRF)**,
+which merges ranked lists without needing score normalization.
+
+## Using Search
+
+From the CLI:
+
+```bash
+mp facts search "deployment pipeline"
+mp knowledge search "security policy"
+```
+
+From the agent (tool call during conversation):
+
+```
+[TOOL:memory_search]({"query":"What do we know about the API rate limits?"})
+```
+
+Via canonical operations:
+
+```bash
+echo '{"op":"memory.search","args":{"query":"deployment","limit":10}}' | mp sidecar
+```
+
+## Store-Weighted Scoring
+
+Results are weighted by store type based on query intent:
+
+| Store | Weight | Purpose |
+|---|---|---|
+| `facts` | High | Curated, structured knowledge |
+| `knowledge` | Medium-High | Reference material from documents |
+| `messages` | Medium | Conversation history |
+| `tool_calls` | Low-Medium | Tool execution records |
+| `policy_audit` | Low | Policy decisions |
+
+Weights adapt by intent detection — a question about "what happened" shifts
+weight toward messages and audit; a question about "how does X work" shifts
+toward facts and knowledge.
+
+## MMR Diversity Re-ranking
+
+After fusion, results are re-ranked using **Maximal Marginal Relevance (MMR)**
+to avoid returning five near-identical results. MMR balances relevance against
+diversity, ensuring the top results cover different aspects of the query.
+
+## Embeddings
+
+When an embedding provider is configured, Moneypenny generates vectors for:
+
+- Messages (conversation history)
+- Facts (structured memory)
+- Knowledge chunks (ingested documents)
+- Tool call records
+- Policy audit entries
+
+Embeddings are generated incrementally — new content is vectorized on write
+or during a background pass. The default local model is
+`nomic-embed-text-v1.5` (768 dimensions, GGUF format).
+
+## Search Without Embeddings
+
+Vector search is optional. Without embeddings, search falls back to FTS5-only
+mode, which still provides high-quality keyword and phrase matching across all
+stores. Embeddings add semantic similarity but are not required.

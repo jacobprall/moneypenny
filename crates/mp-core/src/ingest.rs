@@ -706,3 +706,275 @@ fn normalized_projection_fields(
         correlation_id,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::schema::init_agent_db(&conn).unwrap();
+        conn
+    }
+
+    fn write_tmp_jsonl(lines: &[&str]) -> tempfile::NamedTempFile {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        for line in lines {
+            writeln!(f, "{line}").unwrap();
+        }
+        f.flush().unwrap();
+        f
+    }
+
+    #[test]
+    fn ingest_empty_file() {
+        let conn = setup();
+        let f = write_tmp_jsonl(&[]);
+        let summary = ingest_jsonl_file(&conn, "test", f.path(), false, "agent1").unwrap();
+        assert_eq!(summary.processed_count, 0);
+        assert_eq!(summary.inserted_count, 0);
+        assert_eq!(summary.error_count, 0);
+    }
+
+    #[test]
+    fn ingest_single_message_event() {
+        let conn = setup();
+        let event = r#"{"type":"message.queued","content":"hello","session_id":"s1","id":"e1","timestamp":1700000000}"#;
+        let f = write_tmp_jsonl(&[event]);
+        let summary = ingest_jsonl_file(&conn, "openclaw", f.path(), false, "agent1").unwrap();
+        assert_eq!(summary.processed_count, 1);
+        assert_eq!(summary.inserted_count, 1);
+        assert_eq!(summary.projected_count, 1);
+        assert_eq!(summary.error_count, 0);
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM external_events", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+
+        let msg_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM messages WHERE session_id = 's1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(msg_count, 1);
+    }
+
+    #[test]
+    fn ingest_deduplication() {
+        let conn = setup();
+        let event = r#"{"type":"message.queued","content":"hello","id":"dup1","timestamp":1700000000}"#;
+        let f = write_tmp_jsonl(&[event, event]);
+        let summary = ingest_jsonl_file(&conn, "test", f.path(), false, "agent1").unwrap();
+        assert_eq!(summary.inserted_count, 1);
+        assert_eq!(summary.deduped_count, 1);
+    }
+
+    #[test]
+    fn ingest_incremental_resume() {
+        let conn = setup();
+        let e1 = r#"{"type":"message.queued","content":"first","id":"inc1","timestamp":1700000000}"#;
+        let e2 = r#"{"type":"message.queued","content":"second","id":"inc2","timestamp":1700000001}"#;
+
+        // Use a persistent file path so the resume lookup matches
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("events.jsonl");
+
+        std::fs::write(&file_path, format!("{e1}\n")).unwrap();
+        let s1 = ingest_jsonl_file(&conn, "test", &file_path, false, "agent1").unwrap();
+        assert_eq!(s1.inserted_count, 1);
+        assert_eq!(s1.to_line, 1);
+
+        std::fs::write(&file_path, format!("{e1}\n{e2}\n")).unwrap();
+        let s2 = ingest_jsonl_file(&conn, "test", &file_path, false, "agent1").unwrap();
+        assert_eq!(s2.from_line, 2);
+        assert_eq!(s2.inserted_count, 1);
+    }
+
+    #[test]
+    fn ingest_replay_reruns_from_start() {
+        let conn = setup();
+        let event = r#"{"type":"message.queued","content":"replayed","id":"rpl1","timestamp":1700000000}"#;
+        let f = write_tmp_jsonl(&[event]);
+
+        ingest_jsonl_file(&conn, "test", f.path(), false, "agent1").unwrap();
+        let s2 = ingest_jsonl_file(&conn, "test", f.path(), true, "agent1").unwrap();
+        assert_eq!(s2.from_line, 1);
+        assert_eq!(s2.deduped_count, 1);
+    }
+
+    #[test]
+    fn ingest_model_usage_projection() {
+        let conn = setup();
+        let event = r#"{"type":"model.usage","provider":"anthropic","model":"claude-3","input_tokens":100,"output_tokens":50,"cost_usd":0.01,"id":"mu1","timestamp":1700000000}"#;
+        let f = write_tmp_jsonl(&[event]);
+        let s = ingest_jsonl_file(&conn, "test", f.path(), false, "agent1").unwrap();
+        assert_eq!(s.projected_count, 1);
+
+        let tool_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM tool_calls WHERE tool_name LIKE 'model.usage%'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(tool_count, 1);
+    }
+
+    #[test]
+    fn ingest_run_event_projection() {
+        let conn = setup();
+        let event = r#"{"type":"run.completed","status":"success","output":"done","id":"run1","timestamp":1700000000}"#;
+        let f = write_tmp_jsonl(&[event]);
+        let s = ingest_jsonl_file(&conn, "test", f.path(), false, "agent1").unwrap();
+        assert_eq!(s.projected_count, 1);
+
+        let tc: i64 = conn
+            .query_row("SELECT COUNT(*) FROM tool_calls WHERE tool_name = 'run.completed'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(tc, 1);
+    }
+
+    #[test]
+    fn ingest_webhook_event_creates_audit() {
+        let conn = setup();
+        let event = r#"{"type":"webhook.received","provider":"github","url":"/hook","id":"wh1","timestamp":1700000000}"#;
+        let f = write_tmp_jsonl(&[event]);
+        let s = ingest_jsonl_file(&conn, "test", f.path(), false, "agent1").unwrap();
+        assert_eq!(s.projected_count, 1);
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM policy_audit WHERE action = 'webhook.received'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn ingest_malformed_json_counted_as_processed() {
+        let conn = setup();
+        let f = write_tmp_jsonl(&["not json at all"]);
+        let s = ingest_jsonl_file(&conn, "test", f.path(), false, "agent1").unwrap();
+        assert_eq!(s.processed_count, 1);
+        assert_eq!(s.inserted_count, 1);
+    }
+
+    #[test]
+    fn ingest_blank_lines_skipped() {
+        let conn = setup();
+        let event = r#"{"type":"message.queued","content":"hello","id":"bl1","timestamp":1700000000}"#;
+        let f = write_tmp_jsonl(&["", event, "  ", ""]);
+        let s = ingest_jsonl_file(&conn, "test", f.path(), false, "agent1").unwrap();
+        assert_eq!(s.inserted_count, 1);
+    }
+
+    #[test]
+    fn recent_runs_returns_completed() {
+        let conn = setup();
+        let event = r#"{"type":"session.start","id":"rr1","timestamp":1700000000}"#;
+        let f = write_tmp_jsonl(&[event]);
+        ingest_jsonl_file(&conn, "test", f.path(), false, "agent1").unwrap();
+
+        let runs = recent_runs(&conn, Some("test"), None, None, 10).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert!(runs[0].status.starts_with("completed"));
+    }
+
+    #[test]
+    fn preflight_counts_inserts_and_dedupes() {
+        let conn = setup();
+        let e1 = r#"{"type":"message.queued","content":"a","id":"pf1","timestamp":1700000000}"#;
+        let e2 = r#"{"type":"message.queued","content":"b","id":"pf2","timestamp":1700000001}"#;
+
+        let f1 = write_tmp_jsonl(&[e1]);
+        ingest_jsonl_file(&conn, "test", f1.path(), false, "agent1").unwrap();
+
+        let f2 = write_tmp_jsonl(&[e1, e2]);
+        let pf = preflight_jsonl_file(&conn, "test", f2.path(), true).unwrap();
+        assert_eq!(pf.would_dedupe_count, 1);
+        assert_eq!(pf.would_insert_count, 1);
+    }
+
+    #[test]
+    fn normalized_fields_extracted() {
+        let payload: Value = serde_json::json!({
+            "provider": "openai",
+            "model": "gpt-4",
+            "input_tokens": 100,
+            "output_tokens": 200,
+            "cost_usd": 0.05,
+            "correlation_id": "corr-123"
+        });
+        let nf = normalized_projection_fields(&payload, "test", "key1", Some("session1"));
+        assert_eq!(nf.provider.as_deref(), Some("openai"));
+        assert_eq!(nf.model.as_deref(), Some("gpt-4"));
+        assert_eq!(nf.input_tokens, Some(100));
+        assert_eq!(nf.output_tokens, Some(200));
+        assert_eq!(nf.total_tokens, Some(300));
+        assert_eq!(nf.cost_usd, Some(0.05));
+        assert_eq!(nf.correlation_id.as_deref(), Some("corr-123"));
+    }
+
+    #[test]
+    fn normalized_fields_fallback() {
+        let payload: Value = serde_json::json!({"some_field": "value"});
+        let nf = normalized_projection_fields(&payload, "src", "key", None);
+        assert!(nf.provider.is_none());
+        assert!(nf.model.is_none());
+        assert_eq!(nf.correlation_id.as_deref(), Some("src:key"));
+    }
+
+    #[test]
+    fn pick_str_checks_multiple_keys() {
+        let v: Value = serde_json::json!({"sessionId": "abc"});
+        let result = pick_str(&v, &["session_id", "sessionId"]);
+        assert_eq!(result, Some("abc"));
+    }
+
+    #[test]
+    fn pick_ts_parses_rfc3339() {
+        let v: Value = serde_json::json!({"timestamp": "2024-01-15T10:30:00Z"});
+        let ts = pick_ts(&v);
+        assert!(ts.is_some());
+        assert!(ts.unwrap() > 1700000000);
+    }
+
+    #[test]
+    fn pick_ts_parses_integer() {
+        let v: Value = serde_json::json!({"ts": 1700000000});
+        assert_eq!(pick_ts(&v), Some(1700000000));
+    }
+
+    #[test]
+    fn stable_hash_deterministic() {
+        let h1 = stable_hash_hex("hello world");
+        let h2 = stable_hash_hex("hello world");
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 16);
+    }
+
+    #[test]
+    fn candidate_from_message_too_short() {
+        assert!(candidate_from_message("Short text.").is_none());
+    }
+
+    #[test]
+    fn candidate_from_message_json_rejected() {
+        assert!(candidate_from_message(r#"{"key": "value", "another": "field that is long enough to pass length check"}"#).is_none());
+    }
+
+    #[test]
+    fn candidate_from_message_valid() {
+        let c = candidate_from_message(
+            "The Moneypenny agent platform uses SQLite for durable storage and CRDT sync across multiple agents."
+        );
+        assert!(c.is_some());
+        let c = c.unwrap();
+        assert!(!c.content.is_empty());
+        assert!(!c.pointer.is_empty());
+        assert_eq!(c.confidence, 0.7);
+    }
+
+    #[test]
+    fn extract_keywords_filters_short_words() {
+        let kw = extract_keywords("the a is of and but longer words here");
+        assert!(kw.is_some());
+        let kw = kw.unwrap();
+        assert!(!kw.contains("the"));
+        assert!(kw.contains("longer"));
+    }
+}

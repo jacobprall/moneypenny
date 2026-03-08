@@ -147,9 +147,6 @@ pub struct HttpChannelConfig {
     #[serde(default)]
     pub api_key: Option<String>,
 
-    /// Optional path to built web UI directory (e.g. `web-ui/dist`). If set and the path exists, the UI is served at `/`.
-    #[serde(default)]
-    pub web_ui_dir: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

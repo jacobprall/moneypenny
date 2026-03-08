@@ -15,11 +15,11 @@ git clone --recurse-submodules https://github.com/jacobprall/moneypenny.git
 cd moneypenny && cargo build
 
 mp init       # creates config + downloads local embedding model
-mp start      # starts gateway (CLI chat, HTTP API, optional Web UI)
+mp start      # starts gateway (CLI chat, HTTP API)
 
 ```
 
-Embeddings are generated locally by default. Optional Web UI: build `web-ui` and serve `web-ui/dist` from the same port.
+Embeddings are generated locally by default.
 
 ---
 

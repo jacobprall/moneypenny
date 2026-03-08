@@ -115,6 +115,7 @@ fn resolve_agent<'a>(config: &'a Config, name: Option<&str>) -> Result<&'a mp_co
 fn open_agent_db(config: &Config, agent_name: &str) -> Result<rusqlite::Connection> {
     let db_path = config.agent_db_path(agent_name);
     let conn = mp_core::db::open(&db_path)?;
+    mp_core::schema::init_agent_db(&conn)?;
     mp_ext::init_all_extensions(&conn)?;
     if let Some(agent) = config.agents.iter().find(|a| a.name == agent_name) {
         // Register vector indexes so vector_quantize_scan is usable immediately.
@@ -515,6 +516,7 @@ async fn agent_turn(
         resource: "conversation",
         sql_content: Some(user_message),
         channel: None,
+        arguments: None,
     };
     let decision = mp_core::policy::evaluate_with_mode(conn, &msg_policy, policy_mode)?;
     if matches!(decision.effect, mp_core::policy::Effect::Deny) {
@@ -1232,16 +1234,6 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
         let http_cfg = config.channels.http.clone();
         let slack_cfg = config.channels.slack.clone();
         let discord_cfg = config.channels.discord.clone();
-        let web_ui_dir = config.channels.http.as_ref()
-            .and_then(|h| h.web_ui_dir.clone())
-            .or_else(|| {
-                let d = std::path::Path::new("web-ui/dist");
-                if d.exists() {
-                    Some(d.to_path_buf())
-                } else {
-                    None
-                }
-            });
         let default_agent = config.agents.first()
             .map(|a| a.name.clone())
             .unwrap_or_else(|| "main".into());
@@ -1253,7 +1245,6 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
                 http_cfg.as_ref(),
                 slack_cfg.as_ref(),
                 discord_cfg.as_ref(),
-                web_ui_dir,
                 default_agent,
                 dispatch_clone,
                 op_dispatch_clone,
@@ -1335,18 +1326,15 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
         });
     }
 
+    // Write PID file for `mp stop`
+    let pid_path = config.data_dir.join("mp.pid");
+    std::fs::write(&pid_path, std::process::id().to_string())?;
+
     println!();
     println!("  Gateway ready. {} agent(s) running.", config.agents.len());
     if has_http_channel {
         let port = config.channels.http.as_ref().map(|h| h.port).unwrap_or(8080);
         println!("  HTTP API listening on port {port}  (POST /v1/chat, POST /v1/ops, WS /v1/ws, GET /health)");
-        let web_ui_served = config.channels.http.as_ref()
-            .and_then(|h| h.web_ui_dir.as_ref())
-            .map(|p| p.exists())
-            .unwrap_or_else(|| std::path::Path::new("web-ui/dist").exists());
-        if web_ui_served {
-            println!("  Web UI at http://localhost:{port}/");
-        }
     }
     if config.channels.slack.is_some() {
         println!("  Slack Events API endpoint: POST /slack/events");
@@ -1447,13 +1435,45 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
         w.shutdown().await;
     }
 
+    let _ = std::fs::remove_file(&pid_path);
     println!("  Goodbye.");
     Ok(())
 }
 
-async fn cmd_stop(_config: &Config) -> Result<()> {
-    println!("  Sending shutdown signal...");
-    println!("  (In production, this would signal the running gateway via PID file or socket.)");
+async fn cmd_stop(config: &Config) -> Result<()> {
+    let pid_path = config.data_dir.join("mp.pid");
+    if !pid_path.exists() {
+        println!("  No running gateway found (no PID file at {}).", pid_path.display());
+        return Ok(());
+    }
+
+    let pid_str = std::fs::read_to_string(&pid_path)?;
+    let pid: i32 = pid_str
+        .trim()
+        .parse()
+        .map_err(|e| anyhow::anyhow!("invalid PID in {}: {e}", pid_path.display()))?;
+
+    println!("  Sending SIGTERM to gateway (pid {pid})...");
+    #[cfg(unix)]
+    {
+        let status = unsafe { libc::kill(pid, libc::SIGTERM) };
+        if status == 0 {
+            println!("  Signal sent. Gateway should shut down gracefully.");
+            let _ = std::fs::remove_file(&pid_path);
+        } else {
+            let errno = std::io::Error::last_os_error();
+            if errno.raw_os_error() == Some(libc::ESRCH) {
+                println!("  Process {pid} not found. Cleaning up stale PID file.");
+                let _ = std::fs::remove_file(&pid_path);
+            } else {
+                anyhow::bail!("Failed to send signal to pid {pid}: {errno}");
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        println!("  Signal-based stop is only supported on Unix. Kill process {pid} manually.");
+    }
     Ok(())
 }
 
@@ -1707,7 +1727,7 @@ async fn run_scheduler(
             for job in &due_jobs {
                 tracing::info!(agent = %agent.name, job = %job.name, "scheduler: dispatching");
                 let result = mp_core::scheduler::dispatch_job(&conn, job, &|j| {
-                    Ok(format!("Scheduled execution of job '{}'", j.name))
+                    mp_core::scheduler::execute_job_payload(&conn, j)
                 });
                 match result {
                     Ok(run) => {
@@ -2367,11 +2387,161 @@ async fn cmd_ingest(
             embed_pending(&conn, ep.as_ref(), &ag.name).await;
         }
     } else if let Some(u) = url {
-        println!("  [mp ingest --url {u} — HTTP fetch not yet implemented]");
+        println!("  Fetching {u} …");
+        let response = reqwest::get(&u).await
+            .map_err(|e| anyhow::anyhow!("HTTP fetch failed for {u}: {e}"))?;
+        let status_code = response.status();
+        if !status_code.is_success() {
+            anyhow::bail!("HTTP {status_code} for {u}");
+        }
+        let content_type = response.headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let body = response.text().await
+            .map_err(|e| anyhow::anyhow!("failed to read response body from {u}: {e}"))?;
+
+        let is_html = content_type.contains("text/html");
+        let title = if is_html {
+            extract_html_title(&body)
+        } else {
+            None
+        }.unwrap_or_else(|| {
+            u.rsplit('/').find(|s| !s.is_empty())
+                .unwrap_or(&u)
+                .to_string()
+        });
+
+        let content = if is_html {
+            strip_html_tags(&body)
+        } else {
+            body
+        };
+
+        if content.trim().is_empty() {
+            anyhow::bail!("fetched URL returned empty content: {u}");
+        }
+
+        let req = op_request(
+            &ag.name,
+            "knowledge.ingest",
+            serde_json::json!({
+                "path": u,
+                "title": title,
+                "content": content,
+                "metadata": format!("{{\"source_url\":\"{u}\",\"content_type\":\"{content_type}\"}}"),
+            }),
+        );
+        let resp = mp_core::operations::execute(&conn, &req)?;
+        if !resp.ok {
+            anyhow::bail!("ingest denied: {}", resp.message);
+        }
+        let doc_id = resp.data["document_id"].as_str().unwrap_or("-");
+        let chunks = resp.data["chunks_created"].as_u64().unwrap_or(0);
+        println!("  Ingested {u}: {chunks} chunks (doc {doc_id})");
+        if let Ok(ep) = build_embedding_provider(config, ag) {
+            embed_pending(&conn, ep.as_ref(), &ag.name).await;
+        }
     } else {
         anyhow::bail!("Provide a path, --openclaw-file, or --url to ingest.");
     }
     Ok(())
+}
+
+/// Minimal HTML tag stripper that collapses whitespace and drops script/style blocks.
+fn strip_html_tags(html: &str) -> String {
+    let mut out = String::with_capacity(html.len() / 2);
+    let mut in_tag = false;
+    let mut in_skip_block = false;
+    let mut tag_buf = String::new();
+
+    let mut chars = html.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '<' {
+            in_tag = true;
+            tag_buf.clear();
+            continue;
+        }
+        if in_tag {
+            if ch == '>' {
+                in_tag = false;
+                let tag_lower = tag_buf.to_ascii_lowercase();
+                let tag_name = tag_lower.split_whitespace().next().unwrap_or("");
+                if tag_name == "script" || tag_name == "style" || tag_name == "noscript" {
+                    in_skip_block = true;
+                } else if tag_name == "/script" || tag_name == "/style" || tag_name == "/noscript" {
+                    in_skip_block = false;
+                }
+                if matches!(tag_name, "br" | "br/" | "p" | "/p" | "div" | "/div"
+                    | "h1" | "/h1" | "h2" | "/h2" | "h3" | "/h3"
+                    | "h4" | "/h4" | "h5" | "/h5" | "h6" | "/h6"
+                    | "li" | "/li" | "tr" | "/tr" | "blockquote" | "/blockquote") {
+                    out.push('\n');
+                }
+            } else {
+                tag_buf.push(ch);
+            }
+            continue;
+        }
+        if in_skip_block {
+            continue;
+        }
+        if ch == '&' {
+            let mut entity = String::new();
+            while let Some(&next) = chars.peek() {
+                if next == ';' || entity.len() > 8 {
+                    chars.next();
+                    break;
+                }
+                entity.push(next);
+                chars.next();
+            }
+            match entity.as_str() {
+                "amp" => out.push('&'),
+                "lt" => out.push('<'),
+                "gt" => out.push('>'),
+                "quot" => out.push('"'),
+                "apos" => out.push('\''),
+                "nbsp" => out.push(' '),
+                _ => { out.push(' '); }
+            }
+            continue;
+        }
+        out.push(ch);
+    }
+
+    collapse_whitespace(&out)
+}
+
+fn collapse_whitespace(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut prev_blank = false;
+    for line in s.lines() {
+        let trimmed = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        if trimmed.is_empty() {
+            if !prev_blank && !result.is_empty() {
+                result.push('\n');
+                prev_blank = true;
+            }
+        } else {
+            result.push_str(&trimmed);
+            result.push('\n');
+            prev_blank = false;
+        }
+    }
+    result.trim().to_string()
+}
+
+/// Extract the <title> text from an HTML document.
+fn extract_html_title(html: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    let start = lower.find("<title")?.checked_add(6)?;
+    let after_tag = lower[start..].find('>')?.checked_add(1)?;
+    let content_start = start + after_tag;
+    let end = lower[content_start..].find("</title")?;
+    let title = html[content_start..content_start + end].trim().to_string();
+    if title.is_empty() { None } else { Some(title) }
 }
 
 fn op_request(agent_id: &str, op: &str, args: serde_json::Value) -> mp_core::operations::OperationRequest {
@@ -2446,6 +2616,7 @@ fn canonical_operation_catalog() -> &'static [(&'static str, &'static str)] {
         ("job.list", "List scheduled jobs"),
         ("job.run", "Run a job immediately"),
         ("job.pause", "Pause a scheduled job"),
+        ("job.history", "List job run history"),
         ("job.spec.plan", "Plan an agent-generated job spec"),
         ("job.spec.confirm", "Confirm a planned job spec"),
         ("job.spec.apply", "Apply a confirmed job spec into jobs"),
@@ -2976,16 +3147,22 @@ async fn cmd_policy(config: &Config, cmd: cli::PolicyCommand) -> Result<()> {
             }
             println!();
         }
-        cli::PolicyCommand::Add { name, effect, actor, action, resource, message } => {
+        cli::PolicyCommand::Add { name, effect, priority, actor, action, resource, argument, channel, sql, rule_type, rule_config, message } => {
             let req = op_request(
                 &ag.name,
                 "policy.add",
                 serde_json::json!({
                     "name": name,
                     "effect": effect,
+                    "priority": priority,
                     "actor_pattern": actor,
                     "action_pattern": action,
                     "resource_pattern": resource,
+                    "argument_pattern": argument,
+                    "channel_pattern": channel,
+                    "sql_pattern": sql,
+                    "rule_type": rule_type,
+                    "rule_config": rule_config,
                     "message": message,
                 }),
             );
@@ -2996,7 +3173,8 @@ async fn cmd_policy(config: &Config, cmd: cli::PolicyCommand) -> Result<()> {
             }
             let id = resp.data["id"].as_str().unwrap_or("-");
             let printed_name = resp.data["name"].as_str().unwrap_or("policy");
-            println!("  Policy \"{printed_name}\" added ({id})");
+            let pri = resp.data["priority"].as_i64().unwrap_or(0);
+            println!("  Policy \"{printed_name}\" added ({id}, priority={pri})");
         }
         cli::PolicyCommand::Test { input } => {
             let req = op_request(
@@ -3064,7 +3242,51 @@ async fn cmd_policy(config: &Config, cmd: cli::PolicyCommand) -> Result<()> {
             println!();
         }
         cli::PolicyCommand::Load { file } => {
-            println!("  [mp policy load {file} — Polar file loading not yet implemented]");
+            let content = std::fs::read_to_string(&file)?;
+            let policies: Vec<serde_json::Value> = if file.ends_with(".toml") {
+                let table: toml::Value = toml::from_str(&content)?;
+                match table.get("policies").and_then(|v| v.as_array()) {
+                    Some(arr) => arr.iter().map(|v| toml_to_json(v)).collect(),
+                    None => anyhow::bail!("TOML file must contain a [[policies]] array"),
+                }
+            } else {
+                serde_json::from_str(&content)?
+            };
+
+            let mut loaded = 0;
+            let mut errors = 0;
+            for p in &policies {
+                let name = match p["name"].as_str() {
+                    Some(n) => n,
+                    None => {
+                        eprintln!("  Skipping policy without 'name' field");
+                        errors += 1;
+                        continue;
+                    }
+                };
+                let mut args = p.clone();
+                if args.get("effect").is_none() {
+                    args["effect"] = serde_json::json!("deny");
+                }
+                let req = op_request(&ag.name, "policy.add", args);
+                match mp_core::operations::execute(&conn, &req) {
+                    Ok(resp) if resp.ok => {
+                        let id = resp.data["id"].as_str().unwrap_or("-");
+                        println!("  Loaded policy \"{name}\" ({id})");
+                        loaded += 1;
+                    }
+                    Ok(resp) => {
+                        eprintln!("  Failed to load \"{name}\": {}", resp.message);
+                        errors += 1;
+                    }
+                    Err(e) => {
+                        eprintln!("  Error loading \"{name}\": {e}");
+                        errors += 1;
+                    }
+                }
+            }
+            println!();
+            println!("  Loaded {loaded} policies ({errors} errors) from {file}");
         }
     }
     Ok(())
@@ -3165,23 +3387,28 @@ async fn cmd_job(config: &Config, cmd: cli::JobCommand) -> Result<()> {
             println!("  Job {} paused.", resp.data["id"].as_str().unwrap_or("-"));
         }
         cli::JobCommand::History { id } => {
-            let job_id = id.unwrap_or_else(|| "%".into());
-            let mut stmt = conn.prepare(
-                "SELECT id, job_id, status, result, started_at FROM job_runs
-                 WHERE job_id LIKE ?1 ORDER BY created_at DESC LIMIT 20"
-            )?;
-            let runs: Vec<(String, String, String, Option<String>, i64)> =
-                stmt.query_map([&job_id], |r| {
-                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
-                })?.collect::<Result<Vec<_>, _>>()?;
-
+            let mut args = serde_json::json!({ "limit": 20 });
+            if let Some(ref job_id) = id {
+                args["id"] = serde_json::json!(job_id);
+            }
+            let req = op_request(&ag.name, "job.history", args);
+            let resp = mp_core::operations::execute(&conn, &req)?;
+            if !resp.ok {
+                println!("  Job history denied: {}", resp.message);
+                return Ok(());
+            }
+            let runs = resp.data.as_array().cloned().unwrap_or_default();
             println!();
             if runs.is_empty() {
                 println!("  No job runs found.");
             } else {
-                for (rid, jid, status, result, _ts) in &runs {
-                    let preview = result.as_deref().unwrap_or("-");
-                    println!("  {rid}  job:{jid}  {status}  {preview}");
+                for r in &runs {
+                    println!("  {}  job:{}  {}  {}",
+                        r["id"].as_str().unwrap_or("-"),
+                        r["job_id"].as_str().unwrap_or("-"),
+                        r["status"].as_str().unwrap_or("-"),
+                        r["result"].as_str().unwrap_or("-"),
+                    );
                 }
             }
             println!();
@@ -3263,7 +3490,57 @@ async fn cmd_audit(
             println!();
         }
         Some(cli::AuditCommand::Export { format }) => {
-            println!("  [mp audit export --format {format} — not yet implemented]");
+            let req = op_request(
+                &ag.name,
+                "audit.query",
+                serde_json::json!({ "limit": 10000 }),
+            );
+            let resp = mp_core::operations::execute(&conn, &req)?;
+            if !resp.ok {
+                anyhow::bail!("Audit export denied: {}", resp.message);
+            }
+            let entries = resp.data.as_array().cloned().unwrap_or_default();
+
+            match format.as_str() {
+                "json" => {
+                    println!("{}", serde_json::to_string_pretty(&entries)?);
+                }
+                "csv" => {
+                    println!("id,actor,action,resource,effect,reason,session_id,created_at,correlation_id");
+                    for e in &entries {
+                        println!("{},{},{},{},{},{},{},{},{}",
+                            csv_escape(e["id"].as_str().unwrap_or("")),
+                            csv_escape(e["actor"].as_str().unwrap_or("")),
+                            csv_escape(e["action"].as_str().unwrap_or("")),
+                            csv_escape(e["resource"].as_str().unwrap_or("")),
+                            csv_escape(e["effect"].as_str().unwrap_or("")),
+                            csv_escape(e["reason"].as_str().unwrap_or("")),
+                            csv_escape(e["session_id"].as_str().unwrap_or("")),
+                            e["created_at"].as_i64().unwrap_or(0),
+                            csv_escape(e["correlation_id"].as_str().unwrap_or("")),
+                        );
+                    }
+                }
+                "sql" => {
+                    for e in &entries {
+                        println!(
+                            "INSERT INTO policy_audit (id, actor, action, resource, effect, reason, session_id, created_at, correlation_id) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {});",
+                            sql_quote(e["id"].as_str().unwrap_or("")),
+                            sql_quote(e["actor"].as_str().unwrap_or("")),
+                            sql_quote(e["action"].as_str().unwrap_or("")),
+                            sql_quote(e["resource"].as_str().unwrap_or("")),
+                            sql_quote(e["effect"].as_str().unwrap_or("")),
+                            sql_quote(e["reason"].as_str().unwrap_or("")),
+                            sql_quote(e["session_id"].as_str().unwrap_or("")),
+                            e["created_at"].as_i64().unwrap_or(0),
+                            sql_quote(e["correlation_id"].as_str().unwrap_or("")),
+                        );
+                    }
+                }
+                other => {
+                    anyhow::bail!("Unsupported export format: {other}. Use json, csv, or sql.");
+                }
+            }
         }
     }
     Ok(())
@@ -3565,4 +3842,34 @@ async fn cmd_health(config: &Config) -> Result<()> {
 
     println!();
     Ok(())
+}
+
+fn toml_to_json(v: &toml::Value) -> serde_json::Value {
+    match v {
+        toml::Value::String(s) => serde_json::Value::String(s.clone()),
+        toml::Value::Integer(i) => serde_json::json!(i),
+        toml::Value::Float(f) => serde_json::json!(f),
+        toml::Value::Boolean(b) => serde_json::json!(b),
+        toml::Value::Datetime(d) => serde_json::Value::String(d.to_string()),
+        toml::Value::Array(a) => serde_json::Value::Array(a.iter().map(toml_to_json).collect()),
+        toml::Value::Table(t) => {
+            let mut map = serde_json::Map::new();
+            for (k, val) in t {
+                map.insert(k.clone(), toml_to_json(val));
+            }
+            serde_json::Value::Object(map)
+        }
+    }
+}
+
+fn csv_escape(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+fn sql_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
 }

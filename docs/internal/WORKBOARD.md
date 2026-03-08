@@ -1,0 +1,82 @@
+# Moneypenny — Central Workboard
+
+Status: active single source of truth for outstanding work.
+
+---
+
+## How To Use
+
+- Track only **outstanding** items here.
+- When work ships, remove or re-scope the item here first.
+
+---
+
+## Implementation Queue (Ordered, No Timeline)
+
+1. **Ingest depth (M2)**
+   - [x] Expand projection depth with normalized structured fields (token/cost/provider/model/correlation semantics).
+   - [x] Add extraction pass over imported conversations to promote durable facts from external logs.
+   - [x] Add replay safety command ergonomics (clear run selection/filtering, operator-safe preview defaults).
+
+2. **Runtime integration parity (adapters + contracts)**
+   - [x] Add stdio sidecar operation endpoint for CLI runtime integration.
+   - [x] Map MCP adapter to canonical operations (translation only, no business logic).
+   - [ ] Expose canonical operations via HTTP/gRPC parity layer (HTTP shipped; gRPC pending).
+   - [x] Add parity contract tests across CLI/MCP/API/ingest for same-op same-outcome guarantees.
+
+3. **Agent-first JS jobs (M4)**
+   - [x] Define schema for agent-generated job specs.
+   - [x] Implement "plan -> confirm -> apply" flow for agent job creation.
+   - [x] Ensure JS job creation uses same canonical handlers as CLI/API/MCP.
+   - [ ] Add validation tests for natural-language-to-job workflows.
+
+4. **Ship placeholder commands**
+   - [x] Implement `ingest --url`.
+   - [x] Implement `policy load`.
+   - [x] Implement `audit export`.
+
+5. **Hardening & CI**
+   - [x] CI pipeline (GitHub Actions) — build, test, clippy, fmt.
+   - [x] Fix 6 production `unwrap()`s — eliminate potential panics.
+   - [x] `mp-ext` integration tests — validate FFI foundation (4 tests).
+   - [x] `ingest.rs` unit tests — cover untested ingest pipeline (22 tests).
+   - [x] `cmd_stop` — PID-file based graceful shutdown via SIGTERM.
+
+6. **Deferred product surface expansion**
+   - [ ] Additional channel adapters beyond current set.
+   - [ ] Expanded web UI admin surfaces (memory/policy/audit browsers).
+   - [ ] Marketplace/distribution packaging work.
+
+---
+
+## M2 — Ingest + Projection
+
+- [x] Expand projection depth with normalized structured fields (token/cost/provider/model/correlation semantics).
+- [x] Add extraction pass over imported conversations to promote durable facts from external logs.
+- [x] Add replay safety command ergonomics (clear run selection/filtering, operator-safe preview defaults).
+
+## Surface Parity (Adapters)
+
+- [x] Add stdio sidecar operation endpoint for CLI runtime integration.
+- [x] Map MCP adapter to canonical operations (translation only, no business logic).
+- [ ] Expose canonical operations via HTTP/gRPC parity layer (HTTP shipped; gRPC pending).
+- [x] Add parity contract tests across CLI/MCP/API/ingest for same-op same-outcome guarantees.
+
+## M4 — Agent-First JS Jobs
+
+- [x] Define schema for agent-generated job specs.
+- [x] Implement "plan -> confirm -> apply" flow for agent job creation.
+- [x] Ensure JS job creation uses same canonical handlers as CLI/API/MCP.
+- [ ] Add validation tests for natural-language-to-job workflows.
+
+## Explicit Exceptions (Intentional For Now)
+
+- [ ] `mp init` owns filesystem/config bootstrapping (while delegating agent registry mutation through canonical ops).
+- [ ] Chat/send/tool runtime log-plane writes remain direct store writes (not operator control-plane ops).
+- [ ] Sync replication commands remain data-plane operations, not canonical capability ops.
+
+## Deferred
+
+- [ ] Additional channel adapters beyond current set.
+- [ ] Expanded web UI admin surfaces (memory/policy/audit browsers).
+- [ ] Marketplace/distribution packaging work.

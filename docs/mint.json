@@ -1,0 +1,88 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "name": "Moneypenny",
+  "logo": {
+    "dark": "/logo/dark.svg",
+    "light": "/logo/light.svg"
+  },
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#0D9373",
+    "light": "#07C983",
+    "dark": "#0D9373",
+    "anchors": {
+      "from": "#0D9373",
+      "to": "#07C983"
+    }
+  },
+  "topbarLinks": [
+    {
+      "name": "GitHub",
+      "url": "https://github.com/jacobprall/moneypenny"
+    }
+  ],
+  "topbarCtaButton": {
+    "name": "Get Started",
+    "url": "/quickstart"
+  },
+  "anchors": [
+    {
+      "name": "CLI Reference",
+      "icon": "terminal",
+      "url": "/cli"
+    },
+    {
+      "name": "GitHub",
+      "icon": "github",
+      "url": "https://github.com/jacobprall/moneypenny"
+    }
+  ],
+  "navigation": [
+    {
+      "group": "Getting Started",
+      "pages": [
+        "introduction",
+        "quickstart"
+      ]
+    },
+    {
+      "group": "Core Concepts",
+      "pages": [
+        "concepts/agents",
+        "concepts/memory-and-facts",
+        "concepts/knowledge",
+        "concepts/search",
+        "concepts/policy-engine",
+        "concepts/skills-and-tools",
+        "concepts/scheduled-jobs",
+        "concepts/sync"
+      ]
+    },
+    {
+      "group": "Guides",
+      "pages": [
+        "guides/ingestion",
+        "guides/governance",
+        "guides/multi-agent",
+        "guides/gateway-and-channels",
+        "guides/sidecar-and-integrations"
+      ]
+    },
+    {
+      "group": "CLI Reference",
+      "pages": [
+        "cli/reference"
+      ]
+    },
+    {
+      "group": "Architecture",
+      "pages": [
+        "architecture/overview",
+        "architecture/canonical-operations"
+      ]
+    }
+  ],
+  "footerSocials": {
+    "github": "https://github.com/jacobprall/moneypenny"
+  }
+}

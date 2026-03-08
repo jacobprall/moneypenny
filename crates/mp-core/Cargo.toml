@@ -17,3 +17,4 @@ reqwest.workspace = true
 
 [dev-dependencies]
 mp-ext.workspace = true
+tempfile = "3"

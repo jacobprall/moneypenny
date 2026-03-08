@@ -216,7 +216,7 @@ pub fn rrf_fuse(ranked_lists: &[Vec<(String, f64)>]) -> Vec<(String, f64)> {
     }
 
     let mut results: Vec<(String, f64)> = scores.into_iter().collect();
-    results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     results
 }
 
@@ -602,7 +602,7 @@ pub fn search(
         })
         .collect();
 
-    weighted_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    weighted_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
 
     // MMR re-rank
     let reranked = mmr_rerank(&weighted_results, limit, None);

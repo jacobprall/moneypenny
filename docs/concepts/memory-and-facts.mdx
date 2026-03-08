@@ -1,0 +1,142 @@
+---
+title: Memory & Facts
+description: Structured, compressible, self-curating long-term memory
+---
+
+Moneypenny's memory system gives agents durable, structured knowledge that
+persists across sessions and compresses intelligently to fit context windows.
+
+## What Is a Fact?
+
+A fact is a unit of long-term memory with three compression levels:
+
+| Level | Field | Example |
+|---|---|---|
+| Full | `content` | "The deployment pipeline uses ArgoCD with lint, unit tests, integration tests, canary (5% traffic for 30 minutes), then full rollout. Deploys Tue/Thu." |
+| Summary | `summary` | "ArgoCD pipeline: lint-test-canary(5%/30min)-rollout Tue/Thu" |
+| Pointer | `pointer` | "DEPLOY: argo-pipeline" |
+
+Each fact also carries:
+
+- **`confidence`** — 0.0 to 1.0, grows when re-extracted
+- **`keywords`** — space-separated terms for FTS matching
+- **`compaction_level`** — tracks how compressed this fact is in context
+- **`version`** — increments on updates
+- **`scope`** — `private`, `shared`, or `protected`
+
+## How Compression Works
+
+When assembling context for an LLM call, Moneypenny loads all facts as
+pointers first (~2K tokens for 500 facts). As the token budget allows, it
+expands the most relevant facts to summaries, then to full content.
+
+If the context window fills up, facts compact progressively:
+full text → summary → pointer. The agent can always expand a pointer to
+retrieve the full content.
+
+```
+Token budget: 128K
+  ├── System prompt           ~500 tokens
+  ├── Session history         ~8K tokens
+  ├── Facts (all as pointers) ~2K tokens
+  ├── Relevant facts expanded ~4K tokens
+  ├── Knowledge chunks        ~6K tokens
+  └── Current message         ~remaining
+```
+
+## Adding Facts
+
+Facts are added automatically by the extraction pipeline after each
+conversation turn, or manually:
+
+<CodeGroup>
+
+```bash CLI (sidecar)
+echo '{"op":"memory.fact.add","args":{
+  "content":"API rate limit is 1000 req/min per tenant.",
+  "summary":"API rate limit: 1000 req/min/tenant",
+  "pointer":"API: rate-limit",
+  "confidence":0.95,
+  "keywords":"api rate limit tenant"
+}}' | mp sidecar
+```
+
+```bash Agent tool call
+# The agent calls fact_add during conversation:
+[TOOL:fact_add]({"content":"...","summary":"...","pointer":"..."})
+```
+
+</CodeGroup>
+
+## Automatic Extraction
+
+After each conversation turn, an extraction pipeline runs:
+
+1. Take the last few messages from the session
+2. Load existing facts to avoid duplicates
+3. Ask a small model to identify new durable knowledge
+4. Store extracted facts with confidence scores
+
+Extraction can run on a cheap local model while the main conversation uses
+a larger API model. Memory management stays fast and local.
+
+## Listing and Inspecting
+
+```bash
+mp facts list
+mp facts inspect <fact-id>
+mp facts expand <fact-id>
+```
+
+`inspect` shows the full record with audit history. `expand` retrieves the
+full content from a compacted pointer.
+
+## Searching Facts
+
+```bash
+mp facts search "deployment pipeline"
+```
+
+This uses the unified search system — FTS5 full-text matching plus vector
+KNN when embeddings exist, fused via Reciprocal Rank Fusion.
+
+## Updating Facts
+
+Facts are versioned. When the extraction pipeline re-encounters a known fact
+with updated information, it creates a new version. The old version is
+superseded but retained for audit.
+
+## Deleting Facts
+
+```bash
+mp facts delete <fact-id> --confirm
+```
+
+Deletion is a soft operation — the fact is marked superseded but remains in
+the database for audit purposes.
+
+## Compaction Management
+
+Reset compaction to restore full text in context:
+
+```bash
+mp facts reset-compaction <fact-id>
+mp facts reset-compaction --all --confirm
+```
+
+## Scoped Facts
+
+Facts have a visibility scope:
+
+- **`private`** — visible only to the owning agent (default)
+- **`shared`** — visible to all agents after sync
+- **`protected`** — visible only to agents above a trust threshold
+
+Promote a fact to shared scope:
+
+```bash
+mp facts promote <fact-id> --scope shared
+```
+
+Scope is enforced at the SQL level — agents cannot query outside their
+authorization boundary.

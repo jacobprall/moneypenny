@@ -1,0 +1,119 @@
+---
+title: Quickstart
+description: Get Moneypenny running in under 5 minutes
+---
+
+import { Aside, Card, CardGrid, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## Prerequisites
+
+- **Rust toolchain** — install via [rustup](https://rustup.rs) if you don't have it
+- **Git** — with submodule support
+
+## 1. Clone and Build
+
+```bash
+git clone --recurse-submodules https://github.com/jacobprall/moneypenny.git
+cd moneypenny
+cargo build
+```
+
+Or use the setup script, which also downloads the local embedding model:
+
+```bash
+./scripts/setup.sh
+```
+
+## 2. Initialize
+
+```bash
+mp init
+```
+
+This creates:
+- `moneypenny.toml` — project configuration
+- `mp-data/` — data directory with one SQLite file per agent
+- A default agent named `main`
+
+## 3. Check Health
+
+```bash
+mp health
+```
+
+## 4. Add Some Knowledge
+
+Ingest a document:
+
+```bash
+mp ingest path/to/document.md
+```
+
+Or from a URL:
+
+```bash
+mp ingest --url "https://example.com/docs"
+```
+
+## 5. Add Facts
+
+Store structured knowledge:
+
+```bash
+echo '{"op":"memory.fact.add","args":{"content":"Our API rate limit is 1000 req/min per tenant.","summary":"API rate limit: 1000 req/min/tenant","pointer":"API: rate-limit","confidence":0.95,"keywords":"api rate limit tenant"}}' \
+  | mp sidecar
+```
+
+List what was stored:
+
+```bash
+mp facts list
+```
+
+## 6. Search
+
+```bash
+mp facts search "rate limit"
+mp knowledge search "deployment"
+```
+
+## 7. Chat (Requires LLM)
+
+For interactive conversation with your agent:
+
+```bash
+mp chat
+```
+
+<Aside type="note">
+  Chat and send commands require an LLM provider. The default config uses
+  Anthropic as the generation provider. To use a local model or different API provider,
+  edit `moneypenny.toml` and set `provider = "local"` or `provider = "http"` with
+  your API base URL and key.
+</Aside>
+
+For a one-shot message:
+
+```bash
+mp send main "What do you know about our deployment pipeline?"
+```
+
+## 8. Start the Gateway
+
+For multi-agent, multi-channel operation:
+
+```bash
+mp start
+```
+
+This spawns worker processes for each agent, starts the scheduler, and binds
+configured channel adapters (HTTP, Slack, Discord, Telegram).
+
+## What's Next
+
+<CardGrid>
+  <LinkCard title="Agents" href="/concepts/agents/" description="How agents work and how to manage them." />
+  <LinkCard title="Memory & Facts" href="/concepts/memory-and-facts/" description="The structured memory system." />
+  <LinkCard title="Policy Engine" href="/concepts/policy-engine/" description="Govern what your agents can do." />
+  <LinkCard title="Ingestion Guide" href="/guides/ingestion/" description="Import documents, URLs, and external event histories." />
+</CardGrid>

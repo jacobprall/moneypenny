@@ -340,6 +340,10 @@ pub enum PolicyCommand {
         #[arg(long, default_value = "deny")]
         effect: String,
 
+        /// Priority (higher = evaluated first)
+        #[arg(long, default_value_t = 0)]
+        priority: i64,
+
         /// Actor pattern (glob)
         #[arg(long)]
         actor: Option<String>,
@@ -352,7 +356,27 @@ pub enum PolicyCommand {
         #[arg(long)]
         resource: Option<String>,
 
-        /// Denial message
+        /// Argument pattern (glob, e.g. URL whitelist)
+        #[arg(long)]
+        argument: Option<String>,
+
+        /// Channel pattern (glob)
+        #[arg(long)]
+        channel: Option<String>,
+
+        /// SQL pattern (regex)
+        #[arg(long)]
+        sql: Option<String>,
+
+        /// Behavioral rule type (rate_limit, retry_loop, token_budget, time_window)
+        #[arg(long)]
+        rule_type: Option<String>,
+
+        /// Behavioral rule config JSON
+        #[arg(long)]
+        rule_config: Option<String>,
+
+        /// Denial/audit message
         #[arg(long)]
         message: Option<String>,
     },

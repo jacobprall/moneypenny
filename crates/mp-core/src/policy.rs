@@ -40,6 +40,10 @@ pub struct PolicyRequest<'a> {
     pub resource: &'a str,
     pub sql_content: Option<&'a str>,
     pub channel: Option<&'a str>,
+    /// Free-form argument string for matching against `argument_pattern`.
+    /// For URL ingest this carries the URL; for tool calls it could carry
+    /// serialized arguments, etc.
+    pub arguments: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -67,6 +71,7 @@ struct PolicyRow {
     action_pattern: Option<String>,
     resource_pattern: Option<String>,
     sql_pattern: Option<String>,
+    argument_pattern: Option<String>,
     channel_pattern: Option<String>,
     message: Option<String>,
     rule_type: Option<String>,
@@ -94,7 +99,8 @@ fn evaluate_with_mode_and_audit(
 ) -> anyhow::Result<PolicyDecision> {
     let mut stmt = conn.prepare(
         "SELECT id, effect, actor_pattern, action_pattern, resource_pattern,
-                sql_pattern, channel_pattern, message, rule_type, rule_config
+                sql_pattern, argument_pattern, channel_pattern, message,
+                rule_type, rule_config
          FROM policies
          WHERE enabled = 1
          ORDER BY priority DESC"
@@ -108,10 +114,11 @@ fn evaluate_with_mode_and_audit(
             action_pattern: r.get(3)?,
             resource_pattern: r.get(4)?,
             sql_pattern: r.get(5)?,
-            channel_pattern: r.get(6)?,
-            message: r.get(7)?,
-            rule_type: r.get(8)?,
-            rule_config: r.get(9)?,
+            argument_pattern: r.get(6)?,
+            channel_pattern: r.get(7)?,
+            message: r.get(8)?,
+            rule_type: r.get(9)?,
+            rule_config: r.get(10)?,
         })
     })?.collect::<Result<Vec<_>, _>>()?;
 
@@ -128,6 +135,15 @@ fn evaluate_with_mode_and_audit(
         if let Some(sql_re) = &row.sql_pattern {
             if let Some(sql) = req.sql_content {
                 if !regex_matches(sql_re, sql) {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+        }
+        if let Some(arg_pat) = &row.argument_pattern {
+            if let Some(args) = req.arguments {
+                if !glob_match(arg_pat, args) {
                     continue;
                 }
             } else {
@@ -479,6 +495,7 @@ mod tests {
             resource: "tool:shell_exec",
             sql_content: None,
             channel: None,
+            arguments: None,
         }, PolicyMode::DenyByDefault).unwrap();
 
         assert_eq!(decision.effect, Effect::Deny);
@@ -494,6 +511,7 @@ mod tests {
             resource: "tool:shell_exec",
             sql_content: None,
             channel: None,
+            arguments: None,
         }, PolicyMode::AllowByDefault).unwrap();
 
         assert_eq!(decision.effect, Effect::Allow);
@@ -509,6 +527,7 @@ mod tests {
             resource: "tool:shell_exec",
             sql_content: None,
             channel: None,
+            arguments: None,
         }).unwrap();
 
         assert_eq!(decision.effect, Effect::Allow);
@@ -533,6 +552,7 @@ mod tests {
             resource: "tool:http_get",
             sql_content: None,
             channel: None,
+            arguments: None,
         }).unwrap();
 
         assert_eq!(decision.effect, Effect::Allow);
@@ -563,6 +583,7 @@ mod tests {
             resource: "tool:shell_exec",
             sql_content: None,
             channel: None,
+            arguments: None,
         }).unwrap();
 
         assert_eq!(decision.effect, Effect::Deny);
@@ -589,6 +610,7 @@ mod tests {
             resource: "tool:shell_exec",
             sql_content: None,
             channel: None,
+            arguments: None,
         }).unwrap();
 
         assert_eq!(decision.effect, Effect::Allow);
@@ -613,6 +635,7 @@ mod tests {
             resource: "sql:ddl",
             sql_content: Some("DROP TABLE users"),
             channel: None,
+            arguments: None,
         }).unwrap();
 
         assert_eq!(decision.effect, Effect::Deny);
@@ -639,6 +662,7 @@ mod tests {
             resource: "sql:query",
             sql_content: Some("SELECT * FROM orders WHERE id = 1"),
             channel: None,
+            arguments: None,
         }).unwrap();
 
         assert_eq!(decision.effect, Effect::Allow);
@@ -663,6 +687,7 @@ mod tests {
             resource: "tool:search",
             sql_content: None,
             channel: Some("slack:general"),
+            arguments: None,
         }).unwrap();
 
         assert_eq!(decision.effect, Effect::Audit);
@@ -692,6 +717,7 @@ mod tests {
             resource: "tool:shell_exec",
             sql_content: None,
             channel: None,
+            arguments: None,
         }).unwrap();
 
         assert_eq!(decision.effect, Effect::Deny);
@@ -712,6 +738,7 @@ mod tests {
             resource: "tool:shell_exec",
             sql_content: None,
             channel: None,
+            arguments: None,
         }, PolicyMode::DenyByDefault).unwrap();
 
         let count: i64 = conn.query_row(
@@ -746,6 +773,7 @@ mod tests {
                 resource: "tool:test",
                 sql_content: None,
                 channel: None,
+                arguments: None,
             }).unwrap();
         }
 
@@ -774,6 +802,7 @@ mod tests {
             resource: "tool:test",
             sql_content: None,
             channel: None,
+            arguments: None,
         }, PolicyMode::DenyByDefault).unwrap();
 
         assert_eq!(decision.effect, Effect::Deny, "disabled rule should not match, fall through to deny-by-default");
@@ -835,7 +864,7 @@ mod tests {
 
         let decision = evaluate(&conn, &PolicyRequest {
             actor: "a", action: "call", resource: "tool:shell_exec",
-            sql_content: None, channel: None,
+            sql_content: None, channel: None, arguments: None,
         }).unwrap();
 
         assert_eq!(decision.effect, Effect::Deny);
@@ -858,7 +887,7 @@ mod tests {
 
         let decision = evaluate(&conn, &PolicyRequest {
             actor: "a", action: "call", resource: "tool:shell_exec",
-            sql_content: None, channel: None,
+            sql_content: None, channel: None, arguments: None,
         }).unwrap();
 
         assert_ne!(decision.effect, Effect::Deny,
@@ -881,7 +910,7 @@ mod tests {
 
         let decision = evaluate(&conn, &PolicyRequest {
             actor: "a", action: "call", resource: "tool:file_read",
-            sql_content: None, channel: None,
+            sql_content: None, channel: None, arguments: None,
         }).unwrap();
 
         assert_eq!(decision.effect, Effect::Deny);
@@ -912,7 +941,7 @@ mod tests {
 
         let decision = evaluate(&conn, &PolicyRequest {
             actor: "a", action: "call", resource: "tool:file_read",
-            sql_content: None, channel: None,
+            sql_content: None, channel: None, arguments: None,
         }).unwrap();
 
         assert_ne!(decision.effect, Effect::Deny,
@@ -937,7 +966,7 @@ mod tests {
 
         let decision = evaluate(&conn, &PolicyRequest {
             actor: "a", action: "respond", resource: "conversation",
-            sql_content: None, channel: None,
+            sql_content: None, channel: None, arguments: None,
         }).unwrap();
 
         assert_eq!(decision.effect, Effect::Deny);
@@ -961,7 +990,7 @@ mod tests {
 
         let decision = evaluate(&conn, &PolicyRequest {
             actor: "a", action: "respond", resource: "conversation",
-            sql_content: None, channel: None,
+            sql_content: None, channel: None, arguments: None,
         }).unwrap();
 
         assert_ne!(decision.effect, Effect::Deny,
@@ -987,7 +1016,7 @@ mod tests {
 
         let decision = evaluate(&conn, &PolicyRequest {
             actor: "a", action: "call", resource: "tool:test",
-            sql_content: None, channel: None,
+            sql_content: None, channel: None, arguments: None,
         }).unwrap();
 
         assert_eq!(decision.effect, Effect::Deny, "should deny during matching window");
@@ -1013,7 +1042,7 @@ mod tests {
 
         let decision = evaluate(&conn, &PolicyRequest {
             actor: "a", action: "call", resource: "tool:test",
-            sql_content: None, channel: None,
+            sql_content: None, channel: None, arguments: None,
         }).unwrap();
 
         assert_ne!(decision.effect, Effect::Deny,
@@ -1041,11 +1070,150 @@ mod tests {
 
         let decision = evaluate_with_mode(&conn, &PolicyRequest {
             actor: "a", action: "call", resource: "tool:test",
-            sql_content: None, channel: None,
+            sql_content: None, channel: None, arguments: None,
         }, PolicyMode::DenyByDefault).unwrap();
 
         assert_eq!(decision.effect, Effect::Allow,
             "behavioral rule should be skipped, falling through to allow-all");
         assert_eq!(decision.policy_id.as_deref(), Some("allow"));
+    }
+
+    // ========================================================================
+    // Argument pattern matching
+    // ========================================================================
+
+    #[test]
+    fn argument_pattern_matches_url() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, action_pattern, resource_pattern, argument_pattern, message, created_at)
+             VALUES ('url-allow', 'allow docs domain', 100, 'allow', 'ingest', 'knowledge:url', 'https://docs.example.com/*', 'Whitelisted', 1)",
+            [],
+        ).unwrap();
+
+        let decision = evaluate(&conn, &PolicyRequest {
+            actor: "agent:main",
+            action: "ingest",
+            resource: "knowledge:url",
+            sql_content: None,
+            channel: None,
+            arguments: Some("https://docs.example.com/guide/intro.html"),
+        }).unwrap();
+
+        assert_eq!(decision.effect, Effect::Allow);
+        assert_eq!(decision.policy_id.as_deref(), Some("url-allow"));
+    }
+
+    #[test]
+    fn argument_pattern_rejects_non_matching_url() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, action_pattern, resource_pattern, argument_pattern, message, created_at)
+             VALUES ('url-allow', 'allow docs domain', 100, 'allow', 'ingest', 'knowledge:url', 'https://docs.example.com/*', 'Whitelisted', 1)",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, action_pattern, resource_pattern, message, created_at)
+             VALUES ('url-deny', 'deny all URL ingest', 50, 'deny', 'ingest', 'knowledge:url', 'URL not whitelisted', 1)",
+            [],
+        ).unwrap();
+
+        let decision = evaluate(&conn, &PolicyRequest {
+            actor: "agent:main",
+            action: "ingest",
+            resource: "knowledge:url",
+            sql_content: None,
+            channel: None,
+            arguments: Some("https://evil.example.org/payload"),
+        }).unwrap();
+
+        assert_eq!(decision.effect, Effect::Deny);
+        assert_eq!(decision.policy_id.as_deref(), Some("url-deny"));
+        assert_eq!(decision.reason.as_deref(), Some("URL not whitelisted"));
+    }
+
+    #[test]
+    fn argument_pattern_none_skips_policy_with_pattern() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, action_pattern, resource_pattern, argument_pattern, created_at)
+             VALUES ('url-only', 'url specific', 100, 'deny', 'ingest', 'knowledge:*', 'https://blocked.com/*', 1)",
+            [],
+        ).unwrap();
+
+        let decision = evaluate(&conn, &PolicyRequest {
+            actor: "agent:main",
+            action: "ingest",
+            resource: "knowledge",
+            sql_content: None,
+            channel: None,
+            arguments: None,
+        }).unwrap();
+
+        assert_ne!(decision.effect, Effect::Deny,
+            "policy with argument_pattern should be skipped when request has no arguments");
+    }
+
+    #[test]
+    fn url_whitelist_does_not_affect_file_ingest() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, action_pattern, resource_pattern, message, created_at)
+             VALUES ('url-deny', 'deny all URL ingest', 100, 'deny', 'ingest', 'knowledge:url', 'URL blocked', 1)",
+            [],
+        ).unwrap();
+
+        let decision = evaluate(&conn, &PolicyRequest {
+            actor: "agent:main",
+            action: "ingest",
+            resource: "knowledge",
+            sql_content: None,
+            channel: None,
+            arguments: None,
+        }).unwrap();
+
+        assert_eq!(decision.effect, Effect::Allow,
+            "file ingest (resource=knowledge) should not be affected by knowledge:url deny rule");
+    }
+
+    #[test]
+    fn multiple_url_whitelists_first_match_wins() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, action_pattern, resource_pattern, argument_pattern, created_at)
+             VALUES ('allow-docs', 'allow docs', 100, 'allow', 'ingest', 'knowledge:url', 'https://docs.*', 1)",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, action_pattern, resource_pattern, argument_pattern, created_at)
+             VALUES ('allow-wiki', 'allow wiki', 90, 'allow', 'ingest', 'knowledge:url', 'https://wiki.*', 1)",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, action_pattern, resource_pattern, message, created_at)
+             VALUES ('deny-rest', 'deny rest', 10, 'deny', 'ingest', 'knowledge:url', 'Not whitelisted', 1)",
+            [],
+        ).unwrap();
+
+        let d1 = evaluate(&conn, &PolicyRequest {
+            actor: "a", action: "ingest", resource: "knowledge:url",
+            sql_content: None, channel: None,
+            arguments: Some("https://docs.rust-lang.org/book/"),
+        }).unwrap();
+        assert_eq!(d1.effect, Effect::Allow);
+
+        let d2 = evaluate(&conn, &PolicyRequest {
+            actor: "a", action: "ingest", resource: "knowledge:url",
+            sql_content: None, channel: None,
+            arguments: Some("https://wiki.internal.co/page"),
+        }).unwrap();
+        assert_eq!(d2.effect, Effect::Allow);
+
+        let d3 = evaluate(&conn, &PolicyRequest {
+            actor: "a", action: "ingest", resource: "knowledge:url",
+            sql_content: None, channel: None,
+            arguments: Some("https://malware.bad/exploit"),
+        }).unwrap();
+        assert_eq!(d3.effect, Effect::Deny);
     }
 }

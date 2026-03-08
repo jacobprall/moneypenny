@@ -1,0 +1,94 @@
+---
+title: Sync
+description: CRDT-based multi-agent knowledge sharing
+---
+
+Moneypenny uses CRDTs (Conflict-free Replicated Data Types) at the SQLite
+level to sync data between agents. No central server required — agents merge
+state directly from each other's database files.
+
+## What Syncs
+
+| Table | Syncs | Rationale |
+|---|---|---|
+| `facts` | Yes | Shared knowledge across agents |
+| `fact_links` | Yes | Graph relationships between facts |
+| `skills` | Yes | Reusable procedures propagate fleet-wide |
+| `policies` | Yes | Governance rules propagate fleet-wide |
+| Messages | No | Conversations are agent-local |
+| Scratch | No | Session working memory is ephemeral |
+| External events | No | Raw ingest data stays with the importing agent |
+
+## How It Works
+
+Each agent database has a unique site ID and a monotonic write clock. When
+you sync, CRDT metadata is used to merge changes without conflicts:
+
+1. Export pending changes as a binary payload
+2. Transfer the payload (local file copy or network)
+3. Apply the payload to the target database
+4. CRDT merge resolves any concurrent writes
+
+## Checking Status
+
+```bash
+mp sync status
+```
+
+Shows the site ID, database version, and per-table sync status.
+
+## Syncing
+
+Bidirectional sync with all configured peers:
+
+```bash
+mp sync now
+```
+
+One-way push (this agent → peer):
+
+```bash
+mp sync push --to research
+mp sync push --to /path/to/other.db
+```
+
+One-way pull (peer → this agent):
+
+```bash
+mp sync pull --from research
+mp sync pull --from /path/to/other.db
+```
+
+## Configuration
+
+Configure peers and cloud sync in `moneypenny.toml`:
+
+```toml
+[sync]
+tables = ["facts", "fact_links", "skills", "policies"]
+peers = ["research", "ops-bot"]
+# cloud_url = "sqlite-cloud-url?apikey=..."
+```
+
+## Cloud Sync
+
+For remote sync without direct file access:
+
+```bash
+mp sync connect "your-cloud-sync-url?apikey=..."
+mp sync now
+```
+
+Cloud sync uses the same CRDT merge — the cloud backend is a relay, not an
+authority.
+
+## Scoped Knowledge
+
+Sync moves rows, but visibility is controlled by fact scope:
+
+- **Private** facts sync but remain invisible to agents below the trust threshold
+- **Shared** facts are visible to all agents after sync
+- **Protected** facts require elevated trust
+
+Scope enforcement happens at query time via SQL filters — the sync layer
+moves all data; the policy layer controls who can read it.

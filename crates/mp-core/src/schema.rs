@@ -6,7 +6,7 @@
 
 use rusqlite::Connection;
 
-const AGENT_SCHEMA_VERSION: i64 = 10;
+const AGENT_SCHEMA_VERSION: i64 = 11;
 const METADATA_SCHEMA_VERSION: i64 = 1;
 
 pub fn init_agent_db(conn: &Connection) -> anyhow::Result<()> {
@@ -63,6 +63,11 @@ pub fn init_agent_db(conn: &Connection) -> anyhow::Result<()> {
     if current < 10 {
         conn.execute_batch(AGENT_SCHEMA_V10)?;
         set_schema_version(conn, 10)?;
+    }
+
+    if current < 11 {
+        conn.execute_batch(AGENT_SCHEMA_V11)?;
+        set_schema_version(conn, 11)?;
     }
 
     Ok(())
@@ -460,6 +465,34 @@ CREATE TABLE IF NOT EXISTS job_specs (
     source_session_id   TEXT,
     source_message_id   TEXT,
     applied_job_id      TEXT,
+    created_at          INTEGER NOT NULL DEFAULT 0,
+    updated_at          INTEGER NOT NULL DEFAULT 0
+);
+";
+
+const AGENT_SCHEMA_V11: &str = "
+CREATE TABLE IF NOT EXISTS policy_specs (
+    id                  TEXT PRIMARY KEY,
+    agent_id            TEXT NOT NULL DEFAULT '',
+    intent              TEXT NOT NULL DEFAULT '',
+    plan_json           TEXT NOT NULL DEFAULT '{}',
+    policy_name         TEXT NOT NULL DEFAULT '',
+    effect              TEXT NOT NULL DEFAULT 'deny',
+    priority            INTEGER NOT NULL DEFAULT 0,
+    actor_pattern       TEXT,
+    action_pattern      TEXT,
+    resource_pattern    TEXT,
+    argument_pattern    TEXT,
+    channel_pattern     TEXT,
+    sql_pattern         TEXT,
+    rule_type           TEXT,
+    rule_config         TEXT,
+    message             TEXT,
+    status              TEXT NOT NULL DEFAULT 'planned',
+    proposed_by         TEXT NOT NULL DEFAULT 'agent',
+    source_session_id   TEXT,
+    source_message_id   TEXT,
+    applied_policy_id   TEXT,
     created_at          INTEGER NOT NULL DEFAULT 0,
     updated_at          INTEGER NOT NULL DEFAULT 0
 );
@@ -1202,6 +1235,7 @@ mod tests {
             "policies", "policy_audit",
             "jobs", "job_runs",
             "job_specs",
+            "policy_specs",
             "external_events", "ingest_runs",
             "operation_idempotency",
             "operation_hooks",

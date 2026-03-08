@@ -1,0 +1,86 @@
+---
+title: Introduction
+description: The enterprise-grade dynamic intelligence layer for agents
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+Moneypenny is the intelligence and governance core for AI agents. It provides
+structured memory, policy-governed execution, explainable audit, and portable
+state — all in a single SQLite file per agent.
+
+It can run as a standalone agent runtime, or plug into existing runtimes (like
+OpenClaw) as the memory, policy, and audit substrate.
+
+## Why Moneypenny
+
+Most agent frameworks solve orchestration. Moneypenny solves what happens
+**between** orchestration calls:
+
+- What does the agent remember from last week?
+- Is this action allowed by policy?
+- Why was that tool call denied?
+- How do two agents share knowledge without a central server?
+- Can I back up my agent by copying one file?
+
+## Four Pillars
+
+<CardGrid>
+  <Card title="Intelligence System" icon="star">
+    Structured memory with adaptive compression, hybrid retrieval (FTS + vector),
+    graph-linked facts, and automatic extraction from conversations.
+  </Card>
+  <Card title="Governance & Security" icon="approve-check">
+    Policy checks on every action, denial-aware control flow, auditable decisions,
+    secret redaction, and encryption at rest.
+  </Card>
+  <Card title="Correctness Core" icon="setting">
+    Single ACID turn semantics, database-as-runtime execution, and rollback
+    guarantees that prevent partial state.
+  </Card>
+  <Card title="Scale & Portability" icon="random">
+    CRDT sync between agents, scoped knowledge sharing, one-file portability
+    across devices and environments.
+  </Card>
+</CardGrid>
+
+## How It Works
+
+The database is the runtime. Inference, memory, search, sync, policy, and
+tools live inside the same transactional boundary. The orchestrator is a thin
+loop; the intelligence sits between the DB and the LLM.
+
+```
+User message
+  → Context assembly (facts + knowledge + history + skills)
+  → Policy evaluation
+  → LLM generation
+  → Tool execution (policy-gated, audited)
+  → Fact extraction
+  → Response
+```
+
+Every step operates on the same SQLite file. No external services required.
+
+## Built On
+
+Seven SQLite extensions, statically linked into one binary:
+
+| Component | Role |
+|---|---|
+| `sqlite-ai` | On-device LLM inference, embeddings, chat (GGUF) |
+| `sqlite-vector` | Vector search, SIMD, quantization, 6 distance metrics |
+| `sqlite-memory` | Persistent agent memory, hybrid search |
+| `sqlite-rag` | Hybrid search, RRF, multi-format docs |
+| `sqlite-sync` | CRDT offline-first sync |
+| `sqlite-js` | User-defined JS functions and aggregates |
+| `sqlite-mcp` | MCP tool integration |
+
+## Next Steps
+
+<CardGrid>
+  <LinkCard title="Quickstart" href="/quickstart/" description="Get running in under 5 minutes." />
+  <LinkCard title="Core Concepts" href="/concepts/agents/" description="Understand agents, memory, policy, and the data model." />
+  <LinkCard title="CLI Reference" href="/cli/reference/" description="Every command, flag, and subcommand." />
+  <LinkCard title="Architecture" href="/architecture/overview/" description="How the canonical operation layer works." />
+</CardGrid>

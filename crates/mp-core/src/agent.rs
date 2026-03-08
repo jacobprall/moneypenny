@@ -73,6 +73,7 @@ pub fn turn(
         resource: "conversation",
         sql_content: Some(user_message),
         channel: None,
+        arguments: None,
     };
     let msg_decision = crate::policy::evaluate(conn, &msg_policy)?;
 

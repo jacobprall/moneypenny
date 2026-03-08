@@ -6,7 +6,7 @@
 /// `(response, session_id)` pair.
 use std::collections::HashMap;
 use std::future::Future;
-use std::path::PathBuf;
+
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -22,7 +22,6 @@ use futures_util::stream;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, RwLock};
 use tower_http::cors::CorsLayer;
-use tower_http::services::{ServeDir, ServeFile};
 use tracing::{error, info, warn};
 
 use mp_core::config::{
@@ -538,13 +537,10 @@ async fn discord_send_followup(
 // ---------------------------------------------------------------------------
 
 /// Build and run the axum server that serves all HTTP-facing channel routes.
-/// If `web_ui_dir` is `Some(path)` and the path exists, serves the directory as static files at `/`
-/// with SPA fallback (unknown paths return `index.html`).
 pub async fn run_http_server(
     http_cfg: Option<&HttpChannelConfig>,
     slack_cfg: Option<&SlackChannelConfig>,
     discord_cfg: Option<&DiscordChannelConfig>,
-    web_ui_dir: Option<PathBuf>,
     default_agent: String,
     dispatch: DispatchFn,
     op_dispatch: OpDispatchFn,
@@ -600,19 +596,6 @@ pub async fn run_http_server(
             .route("/discord/interactions", post(discord_interactions))
             .with_state(discord_state);
         router = router.merge(discord_router);
-    }
-
-    // Web UI: serve static files with SPA fallback so client-side routing works
-    if let Some(ref path) = web_ui_dir {
-        if path.exists() {
-            let index_path = path.join("index.html");
-            if index_path.exists() {
-                let serve_dir =
-                    ServeDir::new(path).not_found_service(ServeFile::new(index_path));
-                router = router.fallback_service(serve_dir);
-                info!("Web UI served from {}", path.display());
-            }
-        }
     }
 
     let addr = format!("0.0.0.0:{port}");

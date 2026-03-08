@@ -1,0 +1,126 @@
+---
+title: Skills & Tools
+description: Built-in, MCP, and agent-created tools
+---
+
+Tools are the actions an agent can take. Moneypenny supports multiple tool
+sources and makes them all available through a single registry with unified
+policy, audit, and discovery.
+
+## Tool Sources
+
+| Source | Description | Examples |
+|---|---|---|
+| **Built-in** | Compiled into the binary | `file_read`, `file_write`, `shell_exec` |
+| **Runtime** | Operate on the agent's own database | `memory_search`, `fact_add`, `job_create` |
+| **MCP** | Discovered from external MCP servers | Any MCP-registered tool |
+| **JS** | User-defined JavaScript in QuickJS sandbox | Custom tools created at runtime |
+
+## Tool Execution Lifecycle
+
+Every tool call follows the same pipeline:
+
+```
+Tool call requested
+  → Policy check (allow / deny / audit)
+  → Pre-hooks (argument transformation or abort)
+  → Dispatch (runtime → MCP → JS → builtin)
+  → Post-hooks (output transformation)
+  → Secret redaction
+  → Audit log write
+  → Result returned to agent
+```
+
+## Runtime Tools
+
+These tools let the agent operate on its own state:
+
+| Tool | Purpose |
+|---|---|
+| `memory_search` | Search across all memory stores |
+| `fact_add` | Store a new long-term fact |
+| `fact_update` | Update an existing fact |
+| `fact_list` | List active facts |
+| `scratch_set` / `scratch_get` | Session-scoped working memory |
+| `knowledge_ingest` | Ingest a document |
+| `knowledge_list` | List ingested documents |
+| `job_create` | Create a scheduled job |
+| `job_list` / `job_pause` / `job_resume` | Manage jobs |
+| `policy_list` | List active policies |
+| `audit_query` | Search the audit trail |
+| `web_search` | Search the public web |
+
+## MCP Tools
+
+If MCP servers are configured, tools are discovered automatically at startup:
+
+```toml
+[[agents.mcp_servers]]
+name = "github"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+```
+
+Discovered tools appear in the agent's tool list alongside built-in tools.
+
+## JS Tools (Agent-Created)
+
+Agents can create their own tools at runtime using JavaScript:
+
+```bash
+echo '{"op":"js.tool.add","args":{
+  "name":"celsius_to_fahrenheit",
+  "description":"Convert Celsius to Fahrenheit",
+  "source":"function run(args) { return String(args.celsius * 9/5 + 32) + \" °F\"; }",
+  "parameters_schema":"{\"celsius\":\"number\"}"
+}}' | mp sidecar
+```
+
+JS tools:
+- Execute in a QuickJS sandbox (not Node.js)
+- Are policy-gated and audited like any other tool
+- Persist in the agent's database
+- Survive restarts
+- Sync across agents via CRDT
+
+Manage JS tools:
+
+```bash
+echo '{"op":"js.tool.list","args":{}}' | mp sidecar
+echo '{"op":"js.tool.delete","args":{"name":"celsius_to_fahrenheit"}}' | mp sidecar
+```
+
+## Skills
+
+Skills are reusable procedures stored in the agent's database. They surface
+in retrieval when the agent encounters a relevant query:
+
+```bash
+echo '{"op":"skill.add","args":{
+  "name":"incident-triage",
+  "description":"Triage production incidents",
+  "content":"1) Check dashboards. 2) Escalate: on-call → lead → VP. ..."
+}}' | mp sidecar
+```
+
+```bash
+mp skill list
+```
+
+Skills track usage and success. High-performing skills surface more
+prominently in context assembly.
+
+## Tool Governance
+
+Every tool call is subject to policy. Common patterns:
+
+```bash
+# Block shell access entirely
+mp policy add --name "no-shell" --effect deny --action "call" --resource "shell_exec"
+
+# Audit all web searches
+mp policy add --name "audit-web" --effect audit --action "call" --resource "web_search"
+
+# Allow only read-only tools for low-trust agents
+mp policy add --name "read-only" --effect deny --actor "intern-bot" --action "call" --resource "file_write"
+```

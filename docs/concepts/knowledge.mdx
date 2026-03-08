@@ -1,0 +1,65 @@
+---
+title: Knowledge Base
+description: Ingest, chunk, and search documents
+---
+
+The knowledge base stores ingested documents — markdown files, text files,
+web pages — chunked and indexed for retrieval. Unlike facts (which are
+structured, extracted knowledge), knowledge is raw reference material.
+
+## Ingesting Documents
+
+From a local file:
+
+```bash
+mp ingest path/to/document.md
+mp ingest path/to/directory/
+```
+
+From a URL:
+
+```bash
+mp ingest --url "https://example.com/docs/architecture"
+```
+
+## What Happens During Ingestion
+
+1. The document is read (or fetched)
+2. Content is split into chunks (section-aware for markdown)
+3. Each chunk is stored in the `chunks` table with FTS5 indexing
+4. A `documents` entry tracks metadata: title, source path, chunk count
+
+If embeddings are configured, chunks are also vectorized for KNN search.
+
+## Listing Documents
+
+```bash
+mp knowledge list
+```
+
+Shows each document with its title, source, and chunk count.
+
+## Searching Knowledge
+
+```bash
+mp knowledge search "deployment pipeline"
+mp knowledge search "security policy"
+```
+
+Knowledge search uses FTS5 full-text matching. When combined with the unified
+search system (`mp facts search`), results from knowledge, facts, messages,
+and tool calls are fused together.
+
+## Knowledge vs. Facts
+
+| | Knowledge | Facts |
+|---|---|---|
+| Source | Ingested documents | Extracted from conversations or added manually |
+| Format | Raw text chunks | Structured (content, summary, pointer) |
+| Compression | None | Three levels (full, summary, pointer) |
+| Versioning | None | Versioned with audit trail |
+| Scope | Agent-local | Private, shared, or protected |
+| Sync | Does not sync | Syncs via CRDT |
+
+Both are searchable through the same hybrid retrieval system and both
+contribute to context assembly during agent turns.

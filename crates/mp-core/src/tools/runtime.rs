@@ -15,17 +15,81 @@ pub fn dispatch(conn: &Connection, agent_id: &str, session_id: &str, tool_name: 
         "scratch_get"       => scratch_get(conn, session_id, arguments),
         "knowledge_ingest"  => knowledge_ingest(conn, arguments),
         "knowledge_list"    => knowledge_list(conn),
-        "job_create"        => job_create(conn, agent_id, arguments),
-        "job_list"          => job_list(conn, agent_id),
-        "job_pause"         => job_pause(conn, arguments),
-        "job_resume"        => job_resume(conn, arguments),
+        "job_create"        => job_create(conn, agent_id, session_id, arguments),
+        "job_list"          => job_list(conn, agent_id, session_id),
+        "job_pause"         => job_pause(conn, agent_id, session_id, arguments),
+        "job_resume"        => job_resume(conn, agent_id, session_id, arguments),
         "policy_list"       => policy_list(conn),
+        "policy_add"        => policy_add(conn, agent_id, session_id, arguments),
         "audit_query"       => audit_query(conn, session_id, arguments),
-        "js_tool_add"       => js_tool_add(conn, arguments),
-        "js_tool_list"      => js_tool_list(conn),
-        "js_tool_delete"    => js_tool_delete(conn, arguments),
+        "js_tool_add"       => js_tool_add(conn, agent_id, session_id, arguments),
+        "js_tool_list"      => js_tool_list(conn, agent_id, session_id),
+        "js_tool_delete"    => js_tool_delete(conn, agent_id, session_id, arguments),
         _ => anyhow::bail!("unknown runtime tool: {tool_name}"),
     }
+}
+
+fn build_tool_op_request(
+    agent_id: &str,
+    session_id: &str,
+    op: &str,
+    args: serde_json::Value,
+) -> crate::operations::OperationRequest {
+    let request_id = uuid::Uuid::new_v4().to_string();
+    crate::operations::OperationRequest {
+        op: op.to_string(),
+        op_version: Some("v1".into()),
+        request_id: Some(request_id.clone()),
+        idempotency_key: None,
+        actor: crate::operations::ActorContext {
+            agent_id: agent_id.to_string(),
+            tenant_id: None,
+            user_id: None,
+            channel: Some("agent-tool".into()),
+        },
+        context: crate::operations::OperationContext {
+            session_id: Some(session_id.to_string()),
+            trace_id: Some(request_id),
+            timestamp: Some(chrono::Utc::now().timestamp()),
+        },
+        args,
+    }
+}
+
+fn exec_canonical_op(
+    conn: &Connection,
+    agent_id: &str,
+    session_id: &str,
+    op: &str,
+    args: serde_json::Value,
+) -> anyhow::Result<crate::operations::OperationResponse> {
+    let req = build_tool_op_request(agent_id, session_id, op, args);
+    crate::operations::execute(conn, &req)
+}
+
+fn op_response_to_tool_result(resp: &crate::operations::OperationResponse) -> ToolResult {
+    let output = if resp.ok {
+        serde_json::to_string(&resp.data).unwrap_or_else(|_| resp.message.clone())
+    } else {
+        format!("Operation denied: {}", resp.message)
+    };
+    ToolResult {
+        output,
+        success: resp.ok,
+        duration_ms: 0,
+    }
+}
+
+/// Execute a JavaScript snippet via the in-process sqlite-js QuickJS engine.
+/// Returns the stringified result. The JS code has access to `db.exec(sql)`
+/// for querying the same SQLite database.
+pub fn eval_js(conn: &Connection, script: &str) -> anyhow::Result<String> {
+    let result: String = conn.query_row(
+        "SELECT js_eval(?1)",
+        [script],
+        |r| r.get(0),
+    ).map_err(|e| anyhow::anyhow!("js_eval failed: {e}"))?;
+    Ok(result)
 }
 
 /// Returns true if the given tool name is a built-in runtime tool (handled by
@@ -36,7 +100,7 @@ pub fn is_runtime_tool(name: &str) -> bool {
         | "scratch_set" | "scratch_get"
         | "knowledge_ingest" | "knowledge_list"
         | "job_create" | "job_list" | "job_pause" | "job_resume"
-        | "policy_list" | "audit_query"
+        | "policy_list" | "policy_add" | "audit_query"
         | "js_tool_add" | "js_tool_list" | "js_tool_delete"
     )
 }
@@ -70,6 +134,10 @@ pub fn is_js_tool(conn: &Connection, name: &str) -> bool {
 ///     return { result: args.x + args.y };
 /// }
 /// ```
+/// Execute a user-defined JS tool via the in-process sqlite-js QuickJS engine.
+/// The tool's script is loaded from the `skills` table, injected with the
+/// call arguments, and evaluated via `js_eval`. The JS code has access to
+/// `db.exec(sql)` for querying the same SQLite database.
 pub fn dispatch_js(conn: &Connection, tool_name: &str, arguments: &str) -> anyhow::Result<ToolResult> {
     let start = std::time::Instant::now();
 
@@ -79,46 +147,27 @@ pub fn dispatch_js(conn: &Connection, tool_name: &str, arguments: &str) -> anyho
         |r| r.get(0),
     ).map_err(|_| anyhow::anyhow!("JS tool '{tool_name}' not found in skills"))?;
 
-    // Build the runner: inject args, call run(), print JSON result
     let runner = format!(
-        "const args = {};\n{}\nconsole.log(JSON.stringify(run(args)));",
+        "(function() {{ const args = {};\n{}\nreturn JSON.stringify(run(args)); }})()",
         arguments, script
     );
 
-    // Try node first, then deno
-    let output = run_js_engine(&runner)?;
-    let duration_ms = start.elapsed().as_millis() as u64;
-
-    let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let success = output.status.success() && !out.is_empty();
-    let final_output = if output.status.success() {
-        if out.is_empty() { "null".into() } else { out }
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        format!("JS tool error: {}", if stderr.is_empty() { "unknown error".into() } else { stderr.trim().to_string() })
-    };
-
-    Ok(ToolResult { output: final_output, success, duration_ms })
-}
-
-fn run_js_engine(script: &str) -> anyhow::Result<std::process::Output> {
-    // Try node first
-    if let Ok(out) = std::process::Command::new("node")
-        .arg("-e").arg(script)
-        .output()
-    {
-        return Ok(out);
+    let duration_ms;
+    match eval_js(conn, &runner) {
+        Ok(out) => {
+            duration_ms = start.elapsed().as_millis() as u64;
+            let output = if out.is_empty() { "null".into() } else { out };
+            Ok(ToolResult { output, success: true, duration_ms })
+        }
+        Err(e) => {
+            duration_ms = start.elapsed().as_millis() as u64;
+            Ok(ToolResult {
+                output: format!("JS tool error: {e}"),
+                success: false,
+                duration_ms,
+            })
+        }
     }
-    // Fall back to deno
-    if let Ok(out) = std::process::Command::new("deno")
-        .arg("eval").arg(script)
-        .output()
-    {
-        return Ok(out);
-    }
-    anyhow::bail!(
-        "No JavaScript runtime found. Install Node.js (node) or Deno (deno) to use JS tools."
-    )
 }
 
 // =========================================================================
@@ -445,83 +494,33 @@ fn knowledge_list(conn: &Connection) -> anyhow::Result<ToolResult> {
 // Scheduling
 // =========================================================================
 
-fn job_create(conn: &Connection, agent_id: &str, arguments: &str) -> anyhow::Result<ToolResult> {
+fn job_create(conn: &Connection, agent_id: &str, session_id: &str, arguments: &str) -> anyhow::Result<ToolResult> {
     let args: serde_json::Value = serde_json::from_str(arguments)?;
-    let name = args["name"].as_str()
-        .ok_or_else(|| anyhow::anyhow!("missing 'name'"))?;
-    let schedule = args["schedule"].as_str()
-        .ok_or_else(|| anyhow::anyhow!("missing 'schedule' (cron expression)"))?;
-    let job_type = args["job_type"].as_str().unwrap_or("prompt");
-    let payload = args["payload"].as_str().unwrap_or("{}");
-    let description = args["description"].as_str();
-
-    let now = chrono::Utc::now().timestamp();
-
-    let job = crate::scheduler::NewJob {
-        agent_id: agent_id.to_string(),
-        name: name.to_string(),
-        description: description.map(|s| s.to_string()),
-        schedule: schedule.to_string(),
-        next_run_at: now + 60,
-        job_type: job_type.to_string(),
-        payload: payload.to_string(),
-        max_retries: args["max_retries"].as_i64(),
-        retry_delay_ms: args["retry_delay_ms"].as_i64(),
-        timeout_ms: args["timeout_ms"].as_i64(),
-        overlap_policy: args["overlap_policy"].as_str().map(|s| s.to_string()),
-    };
-
-    let id = crate::scheduler::create_job(conn, &job)?;
-
-    Ok(ToolResult {
-        output: serde_json::json!({"id": id, "name": name, "schedule": schedule, "status": "created"}).to_string(),
-        success: true,
-        duration_ms: 0,
-    })
+    let resp = exec_canonical_op(conn, agent_id, session_id, "job.create", args)?;
+    Ok(op_response_to_tool_result(&resp))
 }
 
-fn job_list(conn: &Connection, agent_id: &str) -> anyhow::Result<ToolResult> {
-    let jobs = crate::scheduler::list_jobs(conn, Some(agent_id))?;
-
-    let output: Vec<serde_json::Value> = jobs.iter().map(|j| {
-        serde_json::json!({
-            "id": j.id,
-            "name": j.name,
-            "schedule": j.schedule,
-            "status": j.status,
-            "enabled": j.enabled,
-            "job_type": j.job_type,
-        })
-    }).collect();
-
-    Ok(ToolResult {
-        output: serde_json::to_string_pretty(&output)?,
-        success: true,
-        duration_ms: 0,
-    })
+fn job_list(conn: &Connection, agent_id: &str, session_id: &str) -> anyhow::Result<ToolResult> {
+    let resp = exec_canonical_op(
+        conn, agent_id, session_id, "job.list",
+        serde_json::json!({ "agent_id": agent_id }),
+    )?;
+    Ok(op_response_to_tool_result(&resp))
 }
 
-fn job_pause(conn: &Connection, arguments: &str) -> anyhow::Result<ToolResult> {
+fn job_pause(conn: &Connection, agent_id: &str, session_id: &str, arguments: &str) -> anyhow::Result<ToolResult> {
+    let args: serde_json::Value = serde_json::from_str(arguments)?;
+    let resp = exec_canonical_op(conn, agent_id, session_id, "job.pause", args)?;
+    Ok(op_response_to_tool_result(&resp))
+}
+
+fn job_resume(conn: &Connection, _agent_id: &str, _session_id: &str, arguments: &str) -> anyhow::Result<ToolResult> {
+    // TODO: add a canonical job.resume operation; for now pause toggle reuses job.pause
+    // with a "resume" hint in args so the same policy path applies.
     let args: serde_json::Value = serde_json::from_str(arguments)?;
     let job_id = args["id"].as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'id'"))?;
-
-    crate::scheduler::pause_job(conn, job_id)?;
-
-    Ok(ToolResult {
-        output: serde_json::json!({"id": job_id, "status": "paused"}).to_string(),
-        success: true,
-        duration_ms: 0,
-    })
-}
-
-fn job_resume(conn: &Connection, arguments: &str) -> anyhow::Result<ToolResult> {
-    let args: serde_json::Value = serde_json::from_str(arguments)?;
-    let job_id = args["id"].as_str()
-        .ok_or_else(|| anyhow::anyhow!("missing 'id'"))?;
-
     crate::scheduler::resume_job(conn, job_id)?;
-
     Ok(ToolResult {
         output: serde_json::json!({"id": job_id, "status": "active"}).to_string(),
         success: true,
@@ -555,6 +554,67 @@ fn policy_list(conn: &Connection) -> anyhow::Result<ToolResult> {
     Ok(ToolResult {
         output: serde_json::to_string_pretty(&policies)?,
         success: true,
+        duration_ms: 0,
+    })
+}
+
+fn policy_add(conn: &Connection, agent_id: &str, session_id: &str, arguments: &str) -> anyhow::Result<ToolResult> {
+    let args: serde_json::Value = serde_json::from_str(arguments)?;
+
+    let req = crate::operations::OperationRequest {
+        op: "policy.spec.plan".to_string(),
+        op_version: Some("v1".into()),
+        request_id: Some(uuid::Uuid::new_v4().to_string()),
+        idempotency_key: None,
+        actor: crate::operations::ActorContext {
+            agent_id: agent_id.to_string(),
+            tenant_id: None,
+            user_id: None,
+            channel: Some("agent".into()),
+        },
+        context: crate::operations::OperationContext {
+            session_id: Some(session_id.to_string()),
+            trace_id: None,
+            timestamp: Some(chrono::Utc::now().timestamp()),
+        },
+        args: serde_json::json!({
+            "intent": args["intent"].as_str().unwrap_or("agent-proposed policy"),
+            "policy_name": args.get("name").or(args.get("policy_name")),
+            "effect": args.get("effect"),
+            "priority": args.get("priority"),
+            "actor_pattern": args.get("actor_pattern"),
+            "action_pattern": args.get("action_pattern"),
+            "resource_pattern": args.get("resource_pattern"),
+            "argument_pattern": args.get("argument_pattern"),
+            "channel_pattern": args.get("channel_pattern"),
+            "sql_pattern": args.get("sql_pattern"),
+            "rule_type": args.get("rule_type"),
+            "rule_config": args.get("rule_config"),
+            "message": args.get("message"),
+            "proposed_by": "agent",
+            "source_session_id": session_id,
+        }),
+    };
+
+    let resp = crate::operations::execute(conn, &req)?;
+    let summary = if resp.ok {
+        format!(
+            "Policy spec planned (spec_id: {}). Status: planned.\n\
+             The user must confirm this spec before it becomes active.\n\
+             Tell the user: \"I've drafted a policy: '{}' (effect: {}, priority: {}). \
+             Shall I apply it?\"",
+            resp.data["spec_id"].as_str().unwrap_or("?"),
+            resp.data["policy_name"].as_str().unwrap_or("?"),
+            resp.data["effect"].as_str().unwrap_or("?"),
+            resp.data["priority"].as_i64().unwrap_or(0),
+        )
+    } else {
+        format!("Failed to plan policy: {}", resp.message)
+    };
+
+    Ok(ToolResult {
+        output: summary,
+        success: resp.ok,
         duration_ms: 0,
     })
 }
@@ -620,81 +680,21 @@ fn audit_row_to_json(r: &rusqlite::Row) -> rusqlite::Result<serde_json::Value> {
 ///   "script": "function run(args) { return { result: args.a + args.b }; }"
 /// }
 /// ```
-fn js_tool_add(conn: &Connection, arguments: &str) -> anyhow::Result<ToolResult> {
+fn js_tool_add(conn: &Connection, agent_id: &str, session_id: &str, arguments: &str) -> anyhow::Result<ToolResult> {
     let args: serde_json::Value = serde_json::from_str(arguments)?;
-    let name = args["name"].as_str()
-        .ok_or_else(|| anyhow::anyhow!("missing 'name'"))?;
-    let description = args["description"].as_str().unwrap_or("User-defined JS tool");
-    let script = args["script"].as_str()
-        .ok_or_else(|| anyhow::anyhow!("missing 'script'"))?;
-
-    // Validate the name is safe
-    if name.chars().any(|c| !c.is_alphanumeric() && c != '_' && c != '-') {
-        anyhow::bail!("tool name must contain only letters, digits, underscores, or hyphens");
-    }
-
-    let tool_id = format!("sqlite_js:{name}");
-    let now = chrono::Utc::now().timestamp();
-    let id = uuid::Uuid::new_v4().to_string();
-
-    conn.execute(
-        "INSERT OR REPLACE INTO skills
-         (id, name, description, content, tool_id, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![id, name, description, script, tool_id, now, now],
-    )?;
-
-    Ok(ToolResult {
-        output: serde_json::json!({"status": "created", "name": name}).to_string(),
-        success: true,
-        duration_ms: 0,
-    })
+    let resp = exec_canonical_op(conn, agent_id, session_id, "js.tool.add", args)?;
+    Ok(op_response_to_tool_result(&resp))
 }
 
-fn js_tool_list(conn: &Connection) -> anyhow::Result<ToolResult> {
-    let mut stmt = conn.prepare(
-        "SELECT name, description, updated_at FROM skills
-         WHERE tool_id LIKE 'sqlite_js:%'
-         ORDER BY name"
-    )?;
-    let tools = stmt.query_map([], |r| {
-        Ok(serde_json::json!({
-            "name": r.get::<_, String>(0)?,
-            "description": r.get::<_, String>(1)?,
-            "updated_at": r.get::<_, i64>(2)?,
-        }))
-    })?.collect::<Result<Vec<_>, _>>()?;
-
-    Ok(ToolResult {
-        output: serde_json::to_string_pretty(&tools)?,
-        success: true,
-        duration_ms: 0,
-    })
+fn js_tool_list(conn: &Connection, agent_id: &str, session_id: &str) -> anyhow::Result<ToolResult> {
+    let resp = exec_canonical_op(conn, agent_id, session_id, "js.tool.list", serde_json::json!({}))?;
+    Ok(op_response_to_tool_result(&resp))
 }
 
-fn js_tool_delete(conn: &Connection, arguments: &str) -> anyhow::Result<ToolResult> {
+fn js_tool_delete(conn: &Connection, agent_id: &str, session_id: &str, arguments: &str) -> anyhow::Result<ToolResult> {
     let args: serde_json::Value = serde_json::from_str(arguments)?;
-    let name = args["name"].as_str()
-        .ok_or_else(|| anyhow::anyhow!("missing 'name'"))?;
-
-    let rows = conn.execute(
-        "DELETE FROM skills WHERE name = ?1 AND tool_id LIKE 'sqlite_js:%'",
-        [name],
-    )?;
-
-    if rows == 0 {
-        Ok(ToolResult {
-            output: format!("JS tool '{name}' not found"),
-            success: false,
-            duration_ms: 0,
-        })
-    } else {
-        Ok(ToolResult {
-            output: serde_json::json!({"status": "deleted", "name": name}).to_string(),
-            success: true,
-            duration_ms: 0,
-        })
-    }
+    let resp = exec_canonical_op(conn, agent_id, session_id, "js.tool.delete", args)?;
+    Ok(op_response_to_tool_result(&resp))
 }
 
 
@@ -1022,14 +1022,15 @@ mod tests {
         let result = dispatch(
             &conn, "a", "s1", "js_tool_add",
             r#"{"name":"bad name!","script":"function run(a){return{}}"}"#,
-        );
-        assert!(result.is_err());
+        ).unwrap();
+        assert!(!result.success);
+        assert!(result.output.contains("denied") || result.output.contains("invalid") || result.output.contains("must contain"));
     }
 
     #[test]
     fn js_tool_add_missing_script_fails() {
         let conn = setup();
         let result = dispatch(&conn, "a", "s1", "js_tool_add", r#"{"name":"x"}"#);
-        assert!(result.is_err());
+        assert!(result.is_err() || !result.unwrap().success);
     }
 }

@@ -198,6 +198,7 @@ pub fn execute(
         resource: tool_name,
         sql_content: None,
         channel: None,
+        arguments: None,
     };
     let decision = crate::policy::evaluate(conn, &request)?;
 
@@ -729,6 +730,55 @@ pub fn register_runtime_skills(conn: &Connection) -> anyhow::Result<()> {
             enabled: true,
         },
         ToolDef {
+            name: "policy_add".into(),
+            description: "Propose a new policy rule governing this agent's behavior. Requires user confirmation before activation.".into(),
+            source: ToolSource::Runtime,
+            parameters_schema: Some(concat!(
+                "# policy_add\n\n",
+                "Propose a new policy rule. This creates a **draft** (policy spec) that the user must confirm.\n",
+                "Policies control what this agent can and cannot do.\n\n",
+                "## When to use\n",
+                "- The user says \"only allow URLs from docs.example.com\"\n",
+                "- The user says \"block shell access\" or \"don't let agents call shell_exec\"\n",
+                "- The user says \"add a rate limit\" or \"restrict tool usage\"\n",
+                "- The user wants to whitelist or blacklist specific actions or resources\n\n",
+                "## Parameters\n",
+                "| Name | Type | Required | Default | Description |\n",
+                "|------|------|----------|---------|-------------|\n",
+                "| name | string | **yes** | — | Human-readable policy name |\n",
+                "| intent | string | no | — | Natural-language description of what this policy does |\n",
+                "| effect | string | no | deny | \"allow\", \"deny\", or \"audit\" |\n",
+                "| priority | integer | no | 0 | Higher priority rules are evaluated first |\n",
+                "| actor_pattern | string | no | null | Glob pattern for who (e.g. \"agent:*\") |\n",
+                "| action_pattern | string | no | null | Glob pattern for what action (e.g. \"ingest\", \"call\") |\n",
+                "| resource_pattern | string | no | null | Glob pattern for the resource (e.g. \"knowledge:url\", \"tool:shell_*\") |\n",
+                "| argument_pattern | string | no | null | Glob pattern for arguments (e.g. URL patterns like \"https://docs.example.com/*\") |\n",
+                "| channel_pattern | string | no | null | Glob pattern for channel (e.g. \"slack:*\") |\n",
+                "| message | string | no | null | Message shown when this policy triggers |\n\n",
+                "## How policies work\n",
+                "- Policies are evaluated **highest priority first**\n",
+                "- The first matching policy wins\n",
+                "- Glob patterns: `*` matches any characters, `?` is not supported\n",
+                "- `null` pattern matches everything (wildcard)\n\n",
+                "## Common patterns\n\n",
+                "### URL whitelist (allow specific domains, deny the rest)\n",
+                "1. Call policy_add with: name=\"allow docs.example.com\", effect=\"allow\", priority=100, ",
+                "action_pattern=\"ingest\", resource_pattern=\"knowledge:url\", argument_pattern=\"https://docs.example.com/*\"\n",
+                "2. Call policy_add with: name=\"deny other URLs\", effect=\"deny\", priority=10, ",
+                "action_pattern=\"ingest\", resource_pattern=\"knowledge:url\", message=\"URL not whitelisted\"\n\n",
+                "### Block a tool\n",
+                "Call policy_add with: name=\"block shell\", effect=\"deny\", priority=100, ",
+                "action_pattern=\"call\", resource_pattern=\"tool:shell_*\", message=\"Shell access blocked\"\n\n",
+                "### Audit all actions on a channel\n",
+                "Call policy_add with: name=\"audit slack\", effect=\"audit\", priority=50, ",
+                "channel_pattern=\"slack:*\"\n\n",
+                "## Returns\n",
+                "A confirmation message with the spec_id. The policy is NOT yet active — ",
+                "tell the user what you proposed and ask them to confirm."
+            ).into()),
+            enabled: true,
+        },
+        ToolDef {
             name: "audit_query".into(),
             description: "Query the audit trail of policy decisions and agent actions.".into(),
             source: ToolSource::Runtime,
@@ -1073,11 +1123,11 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn register_runtime_skills_creates_eighteen_tools() {
+    fn register_runtime_skills_creates_nineteen_tools() {
         let conn = setup();
         register_runtime_skills(&conn).unwrap();
         let tools = list_tools(&conn).unwrap();
-        assert_eq!(tools.len(), 18);
+        assert_eq!(tools.len(), 19);
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"web_search"));
         assert!(names.contains(&"memory_search"));
@@ -1113,7 +1163,7 @@ mod tests {
         register_builtins(&conn).unwrap();
         register_runtime_skills(&conn).unwrap();
         let tools = list_tools(&conn).unwrap();
-        assert_eq!(tools.len(), 23); // 5 builtins + 18 runtime (15 + 3 JS tools)
+        assert_eq!(tools.len(), 24); // 5 builtins + 19 runtime (16 + 3 JS tools)
     }
 
     #[test]

@@ -123,6 +123,7 @@ pub fn process_candidate(
         resource: "facts",
         sql_content: Some(&candidate.content),
         channel: None,
+        arguments: None,
     };
     let policy_decision = crate::policy::evaluate(conn, &policy_req)?;
 
