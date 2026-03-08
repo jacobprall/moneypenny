@@ -42,13 +42,19 @@ pub struct PolicyRequest<'a> {
     pub channel: Option<&'a str>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct PolicyAuditContext<'a> {
+    pub session_id: Option<&'a str>,
+    pub correlation_id: Option<&'a str>,
+}
+
 /// Evaluate a policy request against the policies table.
 ///
 /// When no rule matches, the fallback depends on `mode`:
 /// - `DenyByDefault` — rejects the request (production/governed)
 /// - `AllowByDefault` — permits the request (development/exploration)
 pub fn evaluate(conn: &Connection, req: &PolicyRequest) -> anyhow::Result<PolicyDecision> {
-    evaluate_with_mode(conn, req, PolicyMode::default())
+    evaluate_with_mode_and_audit(conn, req, PolicyMode::default(), &PolicyAuditContext::default())
 }
 
 /// A fetched policy row with all columns.
@@ -67,6 +73,23 @@ struct PolicyRow {
 
 /// Evaluate with an explicit policy mode.
 pub fn evaluate_with_mode(conn: &Connection, req: &PolicyRequest, mode: PolicyMode) -> anyhow::Result<PolicyDecision> {
+    evaluate_with_mode_and_audit(conn, req, mode, &PolicyAuditContext::default())
+}
+
+pub fn evaluate_with_audit(
+    conn: &Connection,
+    req: &PolicyRequest,
+    audit: &PolicyAuditContext,
+) -> anyhow::Result<PolicyDecision> {
+    evaluate_with_mode_and_audit(conn, req, PolicyMode::default(), audit)
+}
+
+fn evaluate_with_mode_and_audit(
+    conn: &Connection,
+    req: &PolicyRequest,
+    mode: PolicyMode,
+    audit: &PolicyAuditContext,
+) -> anyhow::Result<PolicyDecision> {
     let mut stmt = conn.prepare(
         "SELECT id, effect, actor_pattern, action_pattern, resource_pattern,
                 sql_pattern, channel_pattern, message, rule_type, rule_config
@@ -138,7 +161,7 @@ pub fn evaluate_with_mode(conn: &Connection, req: &PolicyRequest, mode: PolicyMo
             reason: row.message.clone(),
         };
 
-        log_decision(conn, &decision, req)?;
+        log_decision(conn, &decision, req, audit)?;
         return Ok(decision);
     }
 
@@ -154,7 +177,7 @@ pub fn evaluate_with_mode(conn: &Connection, req: &PolicyRequest, mode: PolicyMo
             reason: Some("No matching policy rule (allow-by-default).".into()),
         },
     };
-    log_decision(conn, &decision, req)?;
+    log_decision(conn, &decision, req, audit)?;
     Ok(decision)
 }
 
@@ -304,7 +327,12 @@ pub fn generate_sql_filter(conn: &Connection, agent_id: &str) -> anyhow::Result<
 }
 
 /// Log a policy decision to the audit trail.
-fn log_decision(conn: &Connection, decision: &PolicyDecision, req: &PolicyRequest) -> anyhow::Result<()> {
+fn log_decision(
+    conn: &Connection,
+    decision: &PolicyDecision,
+    req: &PolicyRequest,
+    audit: &PolicyAuditContext,
+) -> anyhow::Result<()> {
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
     let effect_str = match decision.effect {
@@ -314,9 +342,20 @@ fn log_decision(conn: &Connection, decision: &PolicyDecision, req: &PolicyReques
     };
 
     conn.execute(
-        "INSERT INTO policy_audit (id, policy_id, actor, action, resource, effect, reason, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![id, decision.policy_id, req.actor, req.action, req.resource, effect_str, decision.reason, now],
+        "INSERT INTO policy_audit (id, policy_id, actor, action, resource, effect, reason, correlation_id, session_id, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            id,
+            decision.policy_id,
+            req.actor,
+            req.action,
+            req.resource,
+            effect_str,
+            decision.reason,
+            audit.correlation_id,
+            audit.session_id,
+            now
+        ],
     )?;
 
     Ok(())

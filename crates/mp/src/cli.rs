@@ -72,6 +72,34 @@ pub enum Command {
 
         /// Agent name
         agent: Option<String>,
+
+        /// OpenClaw JSONL file to ingest as external events
+        #[arg(long)]
+        openclaw_file: Option<String>,
+
+        /// Replay from start (ignore prior ingest cursor)
+        #[arg(long, default_value_t = false)]
+        replay: bool,
+
+        /// Show recent ingest runs instead of ingesting data
+        #[arg(long, default_value_t = false)]
+        status: bool,
+
+        /// Replay a prior ingest run by run ID
+        #[arg(long)]
+        replay_run: Option<String>,
+
+        /// Preflight replay without writing projected rows
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+
+        /// Source label for external ingest/status
+        #[arg(long, default_value = "openclaw")]
+        source: String,
+
+        /// Limit for ingest status output
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
     },
 
     /// Manage the knowledge store

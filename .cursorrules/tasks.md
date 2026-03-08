@@ -1,1 +1,1 @@
-Update your tasks and progress in TASKS.md
+Update your tasks and progress in docs/WORKBOARD.md

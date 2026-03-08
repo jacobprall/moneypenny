@@ -6,7 +6,7 @@
 
 use rusqlite::Connection;
 
-const AGENT_SCHEMA_VERSION: i64 = 2;
+const AGENT_SCHEMA_VERSION: i64 = 4;
 const METADATA_SCHEMA_VERSION: i64 = 1;
 
 pub fn init_agent_db(conn: &Connection) -> anyhow::Result<()> {
@@ -20,6 +20,16 @@ pub fn init_agent_db(conn: &Connection) -> anyhow::Result<()> {
     if current < 2 {
         conn.execute_batch(AGENT_SCHEMA_V2)?;
         set_schema_version(conn, 2)?;
+    }
+
+    if current < 3 {
+        conn.execute_batch(AGENT_SCHEMA_V3)?;
+        set_schema_version(conn, 3)?;
+    }
+
+    if current < 4 {
+        conn.execute_batch(AGENT_SCHEMA_V4)?;
+        set_schema_version(conn, 4)?;
     }
 
     Ok(())
@@ -295,6 +305,54 @@ CREATE TABLE IF NOT EXISTS job_runs (
 const AGENT_SCHEMA_V2: &str = "
 ALTER TABLE policies ADD COLUMN rule_type TEXT;
 ALTER TABLE policies ADD COLUMN rule_config TEXT;
+";
+
+const AGENT_SCHEMA_V3: &str = "
+ALTER TABLE policy_audit ADD COLUMN correlation_id TEXT;
+";
+
+const AGENT_SCHEMA_V4: &str = "
+CREATE TABLE IF NOT EXISTS external_events (
+    id                  TEXT PRIMARY KEY,
+    source              TEXT NOT NULL DEFAULT '',
+    source_event_id     TEXT,
+    event_type          TEXT NOT NULL DEFAULT '',
+    event_ts            INTEGER NOT NULL DEFAULT 0,
+    session_id          TEXT,
+    payload_json        TEXT NOT NULL DEFAULT '',
+    content_hash        TEXT NOT NULL DEFAULT '',
+    run_id              TEXT NOT NULL DEFAULT '',
+    line_no             INTEGER NOT NULL DEFAULT 0,
+    raw_line            TEXT NOT NULL DEFAULT '',
+    projected           INTEGER NOT NULL DEFAULT 0,
+    projection_error    TEXT,
+    ingested_at         INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_external_events_source_event
+ON external_events (source, source_event_id)
+WHERE source_event_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_external_events_source_hash
+ON external_events (source, content_hash)
+WHERE source_event_id IS NULL;
+
+CREATE TABLE IF NOT EXISTS ingest_runs (
+    id                  TEXT PRIMARY KEY,
+    source              TEXT NOT NULL DEFAULT '',
+    file_path           TEXT NOT NULL DEFAULT '',
+    from_line           INTEGER NOT NULL DEFAULT 1,
+    to_line             INTEGER NOT NULL DEFAULT 0,
+    processed_count     INTEGER NOT NULL DEFAULT 0,
+    inserted_count      INTEGER NOT NULL DEFAULT 0,
+    deduped_count       INTEGER NOT NULL DEFAULT 0,
+    projected_count     INTEGER NOT NULL DEFAULT 0,
+    error_count         INTEGER NOT NULL DEFAULT 0,
+    status              TEXT NOT NULL DEFAULT 'running',
+    last_error          TEXT,
+    started_at          INTEGER NOT NULL DEFAULT 0,
+    finished_at         INTEGER
+);
 ";
 
 // ---------------------------------------------------------------------------
@@ -803,7 +861,7 @@ mod tests {
         let conn = setup_agent_db();
         let expected = vec![
             "id", "policy_id", "actor", "action", "resource",
-            "effect", "reason", "session_id", "created_at",
+            "effect", "reason", "correlation_id", "session_id", "created_at",
         ];
         for col in &expected {
             assert!(has_column(&conn, "policy_audit", col), "policy_audit missing: {col}");
@@ -957,6 +1015,7 @@ mod tests {
             "scratch",
             "policies", "policy_audit",
             "jobs", "job_runs",
+            "external_events", "ingest_runs",
         ];
 
         let mut stmt = conn.prepare(

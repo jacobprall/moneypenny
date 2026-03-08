@@ -1271,6 +1271,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "regex",
+ "reqwest",
  "rusqlite",
  "serde",
  "serde_json",

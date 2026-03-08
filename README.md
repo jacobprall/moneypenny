@@ -1,10 +1,12 @@
 # Moneypenny
 
-**The Edge AI intelligence layer**
+**The enterprise-grade dynamic intelligence layer for agents**
 
-__We make every agent runtime smarter, safer, and stateful by default__
+__Moneypenny makes every agent runtime smarter, safer, and stateful by default.__
 
-Moneypenny is an agent platform with structured memory, context optimization, policy-governed execution, single-transaction ACID turns, local-first/offline operation, and selective multi-agent knowledge sync.
+Moneypenny is an enterprise-grade intelligence and governance core for agents: structured memory, policy-governed execution, explainable audit, ACID turn semantics, local-first/offline operation, and selective multi-agent knowledge sync.
+
+It can run as a full agent runtime, but its primary strategic role is the dynamic intelligence layer that plugs into existing runtimes and channels.
 
 ## Quick Start
 
@@ -15,9 +17,6 @@ cd moneypenny && cargo build
 mp init       # creates config + downloads local embedding model
 mp start      # starts gateway (CLI chat, HTTP API, optional Web UI)
 
-> hello
-> remember that our team standup is at 9:15am Pacific
-> what time is standup?
 ```
 
 Embeddings are generated locally by default. Optional Web UI: build `web-ui` and serve `web-ui/dist` from the same port.
@@ -56,11 +55,6 @@ Embeddings are generated locally by default. Optional Web UI: build `web-ui` and
 - **Denials as context.** Policy denials don’t crash the agent; they’re returned so the agent can adapt. Stuck detection breaks retry loops and context thrashing.
 - **Queryable audit trail.** Every decision logged. “Why was this denied?” “How many violations this week?” Answerable with SQL.
 
-### Nothing is ever half-done
-
-- **Single ACID transaction per turn.** Memory retrieval, policy check, tool execution, audit, embeddings, redaction — all in one transaction. Any failure rolls back. No orphaned state, no partial writes.
-- In local mode the agent loop runs entirely inside SQLite. Crash mid-task → WAL rollback to last consistent state. Architecturally impossible when persistence is bolted onto an orchestrator.
-
 ### Agents get smarter together
 
 - **CRDT-based sync.** Multiple agents share a knowledge mesh. No central server. Agent A’s discoveries propagate to Agent B automatically.
@@ -84,6 +78,7 @@ Embeddings are generated locally by default. Optional Web UI: build `web-ui` and
 
 ## How It Works
 
+- **Intelligence layer first, runtime-compatible.** Moneypenny is designed to plug into external runtimes as a memory/policy/audit substrate, while also supporting a first-party runtime for end-to-end deployments.
 - **Database as runtime.** Inference, memory, search, sync, policy, and tools live inside the same transactional boundary. The orchestrator is a thin loop; the intelligence (compression, budgeting, extraction, governance) sits between the DB and the LLM.
 - **Four memory stores, one search.** Facts, conversation log, ingested knowledge, session scratch — one hybrid retrieval layer. Token budgeting allocates context across stores by query, session depth, and task.
 - **Channels.** CLI, HTTP (REST + SSE + WebSocket), Slack, Discord, Telegram. Same agent loop; channel adapters are thin.
@@ -95,7 +90,7 @@ Embeddings are generated locally by default. Optional Web UI: build `web-ui` and
 
 ## OpenClaw Integration (Execution Plane + Intelligence Plane)
 
-Moneypenny can integrate with OpenClaw.
+Moneypenny is intentionally built to integrate with OpenClaw and other agent runtimes.
 
 __In short: Moneypenny becomes the layer that makes OpenClaw outputs compounding, explainable, and safely reusable across sessions and agents.__
 
@@ -139,9 +134,14 @@ Other frameworks force tradeoffs. Moneypenny gets these from the foundation.
 
 | Doc | Description |
 |-----|-------------|
-| [SPEC.md](./SPEC.md) | Architecture, schemas, algorithms |
-| [PLAN.md](./PLAN.md) | Roadmap, milestones |
-| [TASKS.md](./TASKS.md) | Current status, active work |
+| [SPEC_CURRENT.md](./docs/SPEC_CURRENT.md) | Current architecture and integration model |
+| [docs/README.md](./docs/README.md) | Documentation guide and navigation |
+| [SPEC.md](./docs/SPEC.md) | Archived historical technical design notes |
+| [PLAN.md](./docs/PLAN.md) | Current forward plan |
+| [WORKBOARD.md](./docs/WORKBOARD.md) | Centralized outstanding work tracker |
+| [STRATEGY_DECISIONS.md](./docs/STRATEGY_DECISIONS.md) | Platform positioning and architecture trade-off decisions |
+| [INTERFACE_RFC.md](./docs/INTERFACE_RFC.md) | Canonical capability contract across CLI, MCP, API, and ingest |
+| [IDEA_LEDGER.md](./docs/IDEA_LEDGER.md) | Living record of strategic ideas and decision hygiene |
 | [OPENCLAW_INTEGRATION.md](./docs/OPENCLAW_INTEGRATION.md) | V1 OpenClaw integration contract and event mapping |
 
 ---

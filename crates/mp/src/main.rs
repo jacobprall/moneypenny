@@ -41,7 +41,9 @@ async fn main() -> Result<()> {
             cmd_send(&config, &agent, &message, session_id).await
         },
         Command::Facts(cmd) => cmd_facts(&config, cmd).await,
-        Command::Ingest { path, url, agent } => cmd_ingest(&config, path, url, agent).await,
+        Command::Ingest { path, url, agent, openclaw_file, replay, status, replay_run, dry_run, source, limit } => {
+            cmd_ingest(&config, path, url, agent, openclaw_file, replay, status, replay_run, dry_run, source, limit).await
+        },
         Command::Session(cmd) => cmd_session(&config, cmd).await,
         Command::Knowledge(cmd) => cmd_knowledge(&config, cmd).await,
         Command::Skill(cmd) => cmd_skill(&config, cmd).await,
@@ -952,28 +954,35 @@ async fn cmd_init(config_path: &str) -> Result<()> {
     let meta_conn = mp_core::db::open(&meta_path)?;
     mp_core::schema::init_metadata_db(&meta_conn)?;
 
-    for agent in &config.agents {
-        let db_path = config.agent_db_path(&agent.name);
-        let agent_conn = mp_core::db::open(&db_path)?;
-        mp_ext::init_all_extensions(&agent_conn)?;
-        mp_core::schema::init_agent_db(&agent_conn)?;
-
-        // Register built-in tools and runtime skills
-        mp_core::tools::registry::register_builtins(&agent_conn)?;
-        mp_core::tools::registry::register_runtime_skills(&agent_conn)?;
-
-        meta_conn.execute(
-            "INSERT OR IGNORE INTO agents (id, name, persona, trust_level, llm_provider, db_path, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%s', 'now'))",
-            rusqlite::params![
-                agent.name,
-                agent.name,
-                agent.persona,
-                agent.trust_level,
-                agent.llm.provider,
-                db_path.to_string_lossy(),
-            ],
+    let bootstrap_conn = {
+        let conn = mp_core::db::open_memory()?;
+        mp_core::schema::init_agent_db(&conn)?;
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, created_at)
+             VALUES ('allow-bootstrap', 'allow bootstrap', 1000, 'allow', '*', '*', '*', ?1)",
+            [chrono::Utc::now().timestamp()],
         )?;
+        conn
+    };
+
+    for agent in &config.agents {
+        let req = op_request(
+            "bootstrap",
+            "agent.create",
+            serde_json::json!({
+                "name": agent.name,
+                "persona": agent.persona,
+                "trust_level": agent.trust_level,
+                "llm_provider": agent.llm.provider,
+                "llm_model": agent.llm.model,
+                "metadata_db_path": meta_path.to_string_lossy().to_string(),
+                "agent_db_path": config.agent_db_path(&agent.name).to_string_lossy().to_string(),
+            }),
+        );
+        let resp = mp_core::operations::execute(&bootstrap_conn, &req)?;
+        if !resp.ok && resp.code != "already_exists" {
+            anyhow::bail!("failed to initialize agent '{}': {}", agent.name, resp.message);
+        }
     }
 
     println!();
@@ -1551,10 +1560,47 @@ async fn cmd_agent(config: &Config, cmd: cli::AgentCommand) -> Result<()> {
             println!();
         }
         cli::AgentCommand::Create { name } => {
-            println!("  [mp agent create {name} — requires runtime agent registry (M13)]");
+            let actor = resolve_agent(config, None)?;
+            let conn = open_agent_db(config, &actor.name)?;
+            let req = op_request(
+                &actor.name,
+                "agent.create",
+                serde_json::json!({
+                    "name": name,
+                    "metadata_db_path": config.metadata_db_path().to_string_lossy().to_string(),
+                    "agent_db_path": config.agent_db_path(&name).to_string_lossy().to_string(),
+                    "trust_level": "standard",
+                    "llm_provider": "local"
+                }),
+            );
+            let resp = mp_core::operations::execute(&conn, &req)?;
+            if !resp.ok {
+                println!("  Agent create failed: {}", resp.message);
+                return Ok(());
+            }
+            println!("  Agent {} created.", resp.data["name"].as_str().unwrap_or("-"));
         }
-        cli::AgentCommand::Delete { name, .. } => {
-            println!("  [mp agent delete {name} — requires runtime agent registry (M13)]");
+        cli::AgentCommand::Delete { name, confirm } => {
+            if !confirm {
+                println!("  Use --confirm to delete agent {name}");
+                return Ok(());
+            }
+            let actor = resolve_agent(config, None)?;
+            let conn = open_agent_db(config, &actor.name)?;
+            let req = op_request(
+                &actor.name,
+                "agent.delete",
+                serde_json::json!({
+                    "name": name,
+                    "metadata_db_path": config.metadata_db_path().to_string_lossy().to_string(),
+                }),
+            );
+            let resp = mp_core::operations::execute(&conn, &req)?;
+            if !resp.ok {
+                println!("  Agent delete failed: {}", resp.message);
+                return Ok(());
+            }
+            println!("  Agent {} deleted.", resp.data["name"].as_str().unwrap_or("-"));
         }
         cli::AgentCommand::Status { name } => {
             let agent = resolve_agent(config, name.as_deref())?;
@@ -1586,7 +1632,29 @@ async fn cmd_agent(config: &Config, cmd: cli::AgentCommand) -> Result<()> {
             println!();
         }
         cli::AgentCommand::Config { name, key, value } => {
-            println!("  [mp agent config {name} {key}={value} — not yet implemented]");
+            let actor = resolve_agent(config, None)?;
+            let conn = open_agent_db(config, &actor.name)?;
+            let req = op_request(
+                &actor.name,
+                "agent.config",
+                serde_json::json!({
+                    "name": name,
+                    "key": key,
+                    "value": value,
+                    "metadata_db_path": config.metadata_db_path().to_string_lossy().to_string(),
+                }),
+            );
+            let resp = mp_core::operations::execute(&conn, &req)?;
+            if !resp.ok {
+                println!("  Agent config failed: {}", resp.message);
+                return Ok(());
+            }
+            println!(
+                "  Agent {} config updated: {}={}",
+                resp.data["name"].as_str().unwrap_or("-"),
+                resp.data["key"].as_str().unwrap_or("-"),
+                resp.data["value"].as_str().unwrap_or("-"),
+            );
         }
     }
     Ok(())
@@ -1820,8 +1888,20 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
             if !confirm {
                 println!("  Use --confirm to delete fact {id}");
             } else {
-                mp_core::store::facts::delete(&conn, &id, Some("deleted via CLI"))?;
-                println!("  Fact {id} deleted.");
+                let req = op_request(
+                    &ag.name,
+                    "fact.delete",
+                    serde_json::json!({
+                        "id": id,
+                        "reason": "deleted via CLI"
+                    }),
+                );
+                let resp = mp_core::operations::execute(&conn, &req)?;
+                if !resp.ok {
+                    println!("  Fact delete failed: {}", resp.message);
+                    return Ok(());
+                }
+                println!("  Fact {} deleted.", resp.data["id"].as_str().unwrap_or("-"));
             }
         }
     }
@@ -1837,17 +1917,124 @@ async fn cmd_ingest(
     path: Option<String>,
     url: Option<String>,
     agent: Option<String>,
+    openclaw_file: Option<String>,
+    replay: bool,
+    status: bool,
+    replay_run: Option<String>,
+    dry_run: bool,
+    source: String,
+    limit: usize,
 ) -> Result<()> {
     let ag = resolve_agent(config, agent.as_deref())?;
     let conn = open_agent_db(config, &ag.name)?;
 
-    if let Some(p) = path {
+    if status {
+        let req = op_request(
+            &ag.name,
+            "ingest.status",
+            serde_json::json!({
+                "source": source,
+                "limit": limit
+            }),
+        );
+        let resp = mp_core::operations::execute(&conn, &req)?;
+        let rows = resp.data.as_array().cloned().unwrap_or_default();
+        println!();
+        if rows.is_empty() {
+            println!("  No ingest runs found.");
+        } else {
+            println!("  {:36} {:10} {:8} {:8} {:8} {:8} {:8}", "RUN_ID", "SOURCE", "PROC", "INS", "DEDUP", "PROJ", "ERR");
+            for r in rows {
+                println!(
+                    "  {:36} {:10} {:8} {:8} {:8} {:8} {:8}",
+                    r["id"].as_str().unwrap_or("-"),
+                    r["source"].as_str().unwrap_or("-"),
+                    r["processed_count"].as_i64().unwrap_or(0),
+                    r["inserted_count"].as_i64().unwrap_or(0),
+                    r["deduped_count"].as_i64().unwrap_or(0),
+                    r["projected_count"].as_i64().unwrap_or(0),
+                    r["error_count"].as_i64().unwrap_or(0),
+                );
+            }
+        }
+        println!();
+    } else if let Some(run_id) = replay_run {
+        let req = op_request(
+            &ag.name,
+            "ingest.replay",
+            serde_json::json!({
+                "run_id": run_id,
+                "dry_run": dry_run
+            }),
+        );
+        let resp = mp_core::operations::execute(&conn, &req)?;
+        if !resp.ok {
+            anyhow::bail!("replay denied: {}", resp.message);
+        }
+        if dry_run {
+            println!(
+                "  Replay dry-run {}: processed={}, would_insert={}, would_dedupe={}, parse_errors={}, lines={}..{}",
+                resp.data["run_id"].as_str().unwrap_or("-"),
+                resp.data["processed_count"].as_i64().unwrap_or(0),
+                resp.data["would_insert_count"].as_i64().unwrap_or(0),
+                resp.data["would_dedupe_count"].as_i64().unwrap_or(0),
+                resp.data["parse_error_count"].as_i64().unwrap_or(0),
+                resp.data["from_line"].as_i64().unwrap_or(0),
+                resp.data["to_line"].as_i64().unwrap_or(0),
+            );
+        } else {
+            println!(
+                "  Replay run {}: processed={}, inserted={}, deduped={}, projected={}, errors={}",
+                resp.data["run_id"].as_str().unwrap_or("-"),
+                resp.data["processed_count"].as_i64().unwrap_or(0),
+                resp.data["inserted_count"].as_i64().unwrap_or(0),
+                resp.data["deduped_count"].as_i64().unwrap_or(0),
+                resp.data["projected_count"].as_i64().unwrap_or(0),
+                resp.data["error_count"].as_i64().unwrap_or(0),
+            );
+        }
+    } else if let Some(file) = openclaw_file {
+        let req = op_request(
+            &ag.name,
+            "ingest.events",
+            serde_json::json!({
+                "source": source,
+                "file_path": file,
+                "replay": replay,
+            }),
+        );
+        let resp = mp_core::operations::execute(&conn, &req)?;
+        if !resp.ok {
+            anyhow::bail!("external ingest denied: {}", resp.message);
+        }
+        println!(
+            "  Ingest run {}: processed={}, inserted={}, deduped={}, projected={}, errors={}",
+            resp.data["run_id"].as_str().unwrap_or("-"),
+            resp.data["processed_count"].as_i64().unwrap_or(0),
+            resp.data["inserted_count"].as_i64().unwrap_or(0),
+            resp.data["deduped_count"].as_i64().unwrap_or(0),
+            resp.data["projected_count"].as_i64().unwrap_or(0),
+            resp.data["error_count"].as_i64().unwrap_or(0),
+        );
+    } else if let Some(p) = path {
         let content = std::fs::read_to_string(&p)?;
         let title = Path::new(&p).file_name()
             .map(|n| n.to_string_lossy().to_string());
-        let (doc_id, chunks) = mp_core::store::knowledge::ingest(
-            &conn, Some(&p), title.as_deref(), &content, None,
-        )?;
+        let req = op_request(
+            &ag.name,
+            "knowledge.ingest",
+            serde_json::json!({
+                "path": p.clone(),
+                "title": title,
+                "content": content,
+            }),
+        );
+        let resp = mp_core::operations::execute(&conn, &req)?;
+        if !resp.ok {
+            anyhow::bail!("ingest denied: {}", resp.message);
+        }
+        let doc_id = resp.data["document_id"].as_str().unwrap_or("-");
+        let chunks = resp.data["chunks_created"].as_u64().unwrap_or(0);
         println!("  Ingested {p}: {chunks} chunks (doc {doc_id})");
         // Embed new chunks in the background; fails gracefully if model is missing.
         if let Ok(ep) = build_embedding_provider(config, ag) {
@@ -1856,9 +2043,31 @@ async fn cmd_ingest(
     } else if let Some(u) = url {
         println!("  [mp ingest --url {u} — HTTP fetch not yet implemented]");
     } else {
-        anyhow::bail!("Provide a path or --url to ingest.");
+        anyhow::bail!("Provide a path, --openclaw-file, or --url to ingest.");
     }
     Ok(())
+}
+
+fn op_request(agent_id: &str, op: &str, args: serde_json::Value) -> mp_core::operations::OperationRequest {
+    let request_id = uuid::Uuid::new_v4().to_string();
+    mp_core::operations::OperationRequest {
+        op: op.to_string(),
+        op_version: Some("v1".into()),
+        request_id: Some(request_id.clone()),
+        idempotency_key: None,
+        actor: mp_core::operations::ActorContext {
+            agent_id: agent_id.to_string(),
+            tenant_id: None,
+            user_id: None,
+            channel: Some("cli".into()),
+        },
+        context: mp_core::operations::OperationContext {
+            session_id: None,
+            trace_id: Some(request_id),
+            timestamp: Some(chrono::Utc::now().timestamp()),
+        },
+        args,
+    }
 }
 
 // =========================================================================
@@ -1919,10 +2128,23 @@ async fn cmd_skill(config: &Config, cmd: cli::SkillCommand) -> Result<()> {
             let name = Path::new(&path).file_stem()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "unnamed".into());
-            let id = mp_core::store::knowledge::add_skill(
-                &conn, &name, &format!("Skill from {path}"), &content, None,
-            )?;
-            println!("  Added skill \"{name}\" ({id})");
+            let req = op_request(
+                &ag.name,
+                "skill.add",
+                serde_json::json!({
+                    "name": name,
+                    "description": format!("Skill from {path}"),
+                    "content": content
+                }),
+            );
+            let resp = mp_core::operations::execute(&conn, &req)?;
+            if !resp.ok {
+                println!("  Skill add denied: {}", resp.message);
+                return Ok(());
+            }
+            let id = resp.data["id"].as_str().unwrap_or("-");
+            let printed_name = resp.data["name"].as_str().unwrap_or("skill");
+            println!("  Added skill \"{printed_name}\" ({id})");
         }
         cli::SkillCommand::List { .. } => {
             let mut stmt = conn.prepare(
@@ -1947,8 +2169,17 @@ async fn cmd_skill(config: &Config, cmd: cli::SkillCommand) -> Result<()> {
             println!();
         }
         cli::SkillCommand::Promote { id } => {
-            mp_core::store::knowledge::promote_skill(&conn, &id)?;
-            println!("  Skill {id} promoted.");
+            let req = op_request(
+                &ag.name,
+                "skill.promote",
+                serde_json::json!({ "id": id }),
+            );
+            let resp = mp_core::operations::execute(&conn, &req)?;
+            if !resp.ok {
+                println!("  Skill promote failed: {}", resp.message);
+                return Ok(());
+            }
+            println!("  Skill {} promoted.", resp.data["id"].as_str().unwrap_or("-"));
         }
     }
     Ok(())
@@ -1992,14 +2223,26 @@ async fn cmd_policy(config: &Config, cmd: cli::PolicyCommand) -> Result<()> {
             println!();
         }
         cli::PolicyCommand::Add { name, effect, actor, action, resource, message } => {
-            let id = uuid::Uuid::new_v4().to_string();
-            let now = chrono::Utc::now().timestamp();
-            conn.execute(
-                "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, message, created_at)
-                 VALUES (?1, ?2, 0, ?3, ?4, ?5, ?6, ?7, ?8)",
-                rusqlite::params![id, name, effect, actor, action, resource, message, now],
-            )?;
-            println!("  Policy \"{name}\" added ({id})");
+            let req = op_request(
+                &ag.name,
+                "policy.add",
+                serde_json::json!({
+                    "name": name,
+                    "effect": effect,
+                    "actor_pattern": actor,
+                    "action_pattern": action,
+                    "resource_pattern": resource,
+                    "message": message,
+                }),
+            );
+            let resp = mp_core::operations::execute(&conn, &req)?;
+            if !resp.ok {
+                println!("  Policy add denied: {}", resp.message);
+                return Ok(());
+            }
+            let id = resp.data["id"].as_str().unwrap_or("-");
+            let printed_name = resp.data["name"].as_str().unwrap_or("policy");
+            println!("  Policy \"{printed_name}\" added ({id})");
         }
         cli::PolicyCommand::Test { input } => {
             let req = mp_core::policy::PolicyRequest {
@@ -2066,7 +2309,19 @@ async fn cmd_job(config: &Config, cmd: cli::JobCommand) -> Result<()> {
 
     match cmd {
         cli::JobCommand::List { agent } => {
-            let jobs = mp_core::scheduler::list_jobs(&conn, agent.as_deref())?;
+            let req = op_request(
+                &ag.name,
+                "job.list",
+                serde_json::json!({
+                    "agent_id": agent,
+                }),
+            );
+            let resp = mp_core::operations::execute(&conn, &req)?;
+            if !resp.ok {
+                println!("  Job list denied: {}", resp.message);
+                return Ok(());
+            }
+            let jobs: Vec<serde_json::Value> = serde_json::from_value(resp.data).unwrap_or_default();
             println!();
             if jobs.is_empty() {
                 println!("  No jobs scheduled.");
@@ -2074,48 +2329,59 @@ async fn cmd_job(config: &Config, cmd: cli::JobCommand) -> Result<()> {
                 println!("  {:36} {:20} {:8} {:10} {:8}", "ID", "NAME", "TYPE", "STATUS", "SCHED");
                 for j in &jobs {
                     println!("  {:36} {:20} {:8} {:10} {:8}",
-                        j.id, j.name, j.job_type, j.status, j.schedule);
+                        j["id"].as_str().unwrap_or("-"),
+                        j["name"].as_str().unwrap_or("-"),
+                        j["job_type"].as_str().unwrap_or("-"),
+                        j["status"].as_str().unwrap_or("-"),
+                        j["schedule"].as_str().unwrap_or("-"));
                 }
             }
             println!();
         }
         cli::JobCommand::Create { name, schedule, job_type, payload, agent } => {
-            let agent_id = agent.unwrap_or_else(|| ag.name.clone());
-            let now = chrono::Utc::now().timestamp();
-            let id = mp_core::scheduler::create_job(&conn, &mp_core::scheduler::NewJob {
-                agent_id,
-                name: name.clone(),
-                description: None,
-                schedule,
-                next_run_at: now + 60,
-                job_type,
-                payload,
-                max_retries: None,
-                retry_delay_ms: None,
-                timeout_ms: None,
-                overlap_policy: None,
-            })?;
-            println!("  Job \"{name}\" created ({id})");
+            let req = op_request(
+                &ag.name,
+                "job.create",
+                serde_json::json!({
+                    "name": name,
+                    "schedule": schedule,
+                    "job_type": job_type,
+                    "payload": payload,
+                    "agent_id": agent,
+                }),
+            );
+            let resp = mp_core::operations::execute(&conn, &req)?;
+            if !resp.ok {
+                println!("  Job create denied: {}", resp.message);
+                return Ok(());
+            }
+            let id = resp.data["id"].as_str().unwrap_or("-");
+            let printed_name = resp.data["name"].as_str().unwrap_or("job");
+            println!("  Job \"{printed_name}\" created ({id})");
         }
         cli::JobCommand::Run { id } => {
-            match mp_core::scheduler::get_job(&conn, &id)? {
-                None => println!("  Job {id} not found."),
-                Some(job) => {
-                    println!("  Triggering job \"{}\"...", job.name);
-                    let run = mp_core::scheduler::dispatch_job(
-                        &conn, &job,
-                        &|j| Ok(format!("Manual trigger of {}", j.name)),
-                    )?;
-                    println!("  Run {}: {}", run.id, run.status);
-                    if let Some(r) = &run.result {
-                        println!("  Result: {r}");
-                    }
-                }
+            let req = op_request(&ag.name, "job.run", serde_json::json!({ "id": id }));
+            let resp = mp_core::operations::execute(&conn, &req)?;
+            if !resp.ok {
+                println!("  Job run failed: {}", resp.message);
+                return Ok(());
+            }
+            println!("  Run {}: {}",
+                resp.data["run_id"].as_str().unwrap_or("-"),
+                resp.data["status"].as_str().unwrap_or("-")
+            );
+            if let Some(result) = resp.data["result"].as_str() {
+                println!("  Result: {result}");
             }
         }
         cli::JobCommand::Pause { id } => {
-            mp_core::scheduler::pause_job(&conn, &id)?;
-            println!("  Job {id} paused.");
+            let req = op_request(&ag.name, "job.pause", serde_json::json!({ "id": id }));
+            let resp = mp_core::operations::execute(&conn, &req)?;
+            if !resp.ok {
+                println!("  Job pause failed: {}", resp.message);
+                return Ok(());
+            }
+            println!("  Job {} paused.", resp.data["id"].as_str().unwrap_or("-"));
         }
         cli::JobCommand::History { id } => {
             let job_id = id.unwrap_or_else(|| "%".into());
