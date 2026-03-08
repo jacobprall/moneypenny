@@ -23,6 +23,7 @@ All key behavior is expressed as canonical operations (capabilities), not transp
 
 Implemented now (v1):
 - `job.create`, `job.list`, `job.run`, `job.pause`
+- `job.spec.plan`, `job.spec.confirm`, `job.spec.apply`
 - `policy.add`
 - `policy.evaluate`, `policy.explain`
 - `knowledge.ingest`
@@ -68,12 +69,9 @@ Current state:
 
 - CLI maps mutating control-plane behavior through canonical operations.
 - JSONL/event ingest maps to canonical ingest operations (`ingest.events`, `ingest.status`, `ingest.replay`).
-
-In progress / planned:
-
-- Stdio sidecar operation endpoint
-- MCP translation adapter to canonical operations
-- HTTP/gRPC parity layer
+- Stdio sidecar operation endpoint is live.
+- MCP translation adapter maps to canonical operations.
+- HTTP parity layer exposes canonical ops at `POST /v1/ops` (gRPC pending).
 
 Target principle remains: no adapter-specific business logic.
 

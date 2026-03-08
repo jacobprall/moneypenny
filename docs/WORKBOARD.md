@@ -22,11 +22,11 @@ Status: active single source of truth for outstanding work.
    - [x] Add stdio sidecar operation endpoint for CLI runtime integration.
    - [x] Map MCP adapter to canonical operations (translation only, no business logic).
    - [ ] Expose canonical operations via HTTP/gRPC parity layer (HTTP shipped; gRPC pending).
-   - [ ] Add parity contract tests across CLI/MCP/API/ingest for same-op same-outcome guarantees (HTTP <-> sidecar parity test shipped; MCP/ingest parity tests pending).
+   - [x] Add parity contract tests across CLI/MCP/API/ingest for same-op same-outcome guarantees.
 
 3. **Agent-first JS jobs (M4)**
-   - [ ] Define schema for agent-generated job specs.
-   - [ ] Implement "plan -> confirm -> apply" flow for agent job creation.
+   - [x] Define schema for agent-generated job specs.
+   - [x] Implement "plan -> confirm -> apply" flow for agent job creation.
    - [ ] Ensure JS job creation uses same canonical handlers as CLI/API/MCP.
    - [ ] Add validation tests for natural-language-to-job workflows.
 
@@ -53,12 +53,12 @@ Status: active single source of truth for outstanding work.
 - [x] Add stdio sidecar operation endpoint for CLI runtime integration.
 - [x] Map MCP adapter to canonical operations (translation only, no business logic).
 - [ ] Expose canonical operations via HTTP/gRPC parity layer (HTTP shipped; gRPC pending).
-- [ ] Add parity contract tests across CLI/MCP/API/ingest for same-op same-outcome guarantees (HTTP <-> sidecar parity test shipped; MCP/ingest parity tests pending).
+- [x] Add parity contract tests across CLI/MCP/API/ingest for same-op same-outcome guarantees.
 
 ## M4 — Agent-First JS Jobs
 
-- [ ] Define schema for agent-generated job specs.
-- [ ] Implement "plan -> confirm -> apply" flow for agent job creation.
+- [x] Define schema for agent-generated job specs.
+- [x] Implement "plan -> confirm -> apply" flow for agent job creation.
 - [ ] Ensure JS job creation uses same canonical handlers as CLI/API/MCP.
 - [ ] Add validation tests for natural-language-to-job workflows.
 

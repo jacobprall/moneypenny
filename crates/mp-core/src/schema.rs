@@ -6,7 +6,7 @@
 
 use rusqlite::Connection;
 
-const AGENT_SCHEMA_VERSION: i64 = 9;
+const AGENT_SCHEMA_VERSION: i64 = 10;
 const METADATA_SCHEMA_VERSION: i64 = 1;
 
 pub fn init_agent_db(conn: &Connection) -> anyhow::Result<()> {
@@ -58,6 +58,11 @@ pub fn init_agent_db(conn: &Connection) -> anyhow::Result<()> {
     if current < 9 {
         conn.execute_batch(AGENT_SCHEMA_V9)?;
         set_schema_version(conn, 9)?;
+    }
+
+    if current < 10 {
+        conn.execute_batch(AGENT_SCHEMA_V10)?;
+        set_schema_version(conn, 10)?;
     }
 
     Ok(())
@@ -438,6 +443,26 @@ ALTER TABLE external_events ADD COLUMN normalized_output_tokens INTEGER;
 ALTER TABLE external_events ADD COLUMN normalized_total_tokens INTEGER;
 ALTER TABLE external_events ADD COLUMN normalized_cost_usd REAL;
 ALTER TABLE external_events ADD COLUMN normalized_correlation_id TEXT;
+";
+
+const AGENT_SCHEMA_V10: &str = "
+CREATE TABLE IF NOT EXISTS job_specs (
+    id                  TEXT PRIMARY KEY,
+    agent_id            TEXT NOT NULL DEFAULT '',
+    intent              TEXT NOT NULL DEFAULT '',
+    plan_json           TEXT NOT NULL DEFAULT '{}',
+    job_name            TEXT NOT NULL DEFAULT '',
+    schedule            TEXT NOT NULL DEFAULT '',
+    job_type            TEXT NOT NULL DEFAULT 'prompt',
+    payload_json        TEXT NOT NULL DEFAULT '{}',
+    status              TEXT NOT NULL DEFAULT 'planned',
+    proposed_by         TEXT NOT NULL DEFAULT 'agent',
+    source_session_id   TEXT,
+    source_message_id   TEXT,
+    applied_job_id      TEXT,
+    created_at          INTEGER NOT NULL DEFAULT 0,
+    updated_at          INTEGER NOT NULL DEFAULT 0
+);
 ";
 
 // ---------------------------------------------------------------------------
@@ -1001,6 +1026,45 @@ mod tests {
     }
 
     // ========================================================================
+    // JOB_SPECS (agent-generated job planning)
+    // ========================================================================
+
+    #[test]
+    fn job_specs_table_has_all_columns() {
+        let conn = setup_agent_db();
+        let expected = vec![
+            "id", "agent_id", "intent", "plan_json", "job_name", "schedule",
+            "job_type", "payload_json", "status", "proposed_by",
+            "source_session_id", "source_message_id", "applied_job_id",
+            "created_at", "updated_at",
+        ];
+        for col in &expected {
+            assert!(has_column(&conn, "job_specs", col), "job_specs missing column: {col}");
+        }
+    }
+
+    #[test]
+    fn job_specs_defaults() {
+        let conn = setup_agent_db();
+        conn.execute(
+            "INSERT INTO job_specs (id, agent_id, intent, created_at, updated_at)
+             VALUES ('spec1', 'a', 'weekly maintenance plan', 1, 1)",
+            [],
+        ).unwrap();
+
+        let (job_type, status, proposed_by): (String, String, String) = conn
+            .query_row(
+                "SELECT job_type, status, proposed_by FROM job_specs WHERE id = 'spec1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(job_type, "prompt");
+        assert_eq!(status, "planned");
+        assert_eq!(proposed_by, "agent");
+    }
+
+    // ========================================================================
     // JOBS
     // ========================================================================
 
@@ -1137,6 +1201,7 @@ mod tests {
             "scratch",
             "policies", "policy_audit",
             "jobs", "job_runs",
+            "job_specs",
             "external_events", "ingest_runs",
             "operation_idempotency",
             "operation_hooks",

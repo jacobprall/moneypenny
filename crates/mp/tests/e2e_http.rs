@@ -70,6 +70,31 @@ fn run_sidecar_once(
     Ok(parsed)
 }
 
+fn run_sidecar_mcp_tools_call_once(
+    config_path: &std::path::Path,
+    op_name: &str,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": "rpc-parity-1",
+        "method": "tools/call",
+        "params": {
+            "name": op_name,
+            "arguments": args,
+            "agent_id": "main"
+        }
+    });
+    let resp = run_sidecar_once(config_path, &req)?;
+    let text = resp["result"]["content"]
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|v| v["text"].as_str())
+        .ok_or("missing MCP tools/call text payload")?;
+    let parsed: serde_json::Value = serde_json::from_str(text)?;
+    Ok(parsed)
+}
+
 #[test]
 fn gateway_http_health_endpoint() {
     let (_temp, config_path) = init_project().unwrap();
@@ -167,6 +192,97 @@ fn gateway_http_ops_parity_with_sidecar() {
         "http status must be success, got {}",
         http_resp.status()
     );
+    let http_json: serde_json::Value = http_resp.json().expect("json body");
+
+    assert_eq!(sidecar_resp["ok"], http_json["ok"]);
+    assert_eq!(sidecar_resp["code"], http_json["code"]);
+    assert_eq!(sidecar_resp["message"], http_json["message"]);
+    assert!(sidecar_resp["data"].is_array());
+    assert!(http_json["data"].is_array());
+    assert_eq!(
+        sidecar_resp["data"].as_array().map(|a| a.len()),
+        http_json["data"].as_array().map(|a| a.len())
+    );
+}
+
+#[test]
+fn gateway_http_ops_parity_with_mcp_tools_call() {
+    let (_temp, config_path) = init_project().unwrap();
+    enable_http_channel(&config_path, HTTP_PORT).unwrap();
+
+    let mut child = spawn_gateway(&config_path).unwrap();
+    if !wait_for_http(HEALTH_URL, Duration::from_secs(10)) {
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("gateway did not start for MCP parity test");
+    }
+
+    let op_args = serde_json::json!({ "agent_id": "main", "limit": 5 });
+    let mcp_sidecar_op_resp = run_sidecar_mcp_tools_call_once(&config_path, "session.list", op_args.clone())
+        .expect("MCP tools/call sidecar response");
+
+    let http_op_req = serde_json::json!({
+        "op": "session.list",
+        "agent_id": "main",
+        "args": op_args
+    });
+    let http_resp = reqwest::blocking::Client::new()
+        .post(OPS_URL)
+        .json(&http_op_req)
+        .timeout(Duration::from_secs(20))
+        .send()
+        .expect("http /v1/ops response");
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert!(http_resp.status().is_success());
+    let http_json: serde_json::Value = http_resp.json().expect("json body");
+
+    assert_eq!(mcp_sidecar_op_resp["ok"], http_json["ok"]);
+    assert_eq!(mcp_sidecar_op_resp["code"], http_json["code"]);
+    assert_eq!(mcp_sidecar_op_resp["message"], http_json["message"]);
+    assert!(mcp_sidecar_op_resp["data"].is_array());
+    assert!(http_json["data"].is_array());
+    assert_eq!(
+        mcp_sidecar_op_resp["data"].as_array().map(|a| a.len()),
+        http_json["data"].as_array().map(|a| a.len())
+    );
+}
+
+#[test]
+fn gateway_ingest_status_parity_http_and_sidecar() {
+    let (_temp, config_path) = init_project().unwrap();
+    enable_http_channel(&config_path, HTTP_PORT).unwrap();
+
+    let mut child = spawn_gateway(&config_path).unwrap();
+    if !wait_for_http(HEALTH_URL, Duration::from_secs(10)) {
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("gateway did not start for ingest parity test");
+    }
+
+    let request = serde_json::json!({
+        "op": "ingest.status",
+        "agent_id": "main",
+        "args": {
+            "source": "openclaw",
+            "limit": 10
+        }
+    });
+
+    let sidecar_resp = run_sidecar_once(&config_path, &request).expect("sidecar ingest.status response");
+    let http_resp = reqwest::blocking::Client::new()
+        .post(OPS_URL)
+        .json(&request)
+        .timeout(Duration::from_secs(20))
+        .send()
+        .expect("http ingest.status response");
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert!(http_resp.status().is_success());
     let http_json: serde_json::Value = http_resp.json().expect("json body");
 
     assert_eq!(sidecar_resp["ok"], http_json["ok"]);
