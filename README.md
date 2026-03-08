@@ -169,7 +169,7 @@ crates/
 vendor/        sqlite-ai, sqlite-vector, sqlite-sync, etc.
 ```
 
-Built on seven [SQLite AI](https://github.com/nicholasgasior/sqliteai) extensions statically linked into one binary — covering on-device inference, vector search, CRDT sync, JS execution, and RAG.
+Built on seven [SQLite AI](https://github.com/sqliteai) extensions statically linked into one binary — covering on-device inference, vector search, CRDT sync, JS execution, and RAG.
 
 ## Documentation
 
