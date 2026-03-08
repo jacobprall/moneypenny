@@ -19,6 +19,69 @@ mp chat                # interactive session with memory, policy, and tools
 
 Embeddings run locally by default (nomic-embed-text-v1.5). No API keys required to start.
 
+To load a rich demo environment (3 agents, 15 facts, 4 docs, 6 policies, 2 skills):
+
+```bash
+./scripts/demo.sh        # setup + cheat sheet
+./scripts/demo.sh --chat # setup + drop into interactive chat
+```
+
+## What It Looks Like
+
+These prompts work out of the box against the demo environment. Each one exercises a capability that stateless LLMs can't replicate.
+
+**Memory that compounds across sessions**
+
+> "What happened with the Newark launch and how is it affecting pick times?"
+
+The agent retrieves two linked facts — Newark's successful Feb 3 launch and the pick time regression caused by its narrower shelf spacing — without being told they're related. It connects the graph edges, not just keyword overlap.
+
+**Governance you can interrogate**
+
+> "Delete all the old facts from the database"
+
+The policy engine blocks the `DELETE` (no WHERE clause), returns the denial as context, and the agent explains why it can't comply and suggests alternatives. Then ask:
+
+> "Show me every policy violation this week"
+
+Queryable audit. The denial from 10 seconds ago is already in the trail.
+
+**Cross-source retrieval**
+
+> "A robot is down at Newark — walk me through triage"
+
+The agent pulls the incident triage skill, the runbook's severity classification, the Newark site facts, and the on-call rotation — four different stores, one coherent answer. Ask follow-up:
+
+> "What's the escalation path if this is a SEV1?"
+
+It retrieves deeper into the runbook without re-searching from scratch. The session context compounds.
+
+**Multi-agent delegation**
+
+> "Ask the research agent to compare TiKV vs CockroachDB for our use case"
+
+The main agent delegates to `research`, which has its own persona, memory, and synced facts about the ongoing TiKV migration. It returns a structured analysis grounded in what it knows about Acme's architecture.
+
+**Knowledge + facts + memory working together**
+
+> "We just decided to postpone the TiKV migration to July. Update your knowledge."
+
+The agent calls `fact_add` to record the decision. In subsequent sessions, retrieval surfaces the updated timeline. Old facts about the May target decay in confidence. Ask the next day:
+
+> "What's the current status of the TiKV migration?"
+
+It returns the July timeline, not the stale May date. Memory self-curates.
+
+**Introspection**
+
+> "What do you know about our security posture?"
+
+The agent traverses fact graph edges from the security pointer, expands from 5-word pointers to full detail, and synthesizes across mTLS, firmware signing, SOC 2 progress, and PII handling — all without a vector search. Then verify what it used:
+
+```bash
+mp db query "SELECT pointer, confidence FROM facts WHERE status='active' ORDER BY confidence DESC"
+```
+
 ## How It Works
 
 **Database as runtime.** Inference, memory, search, sync, policy, and tools share the same transactional boundary inside SQLite. The orchestrator is a thin loop; the intelligence — compression, budgeting, extraction, governance — sits between the database and the LLM.

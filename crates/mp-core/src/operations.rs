@@ -800,7 +800,7 @@ fn op_policy_add(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Op
 #[derive(Debug, Clone)]
 struct PolicySpecRecord {
     id: String,
-    agent_id: String,
+    _agent_id: String,
     intent: String,
     policy_name: String,
     effect: String,
@@ -830,7 +830,7 @@ fn load_policy_spec(conn: &Connection, spec_id: &str) -> anyhow::Result<Option<P
         .query_row([spec_id], |r| {
             Ok(PolicySpecRecord {
                 id: r.get(0)?,
-                agent_id: r.get(1)?,
+                _agent_id: r.get(1)?,
                 intent: r.get(2)?,
                 policy_name: r.get(3)?,
                 effect: r.get(4)?,

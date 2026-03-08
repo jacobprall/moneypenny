@@ -11,6 +11,7 @@ pub enum Store {
 
 impl Store {
     /// Priority for deduplication: Facts > Knowledge > Log.
+    #[cfg(test)]
     fn priority(self) -> u8 {
         match self {
             Store::Facts => 3,
