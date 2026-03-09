@@ -1,0 +1,468 @@
+---
+import Base from "../layouts/Base.astro";
+
+const features = [
+  {
+    title: "Persistent Memory",
+    description:
+      "Facts are extracted after every turn, graph-linked, and compressed to three levels. Confidence grows on re-extraction. Stale knowledge decays. 500 facts fit in ~2K tokens.",
+  },
+  {
+    title: "Policy Engine",
+    description:
+      "Every operation — tool calls, memory writes, SQL queries — evaluated before execution. Static rules, behavioral limits, rate controls, time windows. Denials become context, not crashes.",
+  },
+  {
+    title: "Hybrid Retrieval",
+    description:
+      "Vector similarity plus full-text search across four stores, fused with Reciprocal Rank Fusion, diversified with MMR. One query, four sources, one coherent answer.",
+  },
+  {
+    title: "Multi-Agent Sync",
+    description:
+      "CRDT-based knowledge sharing with scoped visibility — private, shared, or protected. No central server for local P2P. Syncs facts, skills, and policies.",
+  },
+  {
+    title: "Audit Trail",
+    description:
+      "Every policy decision logged with full context. Queryable by natural language or SQL. When a tool call is denied, you can trace exactly why.",
+  },
+  {
+    title: "Runtime Agnostic",
+    description:
+      "Run as a standalone agent with CLI, HTTP, Slack, Discord, and Telegram. Or plug into any existing runtime as a sidecar via stdio, MCP, or HTTP.",
+  },
+];
+---
+
+<Base title="Moneypenny — The Intelligence Layer for AI Agents">
+  <!-- Nav -->
+  <nav
+    class="fixed top-0 z-50 w-full border-b border-zinc-800/50 bg-[#09090b]/80 backdrop-blur-xl"
+  >
+    <div
+      class="mx-auto flex h-14 max-w-5xl items-center justify-between px-6"
+    >
+      <a href="/" class="text-[15px] font-semibold tracking-tight"
+        >moneypenny</a
+      >
+      <div class="flex items-center gap-5">
+        <a
+          href="/docs/"
+          class="text-[13px] text-zinc-400 transition-colors hover:text-zinc-50"
+          >Docs</a
+        >
+        <a
+          href="https://github.com/jacobprall/moneypenny"
+          class="text-[13px] text-zinc-400 transition-colors hover:text-zinc-50"
+          >GitHub</a
+        >
+        <a
+          href="#waitlist"
+          class="rounded-md bg-zinc-50 px-3.5 py-1.5 text-[13px] font-medium text-zinc-950 transition-colors hover:bg-zinc-200"
+          >Join Waitlist</a
+        >
+      </div>
+    </div>
+  </nav>
+
+  <!-- ═══════════════ HERO ═══════════════ -->
+  <section class="relative pt-32 pb-24 sm:pt-44 sm:pb-32">
+    <div class="mx-auto max-w-3xl px-6 text-center">
+      <div class="animate-fade-up">
+        <a
+          href="https://github.com/jacobprall/moneypenny"
+          class="mb-8 inline-flex items-center gap-2 rounded-full border border-zinc-800 px-3 py-1 text-[13px] text-zinc-500 transition-colors hover:border-zinc-700 hover:text-zinc-400"
+        >
+          Open source &middot; Apache-2.0
+          <svg
+            class="h-3 w-3"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25"></path>
+          </svg>
+        </a>
+      </div>
+
+      <h1
+        class="animate-fade-up animate-delay-100 text-4xl leading-[1.08] font-bold tracking-tight sm:text-6xl"
+      >
+        The intelligence layer<br />for AI agents
+      </h1>
+
+      <p
+        class="animate-fade-up animate-delay-200 mx-auto mt-6 max-w-2xl text-[17px] leading-relaxed text-zinc-400"
+      >
+        Make every agent runtime smarter, safer, and stateful. Persistent
+        memory, policy governance, and queryable audit — in a single SQLite
+        file.
+      </p>
+
+      <div
+        class="animate-fade-up animate-delay-300 mt-10 flex items-center justify-center gap-3"
+      >
+        <a
+          href="/docs/"
+          class="rounded-md bg-zinc-50 px-5 py-2.5 text-sm font-medium text-zinc-950 transition-colors hover:bg-zinc-200"
+          >Read the Docs</a
+        >
+        <a
+          href="#waitlist"
+          class="rounded-md border border-zinc-800 px-5 py-2.5 text-sm font-medium text-zinc-400 transition-colors hover:border-zinc-700 hover:text-zinc-50"
+          >Join the Waitlist</a
+        >
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ TERMINAL ═══════════════ -->
+  <section class="relative pb-24 sm:pb-32">
+    <div class="mx-auto max-w-2xl px-6">
+      <div
+        class="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/50"
+      >
+        <div
+          class="flex items-center gap-1.5 border-b border-zinc-800 px-4 py-2.5"
+        >
+          <span class="h-2.5 w-2.5 rounded-full bg-zinc-700"></span>
+          <span class="h-2.5 w-2.5 rounded-full bg-zinc-700"></span>
+          <span class="h-2.5 w-2.5 rounded-full bg-zinc-700"></span>
+        </div>
+        <div class="p-5 font-mono text-[13px] leading-relaxed">
+          <div class="space-y-4">
+            <div>
+              <p>
+                <span class="text-zinc-600">$</span>
+                <span class="text-zinc-300"> mp chat</span>
+              </p>
+            </div>
+            <div>
+              <p class="text-zinc-400">
+                <span class="text-zinc-500">&gt;</span> What happened with the
+                Newark launch and how is it affecting pick times?
+              </p>
+              <div class="mt-2 border-l-2 border-zinc-800 pl-3 text-zinc-400">
+                Newark launched Feb 3 — on schedule. However, the narrower shelf
+                spacing is causing a 12% pick time regression from baseline. Two
+                linked facts confirm this is a known trade-off from the floor
+                layout change.
+              </div>
+            </div>
+            <div>
+              <p class="text-zinc-400">
+                <span class="text-zinc-500">&gt;</span> Delete all the old facts
+                from the database
+              </p>
+              <div class="mt-2 border-l-2 border-red-900/50 pl-3 text-zinc-500">
+                <span class="text-red-400/80">Policy denied:</span> DELETE without
+                WHERE clause blocked. I can help you archive specific facts by date
+                range or topic instead.
+              </div>
+            </div>
+            <div>
+              <p class="text-zinc-400">
+                <span class="text-zinc-500">&gt;</span> Show me every policy
+                violation this week
+              </p>
+              <div class="mt-2 border-l-2 border-zinc-800 pl-3 text-zinc-400">
+                3 violations found. The denial from just now is already in the
+                audit trail, along with 2 rate-limited shell_exec attempts from
+                Tuesday.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="mt-4 text-center text-[13px] text-zinc-600">
+        Memory retrieval, policy enforcement, and queryable audit — in a single
+        session.
+      </p>
+    </div>
+  </section>
+
+  <!-- ═══════════════ PROBLEM / SOLUTION ═══════════════ -->
+  <section class="relative py-24 sm:py-32">
+    <div class="mx-auto max-w-5xl px-6">
+      <div class="grid gap-16 lg:grid-cols-2 lg:gap-20">
+        <!-- Problem -->
+        <div>
+          <p class="text-[13px] font-medium uppercase tracking-wider text-zinc-600">
+            The problem
+          </p>
+          <h2 class="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">
+            AI agents forget everything
+          </h2>
+          <div class="mt-6 space-y-4 text-[15px] leading-relaxed text-zinc-400">
+            <p>
+              Every session starts from zero. Context is expensive, and
+              everything the agent learned yesterday is gone today.
+            </p>
+            <p>
+              Tool calls execute unchecked. There's no policy, no guardrails, no
+              way to say "block destructive SQL" or "rate-limit shell access."
+            </p>
+            <p>
+              When something goes wrong, there's no trail. You can't trace what
+              the agent did, what it was denied, or why.
+            </p>
+            <p>
+              Adding state means infrastructure — Postgres for storage, Redis
+              for sessions, a vector database for retrieval, and an ops team to
+              keep it all running.
+            </p>
+          </div>
+        </div>
+
+        <!-- Solution -->
+        <div>
+          <p class="text-[13px] font-medium uppercase tracking-wider text-zinc-600">
+            The solution
+          </p>
+          <h2 class="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">
+            Moneypenny makes agents stateful
+          </h2>
+          <div class="mt-6 space-y-4">
+            {
+              [
+                [
+                  "Memory that compounds",
+                  "Facts are extracted, linked, and compressed after every turn. Stale knowledge decays. New knowledge connects to old. Sessions build on each other.",
+                ],
+                [
+                  "Governance built in",
+                  "Every operation — tool calls, memory writes, SQL queries — is checked against configurable policy before execution. Denials are context, not errors.",
+                ],
+                [
+                  "Audit by default",
+                  "Every policy decision is logged with full context. Queryable by natural language or SQL. Explainable, traceable, always on.",
+                ],
+                [
+                  "One file, no infrastructure",
+                  "One SQLite database per agent. No Postgres, no Redis, no Docker. Deploy a single binary anywhere.",
+                ],
+              ].map(([title, desc]) => (
+                <div class="rounded-md border border-zinc-800 bg-zinc-900/30 px-4 py-3">
+                  <p class="text-[14px] font-medium text-zinc-200">{title}</p>
+                  <p class="mt-1 text-[13px] leading-relaxed text-zinc-500">
+                    {desc}
+                  </p>
+                </div>
+              ))
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ FEATURES ═══════════════ -->
+  <section class="relative py-24 sm:py-32">
+    <div class="mx-auto max-w-5xl px-6">
+      <div class="mx-auto max-w-2xl text-center">
+        <h2 class="text-2xl font-bold tracking-tight sm:text-3xl">
+          Capabilities
+        </h2>
+        <p class="mt-4 text-[15px] leading-relaxed text-zinc-400">
+          A single binary with everything agents need to remember, reason,
+          comply, and collaborate.
+        </p>
+      </div>
+
+      <div
+        class="mt-16 grid gap-px overflow-hidden rounded-lg border border-zinc-800 bg-zinc-800 sm:grid-cols-2 lg:grid-cols-3"
+      >
+        {
+          features.map((f) => (
+            <div class="bg-[#09090b] p-6">
+              <h3 class="text-[15px] font-semibold">{f.title}</h3>
+              <p class="mt-2 text-[13px] leading-relaxed text-zinc-500">
+                {f.description}
+              </p>
+            </div>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ ARCHITECTURE ═══════════════ -->
+  <section class="relative py-24 sm:py-32">
+    <div class="mx-auto max-w-5xl px-6">
+      <div class="grid items-start gap-12 lg:grid-cols-2 lg:gap-20">
+        <div>
+          <p class="text-[13px] font-medium uppercase tracking-wider text-zinc-600">
+            Architecture
+          </p>
+          <h2 class="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">
+            Database as runtime
+          </h2>
+          <p class="mt-4 text-[15px] leading-relaxed text-zinc-400">
+            Inference, memory, search, sync, policy, and tools share the same
+            transactional boundary inside SQLite. The orchestrator is a thin
+            loop — the intelligence sits between the database and the LLM.
+          </p>
+          <p class="mt-4 text-[15px] leading-relaxed text-zinc-400">
+            Seven SQLite extensions are statically linked into one Rust binary —
+            covering vector search, on-device inference, CRDT sync, JavaScript
+            execution, and RAG. Every action flows through a single canonical
+            operation pipeline: policy evaluation, hook execution, dispatch,
+            redaction, and audit.
+          </p>
+          <p class="mt-4 text-[15px] leading-relaxed text-zinc-400">
+            One operation contract across every surface — CLI, MCP, HTTP, and
+            event ingestion. Adapters translate protocol. They never own business
+            logic.
+          </p>
+        </div>
+
+        <div>
+          <p class="mb-3 text-[13px] font-medium uppercase tracking-wider text-zinc-600">
+            Turn lifecycle
+          </p>
+          <div
+            class="space-y-px overflow-hidden rounded-lg border border-zinc-800 bg-zinc-800"
+          >
+            {
+              [
+                [
+                  "Message arrives",
+                  "Via CLI, HTTP, Slack, Discord, Telegram, or sidecar stdio",
+                ],
+                [
+                  "Context assembly",
+                  "Token-budgeted retrieval across facts, documents, conversation, and scratch",
+                ],
+                [
+                  "Policy evaluation",
+                  "Every action checked against static rules and behavioral constraints",
+                ],
+                [
+                  "LLM generation",
+                  "Tool calls are re-evaluated by policy before execution",
+                ],
+                [
+                  "Fact extraction",
+                  "New knowledge distilled, graph-linked, embedded, and compressed",
+                ],
+                [
+                  "Redaction & audit",
+                  "Secrets scrubbed, decisions logged, session summary updated",
+                ],
+              ].map(([title, desc], i) => (
+                <div class="flex items-start gap-4 bg-[#09090b] px-5 py-3.5">
+                  <span class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-[11px] font-medium text-zinc-600">
+                    {i + 1}
+                  </span>
+                  <div>
+                    <p class="text-[14px] font-medium text-zinc-300">{title}</p>
+                    <p class="text-[13px] text-zinc-600">{desc}</p>
+                  </div>
+                </div>
+              ))
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ WAITLIST ═══════════════ -->
+  <section id="waitlist" class="relative py-24 sm:py-32">
+    <div class="mx-auto max-w-md px-6 text-center">
+      <h2 class="text-2xl font-bold tracking-tight sm:text-3xl">
+        Get early access
+      </h2>
+      <p class="mt-3 text-[15px] text-zinc-400">
+        Subscribe to updates and be first to know when Moneypenny is ready.
+      </p>
+
+      <form id="waitlist-form" class="mt-8">
+        <div class="flex gap-2">
+          <input
+            type="email"
+            name="email"
+            required
+            placeholder="you@company.com"
+            class="h-10 flex-1 rounded-md border border-zinc-800 bg-zinc-900 px-3.5 text-sm text-zinc-50 placeholder:text-zinc-600 focus:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-zinc-700"
+          />
+          <button
+            type="submit"
+            class="h-10 shrink-0 rounded-md bg-zinc-50 px-4 text-sm font-medium text-zinc-950 transition-colors hover:bg-zinc-200 disabled:opacity-50"
+          >
+            Subscribe
+          </button>
+        </div>
+        <p
+          id="form-message"
+          class="mt-3 hidden text-[13px] text-red-400/80"
+        >
+        </p>
+      </form>
+
+      <div id="form-success" class="mt-8 hidden">
+        <p class="text-[15px] text-zinc-300">
+          You're on the list. We'll be in touch.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ FOOTER ═══════════════ -->
+  <footer class="border-t border-zinc-800/50 py-8">
+    <div
+      class="mx-auto flex max-w-5xl flex-col items-center justify-between gap-4 px-6 sm:flex-row"
+    >
+      <p class="text-[13px] text-zinc-600">
+        &copy; {new Date().getFullYear()} Moneypenny &middot; Apache-2.0
+      </p>
+      <div class="flex gap-5">
+        <a
+          href="/docs/"
+          class="text-[13px] text-zinc-600 transition-colors hover:text-zinc-400"
+          >Docs</a
+        >
+        <a
+          href="https://github.com/jacobprall/moneypenny"
+          class="text-[13px] text-zinc-600 transition-colors hover:text-zinc-400"
+          >GitHub</a
+        >
+      </div>
+    </div>
+  </footer>
+</Base>
+
+<script>
+  const form = document.getElementById("waitlist-form") as HTMLFormElement;
+  const message = document.getElementById("form-message") as HTMLElement;
+  const success = document.getElementById("form-success") as HTMLElement;
+
+  form?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = new FormData(form).get("email") as string;
+    if (!email) return;
+
+    const button = form.querySelector("button") as HTMLButtonElement;
+    button.disabled = true;
+    button.textContent = "...";
+
+    try {
+      // Wire to your email service (Buttondown, Resend, Loops, etc.):
+      // await fetch("/api/subscribe", { method: "POST", body: JSON.stringify({ email }), headers: { "Content-Type": "application/json" } });
+      await new Promise((r) => setTimeout(r, 600));
+
+      form.classList.add("hidden");
+      success.classList.remove("hidden");
+    } catch {
+      button.disabled = false;
+      button.textContent = "Subscribe";
+      message.textContent = "Something went wrong. Please try again.";
+      message.classList.remove("hidden");
+    }
+  });
+</script>

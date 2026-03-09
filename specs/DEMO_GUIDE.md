@@ -1,7 +1,6 @@
 # Moneypenny — Feature Demo Guide
 
-A step-by-step walkthrough for a human presenter. Not a runnable script — read
-each section, type the commands, and talk through what's happening.
+A step-by-step walkthrough for a human prese
 
 **Time estimate:** 30–45 minutes depending on pace.
 

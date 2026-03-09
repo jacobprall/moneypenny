@@ -6,6 +6,13 @@ pub struct Config {
     #[serde(default = "default_data_dir")]
     pub data_dir: PathBuf,
 
+    /// Separate directory for model files (GGUF). When set, models are loaded
+    /// from here instead of `{data_dir}/models/`. Useful for Docker images
+    /// where models are baked into a read-only layer while data_dir points to
+    /// a persistent volume.
+    #[serde(default)]
+    pub models_dir: Option<PathBuf>,
+
     #[serde(default)]
     pub gateway: GatewayConfig,
 
@@ -254,13 +261,26 @@ impl AgentConfig {
 impl Config {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
-        let config: Config = toml::from_str(&content)?;
+        let mut config: Config = toml::from_str(&content)?;
+        config.apply_env_overrides();
         Ok(config)
+    }
+
+    /// Allow environment variables to override key paths for containerized
+    /// deployments where the TOML is baked in but paths vary at runtime.
+    fn apply_env_overrides(&mut self) {
+        if let Ok(val) = std::env::var("MP_DATA_DIR") {
+            self.data_dir = PathBuf::from(val);
+        }
+        if let Ok(val) = std::env::var("MP_MODELS_DIR") {
+            self.models_dir = Some(PathBuf::from(val));
+        }
     }
 
     pub fn default_config() -> Self {
         Config {
             data_dir: default_data_dir(),
+            models_dir: None,
             gateway: GatewayConfig::default(),
             agents: vec![AgentConfig {
                 name: "main".to_string(),
@@ -289,7 +309,9 @@ impl Config {
     }
 
     pub fn models_dir(&self) -> PathBuf {
-        self.data_dir.join("models")
+        self.models_dir
+            .clone()
+            .unwrap_or_else(|| self.data_dir.join("models"))
     }
 }
 

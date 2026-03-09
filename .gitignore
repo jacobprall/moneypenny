@@ -5,3 +5,7 @@ moneypenny.toml
 *.db-wal
 *.db-shm
 node_modules
+web/dist/
+web/.astro/
+docs/dist/
+docs/.astro/

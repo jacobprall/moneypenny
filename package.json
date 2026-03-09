@@ -1,0 +1,10 @@
+{
+  "name": "moneypenny-root",
+  "private": true,
+  "scripts": {
+    "dev": "cd web && npm run dev",
+    "dev:docs": "cd docs && npm run dev",
+    "build": "cd web && npm run build && cd ../docs && npm run build && cp -r dist ../web/dist/docs",
+    "preview": "cd web && npm run preview"
+  }
+}

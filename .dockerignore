@@ -1,0 +1,14 @@
+target/
+mp-data/
+*.db
+*.db-wal
+*.db-shm
+node_modules/
+docs/
+scripts/
+specs/
+.git/
+.gitignore
+.github/
+*.md
+!vendor/**/README.md
