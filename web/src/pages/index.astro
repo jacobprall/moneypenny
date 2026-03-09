@@ -51,8 +51,7 @@ const features = [
           id="theme-toggle"
           type="button"
           class="rounded-md border border-zinc-800 px-3 py-1.5 text-[13px] text-zinc-400 transition-colors hover:border-zinc-700 hover:text-zinc-50"
-          aria-label="Toggle light and dark mode"
-          aria-pressed="false"
+          aria-label="Cycle theme: dark, light, classified"
         >
           <span id="theme-toggle-label">Light</span>
         </button>
@@ -464,37 +463,44 @@ const features = [
   import { track } from "@vercel/analytics";
 
   const THEME_KEY = "moneypenny-theme";
+  const THEMES = ["dark", "light", "confidential"] as const;
+  type Theme = (typeof THEMES)[number];
+  const NEXT_LABEL: Record<Theme, string> = {
+    dark: "Light",
+    light: "Classified",
+    confidential: "Dark",
+  };
   const root = document.documentElement;
   const themeToggle = document.getElementById("theme-toggle") as HTMLButtonElement;
   const themeToggleLabel = document.getElementById("theme-toggle-label") as HTMLElement;
 
-  function applyTheme(theme: "dark" | "light") {
-    const isLight = theme === "light";
-    root.classList.toggle("theme-light", isLight);
-    root.style.colorScheme = isLight ? "light" : "dark";
-    if (themeToggleLabel) {
-      themeToggleLabel.textContent = isLight ? "Dark" : "Light";
-    }
-    if (themeToggle) {
-      themeToggle.setAttribute("aria-pressed", String(isLight));
-    }
+  function applyTheme(theme: Theme) {
+    root.classList.remove("theme-light", "theme-confidential");
+    if (theme === "light") root.classList.add("theme-light");
+    if (theme === "confidential") root.classList.add("theme-confidential");
+    root.style.colorScheme = theme === "light" ? "light" : "dark";
+    if (themeToggleLabel) themeToggleLabel.textContent = NEXT_LABEL[theme];
+    root.dataset.theme = theme;
+  }
+
+  function currentTheme(): Theme {
+    return (root.dataset.theme as Theme) || "dark";
   }
 
   try {
-    const savedTheme = localStorage.getItem(THEME_KEY);
-    applyTheme(savedTheme === "light" ? "light" : "dark");
+    const saved = localStorage.getItem(THEME_KEY) as Theme | null;
+    applyTheme(THEMES.includes(saved as Theme) ? (saved as Theme) : "confidential");
   } catch {
-    applyTheme("dark");
+    applyTheme("confidential");
   }
 
   themeToggle?.addEventListener("click", () => {
-    const next = root.classList.contains("theme-light") ? "dark" : "light";
+    const idx = THEMES.indexOf(currentTheme());
+    const next = THEMES[(idx + 1) % THEMES.length];
     applyTheme(next);
     try {
       localStorage.setItem(THEME_KEY, next);
-    } catch {
-      // Ignore storage write failures (private mode, blocked storage, etc.)
-    }
+    } catch {}
   });
 
   const promptBox = document.getElementById("prompt-box") as HTMLElement;
@@ -574,6 +580,19 @@ const features = [
     --mp-primary-hover: #27272a;
   }
 
+  html.theme-confidential {
+    --mp-bg: #c4a769;
+    --mp-surface: rgba(210, 185, 130, 0.7);
+    --mp-card: rgba(218, 195, 145, 0.55);
+    --mp-border: rgba(140, 110, 60, 0.5);
+    --mp-text: #1a1409;
+    --mp-muted: #4a3d28;
+    --mp-subtle: #6b5b3e;
+    --mp-primary-bg: #9b1b1b;
+    --mp-primary-text: #f5ead6;
+    --mp-primary-hover: #7f1d1d;
+  }
+
   html body {
     background: var(--mp-bg);
     color: var(--mp-text);
@@ -610,5 +629,47 @@ const features = [
 
   html [class*="hover:bg-zinc-200"]:hover {
     background-color: var(--mp-primary-hover) !important;
+  }
+
+  /* ── Confidential envelope theme extras ── */
+
+  html.theme-confidential body {
+    background-image:
+      url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.06'/%3E%3C/svg%3E");
+    background-size: 200px 200px;
+  }
+
+  html.theme-confidential nav {
+    background-color: rgba(180, 155, 95, 0.85) !important;
+    backdrop-filter: blur(12px);
+  }
+
+  html.theme-confidential [class*="text-red-400"] {
+    color: #9b1b1b !important;
+  }
+
+  html.theme-confidential [class*="border-red-900"] {
+    border-color: rgba(155, 27, 27, 0.4) !important;
+  }
+
+  html.theme-confidential input {
+    background-color: rgba(218, 195, 145, 0.5) !important;
+    border-color: rgba(140, 110, 60, 0.5) !important;
+    color: #1a1409 !important;
+  }
+  html.theme-confidential input::placeholder {
+    color: #6b5b3e !important;
+  }
+
+  html.theme-confidential [class*="bg-zinc-8"] {
+    background-color: rgba(140, 110, 60, 0.3) !important;
+  }
+
+  html.theme-confidential [class*="text-zinc-300"] {
+    color: #2b1f0e !important;
+  }
+
+  html.theme-confidential [class*="text-zinc-200"] {
+    color: #1a1409 !important;
   }
 </style>

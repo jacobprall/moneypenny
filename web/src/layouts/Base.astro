@@ -27,6 +27,16 @@ const {
       rel="stylesheet"
     />
     <title>{title}</title>
+    <script is:inline>
+      (function(){
+        try {
+          var t = localStorage.getItem("moneypenny-theme");
+          if (t === "light") { document.documentElement.classList.add("theme-light"); document.documentElement.style.colorScheme = "light"; }
+          else if (t === "dark") { /* default html classes are fine */ }
+          else { document.documentElement.classList.add("theme-confidential"); }
+        } catch(e){ document.documentElement.classList.add("theme-confidential"); }
+      })();
+    </script>
   </head>
   <body class="min-h-screen font-sans">
     <slot />
