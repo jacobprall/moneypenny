@@ -1,7 +1,7 @@
 use crate::types::*;
 use async_trait::async_trait;
-use tokio_stream::Stream;
 use std::pin::Pin;
+use tokio_stream::Stream;
 
 pub type StreamResult = Pin<Box<dyn Stream<Item = anyhow::Result<StreamEvent>> + Send>>;
 

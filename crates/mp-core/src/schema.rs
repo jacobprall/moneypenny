@@ -3,10 +3,9 @@
 /// Two database types:
 /// - **Agent DB**: one per agent, contains all memory stores + policies + jobs
 /// - **Metadata DB**: one per gateway, contains agent registry + routing
-
 use rusqlite::Connection;
 
-const AGENT_SCHEMA_VERSION: i64 = 11;
+const AGENT_SCHEMA_VERSION: i64 = 12;
 const METADATA_SCHEMA_VERSION: i64 = 1;
 
 pub fn init_agent_db(conn: &Connection) -> anyhow::Result<()> {
@@ -70,6 +69,11 @@ pub fn init_agent_db(conn: &Connection) -> anyhow::Result<()> {
         set_schema_version(conn, 11)?;
     }
 
+    if current < 12 {
+        conn.execute_batch(AGENT_SCHEMA_V12)?;
+        set_schema_version(conn, 12)?;
+    }
+
     Ok(())
 }
 
@@ -93,7 +97,7 @@ pub fn init_sync_tables(conn: &Connection) -> anyhow::Result<()> {
 pub fn init_vector_indexes(conn: &Connection, dims: usize) -> anyhow::Result<()> {
     let opts = format!("type=FLOAT32,dimension={dims},distance=COSINE");
     for (table, col) in &[
-        ("facts",  "content_embedding"),
+        ("facts", "content_embedding"),
         ("messages", "content_embedding"),
         ("tool_calls", "content_embedding"),
         ("policy_audit", "content_embedding"),
@@ -498,6 +502,220 @@ CREATE TABLE IF NOT EXISTS policy_specs (
 );
 ";
 
+const AGENT_SCHEMA_V12: &str = "
+ALTER TABLE facts ADD COLUMN embedding_model TEXT;
+ALTER TABLE facts ADD COLUMN embedding_content_hash TEXT;
+
+ALTER TABLE messages ADD COLUMN embedding_model TEXT;
+ALTER TABLE messages ADD COLUMN embedding_content_hash TEXT;
+
+ALTER TABLE tool_calls ADD COLUMN embedding_model TEXT;
+ALTER TABLE tool_calls ADD COLUMN embedding_content_hash TEXT;
+
+ALTER TABLE policy_audit ADD COLUMN embedding_model TEXT;
+ALTER TABLE policy_audit ADD COLUMN embedding_content_hash TEXT;
+
+ALTER TABLE chunks ADD COLUMN embedding_model TEXT;
+ALTER TABLE chunks ADD COLUMN embedding_content_hash TEXT;
+
+CREATE TABLE IF NOT EXISTS embedding_jobs (
+    target              TEXT NOT NULL,
+    row_id              TEXT NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'pending',
+    attempts            INTEGER NOT NULL DEFAULT 0,
+    last_error          TEXT,
+    next_attempt_at     INTEGER NOT NULL DEFAULT 0,
+    lease_expires_at    INTEGER,
+    created_at          INTEGER NOT NULL DEFAULT 0,
+    updated_at          INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (target, row_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_embedding_jobs_due
+ON embedding_jobs (status, next_attempt_at, updated_at);
+
+CREATE INDEX IF NOT EXISTS idx_embedding_jobs_lease
+ON embedding_jobs (status, lease_expires_at);
+
+CREATE TRIGGER IF NOT EXISTS trg_embed_jobs_facts_insert
+AFTER INSERT ON facts
+BEGIN
+    INSERT INTO embedding_jobs (target, row_id, status, attempts, next_attempt_at, created_at, updated_at)
+    VALUES ('facts', NEW.id, 'pending', 0, strftime('%s','now'), strftime('%s','now'), strftime('%s','now'))
+    ON CONFLICT(target, row_id) DO UPDATE SET
+        status = 'pending',
+        attempts = 0,
+        last_error = NULL,
+        next_attempt_at = strftime('%s','now'),
+        lease_expires_at = NULL,
+        updated_at = strftime('%s','now');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_embed_jobs_facts_update
+AFTER UPDATE OF content ON facts
+WHEN OLD.content IS NOT NEW.content
+BEGIN
+    UPDATE facts
+       SET content_embedding = NULL,
+           embedding_model = NULL,
+           embedding_content_hash = NULL
+     WHERE id = NEW.id;
+    INSERT INTO embedding_jobs (target, row_id, status, attempts, next_attempt_at, created_at, updated_at)
+    VALUES ('facts', NEW.id, 'pending', 0, strftime('%s','now'), strftime('%s','now'), strftime('%s','now'))
+    ON CONFLICT(target, row_id) DO UPDATE SET
+        status = 'pending',
+        attempts = 0,
+        last_error = NULL,
+        next_attempt_at = strftime('%s','now'),
+        lease_expires_at = NULL,
+        updated_at = strftime('%s','now');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_embed_jobs_messages_insert
+AFTER INSERT ON messages
+BEGIN
+    INSERT INTO embedding_jobs (target, row_id, status, attempts, next_attempt_at, created_at, updated_at)
+    VALUES ('messages', NEW.id, 'pending', 0, strftime('%s','now'), strftime('%s','now'), strftime('%s','now'))
+    ON CONFLICT(target, row_id) DO UPDATE SET
+        status = 'pending',
+        attempts = 0,
+        last_error = NULL,
+        next_attempt_at = strftime('%s','now'),
+        lease_expires_at = NULL,
+        updated_at = strftime('%s','now');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_embed_jobs_messages_update
+AFTER UPDATE OF content ON messages
+WHEN OLD.content IS NOT NEW.content
+BEGIN
+    UPDATE messages
+       SET content_embedding = NULL,
+           embedding_model = NULL,
+           embedding_content_hash = NULL
+     WHERE id = NEW.id;
+    INSERT INTO embedding_jobs (target, row_id, status, attempts, next_attempt_at, created_at, updated_at)
+    VALUES ('messages', NEW.id, 'pending', 0, strftime('%s','now'), strftime('%s','now'), strftime('%s','now'))
+    ON CONFLICT(target, row_id) DO UPDATE SET
+        status = 'pending',
+        attempts = 0,
+        last_error = NULL,
+        next_attempt_at = strftime('%s','now'),
+        lease_expires_at = NULL,
+        updated_at = strftime('%s','now');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_embed_jobs_tool_calls_insert
+AFTER INSERT ON tool_calls
+BEGIN
+    INSERT INTO embedding_jobs (target, row_id, status, attempts, next_attempt_at, created_at, updated_at)
+    VALUES ('tool_calls', NEW.id, 'pending', 0, strftime('%s','now'), strftime('%s','now'), strftime('%s','now'))
+    ON CONFLICT(target, row_id) DO UPDATE SET
+        status = 'pending',
+        attempts = 0,
+        last_error = NULL,
+        next_attempt_at = strftime('%s','now'),
+        lease_expires_at = NULL,
+        updated_at = strftime('%s','now');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_embed_jobs_tool_calls_update
+AFTER UPDATE OF tool_name, arguments, result, status, policy_decision ON tool_calls
+WHEN OLD.tool_name IS NOT NEW.tool_name
+   OR OLD.arguments IS NOT NEW.arguments
+   OR OLD.result IS NOT NEW.result
+   OR OLD.status IS NOT NEW.status
+   OR OLD.policy_decision IS NOT NEW.policy_decision
+BEGIN
+    UPDATE tool_calls
+       SET content_embedding = NULL,
+           embedding_model = NULL,
+           embedding_content_hash = NULL
+     WHERE id = NEW.id;
+    INSERT INTO embedding_jobs (target, row_id, status, attempts, next_attempt_at, created_at, updated_at)
+    VALUES ('tool_calls', NEW.id, 'pending', 0, strftime('%s','now'), strftime('%s','now'), strftime('%s','now'))
+    ON CONFLICT(target, row_id) DO UPDATE SET
+        status = 'pending',
+        attempts = 0,
+        last_error = NULL,
+        next_attempt_at = strftime('%s','now'),
+        lease_expires_at = NULL,
+        updated_at = strftime('%s','now');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_embed_jobs_policy_audit_insert
+AFTER INSERT ON policy_audit
+BEGIN
+    INSERT INTO embedding_jobs (target, row_id, status, attempts, next_attempt_at, created_at, updated_at)
+    VALUES ('policy_audit', NEW.id, 'pending', 0, strftime('%s','now'), strftime('%s','now'), strftime('%s','now'))
+    ON CONFLICT(target, row_id) DO UPDATE SET
+        status = 'pending',
+        attempts = 0,
+        last_error = NULL,
+        next_attempt_at = strftime('%s','now'),
+        lease_expires_at = NULL,
+        updated_at = strftime('%s','now');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_embed_jobs_policy_audit_update
+AFTER UPDATE OF actor, action, resource, effect, reason ON policy_audit
+WHEN OLD.actor IS NOT NEW.actor
+   OR OLD.action IS NOT NEW.action
+   OR OLD.resource IS NOT NEW.resource
+   OR OLD.effect IS NOT NEW.effect
+   OR OLD.reason IS NOT NEW.reason
+BEGIN
+    UPDATE policy_audit
+       SET content_embedding = NULL,
+           embedding_model = NULL,
+           embedding_content_hash = NULL
+     WHERE id = NEW.id;
+    INSERT INTO embedding_jobs (target, row_id, status, attempts, next_attempt_at, created_at, updated_at)
+    VALUES ('policy_audit', NEW.id, 'pending', 0, strftime('%s','now'), strftime('%s','now'), strftime('%s','now'))
+    ON CONFLICT(target, row_id) DO UPDATE SET
+        status = 'pending',
+        attempts = 0,
+        last_error = NULL,
+        next_attempt_at = strftime('%s','now'),
+        lease_expires_at = NULL,
+        updated_at = strftime('%s','now');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_embed_jobs_chunks_insert
+AFTER INSERT ON chunks
+BEGIN
+    INSERT INTO embedding_jobs (target, row_id, status, attempts, next_attempt_at, created_at, updated_at)
+    VALUES ('chunks', NEW.id, 'pending', 0, strftime('%s','now'), strftime('%s','now'), strftime('%s','now'))
+    ON CONFLICT(target, row_id) DO UPDATE SET
+        status = 'pending',
+        attempts = 0,
+        last_error = NULL,
+        next_attempt_at = strftime('%s','now'),
+        lease_expires_at = NULL,
+        updated_at = strftime('%s','now');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_embed_jobs_chunks_update
+AFTER UPDATE OF content ON chunks
+WHEN OLD.content IS NOT NEW.content
+BEGIN
+    UPDATE chunks
+       SET content_embedding = NULL,
+           embedding_model = NULL,
+           embedding_content_hash = NULL
+     WHERE id = NEW.id;
+    INSERT INTO embedding_jobs (target, row_id, status, attempts, next_attempt_at, created_at, updated_at)
+    VALUES ('chunks', NEW.id, 'pending', 0, strftime('%s','now'), strftime('%s','now'), strftime('%s','now'))
+    ON CONFLICT(target, row_id) DO UPDATE SET
+        status = 'pending',
+        attempts = 0,
+        last_error = NULL,
+        next_attempt_at = strftime('%s','now'),
+        lease_expires_at = NULL,
+        updated_at = strftime('%s','now');
+END;
+";
+
 // ---------------------------------------------------------------------------
 // Metadata database — v1
 // ---------------------------------------------------------------------------
@@ -556,11 +774,11 @@ mod tests {
             .unwrap();
         stmt.query_map([], |row| {
             Ok((
-                row.get::<_, String>(1)?,  // name
-                row.get::<_, String>(2)?,  // type
-                row.get::<_, bool>(3)?,    // notnull
+                row.get::<_, String>(1)?,         // name
+                row.get::<_, String>(2)?,         // type
+                row.get::<_, bool>(3)?,           // notnull
                 row.get::<_, Option<String>>(4)?, // dflt_value
-                row.get::<_, bool>(5)?,    // pk
+                row.get::<_, bool>(5)?,           // pk
             ))
         })
         .unwrap()
@@ -580,14 +798,32 @@ mod tests {
     fn facts_table_has_all_columns() {
         let conn = setup_agent_db();
         let expected = vec![
-            "id", "agent_id", "content", "summary", "pointer",
-            "content_embedding", "summary_embedding", "pointer_embedding",
-            "keywords", "source_message_id", "confidence",
-            "created_at", "updated_at", "superseded_at", "version",
-            "context_compact", "compaction_level", "last_compacted_at",
+            "id",
+            "agent_id",
+            "content",
+            "summary",
+            "pointer",
+            "content_embedding",
+            "summary_embedding",
+            "pointer_embedding",
+            "embedding_model",
+            "embedding_content_hash",
+            "keywords",
+            "source_message_id",
+            "confidence",
+            "created_at",
+            "updated_at",
+            "superseded_at",
+            "version",
+            "context_compact",
+            "compaction_level",
+            "last_compacted_at",
         ];
         for col in &expected {
-            assert!(has_column(&conn, "facts", col), "facts missing column: {col}");
+            assert!(
+                has_column(&conn, "facts", col),
+                "facts missing column: {col}"
+            );
         }
     }
 
@@ -603,7 +839,14 @@ mod tests {
     fn facts_not_null_constraints() {
         let conn = setup_agent_db();
         let info = column_info(&conn, "facts");
-        let required = ["agent_id", "content", "summary", "pointer", "created_at", "updated_at"];
+        let required = [
+            "agent_id",
+            "content",
+            "summary",
+            "pointer",
+            "created_at",
+            "updated_at",
+        ];
         for name in &required {
             let col = info.iter().find(|c| c.0 == *name).unwrap();
             assert!(col.2, "facts.{name} should be NOT NULL");
@@ -615,9 +858,17 @@ mod tests {
         let conn = setup_agent_db();
         let info = column_info(&conn, "facts");
         let confidence = info.iter().find(|c| c.0 == "confidence").unwrap();
-        assert_eq!(confidence.3.as_deref(), Some("1.0"), "confidence default should be 1.0");
+        assert_eq!(
+            confidence.3.as_deref(),
+            Some("1.0"),
+            "confidence default should be 1.0"
+        );
         let version = info.iter().find(|c| c.0 == "version").unwrap();
-        assert_eq!(version.3.as_deref(), Some("1"), "version default should be 1");
+        assert_eq!(
+            version.3.as_deref(),
+            Some("1"),
+            "version default should be 1"
+        );
     }
 
     #[test]
@@ -650,7 +901,10 @@ mod tests {
     fn fact_links_table_has_all_columns() {
         let conn = setup_agent_db();
         for col in &["source_id", "target_id", "relation", "strength"] {
-            assert!(has_column(&conn, "fact_links", col), "fact_links missing column: {col}");
+            assert!(
+                has_column(&conn, "fact_links", col),
+                "fact_links missing column: {col}"
+            );
         }
     }
 
@@ -662,12 +916,14 @@ mod tests {
             "INSERT INTO facts (id, agent_id, content, summary, pointer, created_at, updated_at)
              VALUES ('f1', 'a', 'c', 's', 'p', 1, 1)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO facts (id, agent_id, content, summary, pointer, created_at, updated_at)
              VALUES ('f2', 'a', 'c', 's', 'p', 1, 1)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         conn.execute(
             "INSERT INTO fact_links (source_id, target_id, relation) VALUES ('f1', 'f2', 'relates_to')",
@@ -678,7 +934,10 @@ mod tests {
             "INSERT INTO fact_links (source_id, target_id, relation) VALUES ('f1', 'f2', 'supersedes')",
             [],
         );
-        assert!(result.is_err(), "duplicate (source_id, target_id) should violate PK");
+        assert!(
+            result.is_err(),
+            "duplicate (source_id, target_id) should violate PK"
+        );
     }
 
     #[test]
@@ -688,19 +947,26 @@ mod tests {
             "INSERT INTO facts (id, agent_id, content, summary, pointer, created_at, updated_at)
              VALUES ('f1', 'a', 'c', 's', 'p', 1, 1)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO facts (id, agent_id, content, summary, pointer, created_at, updated_at)
              VALUES ('f2', 'a', 'c', 's', 'p', 1, 1)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO fact_links (source_id, target_id) VALUES ('f1', 'f2')",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         let strength: f64 = conn
-            .query_row("SELECT strength FROM fact_links WHERE source_id = 'f1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT strength FROM fact_links WHERE source_id = 'f1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(strength, 1.0);
     }
@@ -713,11 +979,20 @@ mod tests {
     fn fact_audit_table_has_all_columns() {
         let conn = setup_agent_db();
         let expected = vec![
-            "id", "fact_id", "operation", "old_content", "new_content",
-            "reason", "source_message_id", "created_at",
+            "id",
+            "fact_id",
+            "operation",
+            "old_content",
+            "new_content",
+            "reason",
+            "source_message_id",
+            "created_at",
         ];
         for col in &expected {
-            assert!(has_column(&conn, "fact_audit", col), "fact_audit missing column: {col}");
+            assert!(
+                has_column(&conn, "fact_audit", col),
+                "fact_audit missing column: {col}"
+            );
         }
     }
 
@@ -739,11 +1014,19 @@ mod tests {
     fn sessions_table_has_all_columns() {
         let conn = setup_agent_db();
         let expected = vec![
-            "id", "agent_id", "channel", "started_at", "ended_at",
-            "summary", "summary_embedding",
+            "id",
+            "agent_id",
+            "channel",
+            "started_at",
+            "ended_at",
+            "summary",
+            "summary_embedding",
         ];
         for col in &expected {
-            assert!(has_column(&conn, "sessions", col), "sessions missing column: {col}");
+            assert!(
+                has_column(&conn, "sessions", col),
+                "sessions missing column: {col}"
+            );
         }
     }
 
@@ -765,10 +1048,20 @@ mod tests {
     fn messages_table_has_all_columns() {
         let conn = setup_agent_db();
         let expected = vec![
-            "id", "session_id", "role", "content", "content_embedding", "created_at",
+            "id",
+            "session_id",
+            "role",
+            "content",
+            "content_embedding",
+            "embedding_model",
+            "embedding_content_hash",
+            "created_at",
         ];
         for col in &expected {
-            assert!(has_column(&conn, "messages", col), "messages missing column: {col}");
+            assert!(
+                has_column(&conn, "messages", col),
+                "messages missing column: {col}"
+            );
         }
     }
 
@@ -790,11 +1083,25 @@ mod tests {
     fn tool_calls_table_has_all_columns() {
         let conn = setup_agent_db();
         let expected = vec![
-            "id", "message_id", "session_id", "tool_name", "arguments",
-            "result", "status", "policy_decision", "content_embedding", "duration_ms", "created_at",
+            "id",
+            "message_id",
+            "session_id",
+            "tool_name",
+            "arguments",
+            "result",
+            "status",
+            "policy_decision",
+            "content_embedding",
+            "embedding_model",
+            "embedding_content_hash",
+            "duration_ms",
+            "created_at",
         ];
         for col in &expected {
-            assert!(has_column(&conn, "tool_calls", col), "tool_calls missing column: {col}");
+            assert!(
+                has_column(&conn, "tool_calls", col),
+                "tool_calls missing column: {col}"
+            );
         }
     }
 
@@ -816,10 +1123,19 @@ mod tests {
     fn documents_table_has_all_columns() {
         let conn = setup_agent_db();
         let expected = vec![
-            "id", "path", "title", "content_hash", "metadata", "created_at", "updated_at",
+            "id",
+            "path",
+            "title",
+            "content_hash",
+            "metadata",
+            "created_at",
+            "updated_at",
         ];
         for col in &expected {
-            assert!(has_column(&conn, "documents", col), "documents missing column: {col}");
+            assert!(
+                has_column(&conn, "documents", col),
+                "documents missing column: {col}"
+            );
         }
     }
 
@@ -841,11 +1157,22 @@ mod tests {
     fn chunks_table_has_all_columns() {
         let conn = setup_agent_db();
         let expected = vec![
-            "id", "document_id", "content", "summary",
-            "content_embedding", "summary_embedding", "position", "created_at",
+            "id",
+            "document_id",
+            "content",
+            "summary",
+            "content_embedding",
+            "summary_embedding",
+            "embedding_model",
+            "embedding_content_hash",
+            "position",
+            "created_at",
         ];
         for col in &expected {
-            assert!(has_column(&conn, "chunks", col), "chunks missing column: {col}");
+            assert!(
+                has_column(&conn, "chunks", col),
+                "chunks missing column: {col}"
+            );
         }
     }
 
@@ -867,7 +1194,10 @@ mod tests {
     fn edges_table_has_all_columns() {
         let conn = setup_agent_db();
         for col in &["source_id", "target_id", "relation"] {
-            assert!(has_column(&conn, "edges", col), "edges missing column: {col}");
+            assert!(
+                has_column(&conn, "edges", col),
+                "edges missing column: {col}"
+            );
         }
     }
 
@@ -877,20 +1207,25 @@ mod tests {
         conn.execute(
             "INSERT INTO edges (source_id, target_id, relation) VALUES ('a', 'b', 'references')",
             [],
-        ).expect("first insert");
+        )
+        .expect("first insert");
 
         // Same triple should fail
         let dup = conn.execute(
             "INSERT INTO edges (source_id, target_id, relation) VALUES ('a', 'b', 'references')",
             [],
         );
-        assert!(dup.is_err(), "duplicate (source, target, relation) should violate PK");
+        assert!(
+            dup.is_err(),
+            "duplicate (source, target, relation) should violate PK"
+        );
 
         // Same pair, different relation should succeed
         conn.execute(
             "INSERT INTO edges (source_id, target_id, relation) VALUES ('a', 'b', 'depends_on')",
             [],
-        ).expect("different relation should be allowed");
+        )
+        .expect("different relation should be allowed");
     }
 
     // ========================================================================
@@ -901,12 +1236,23 @@ mod tests {
     fn skills_table_has_all_columns() {
         let conn = setup_agent_db();
         let expected = vec![
-            "id", "name", "description", "content", "tool_id",
-            "content_embedding", "usage_count", "success_rate",
-            "promoted", "created_at", "updated_at",
+            "id",
+            "name",
+            "description",
+            "content",
+            "tool_id",
+            "content_embedding",
+            "usage_count",
+            "success_rate",
+            "promoted",
+            "created_at",
+            "updated_at",
         ];
         for col in &expected {
-            assert!(has_column(&conn, "skills", col), "skills missing column: {col}");
+            assert!(
+                has_column(&conn, "skills", col),
+                "skills missing column: {col}"
+            );
         }
     }
 
@@ -917,7 +1263,8 @@ mod tests {
             "INSERT INTO skills (id, name, description, content, created_at, updated_at)
              VALUES ('s1', 'test', 'desc', 'body', 1, 1)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         let (usage_count, promoted): (i64, i64) = conn
             .query_row(
@@ -938,9 +1285,19 @@ mod tests {
     #[test]
     fn scratch_table_has_all_columns() {
         let conn = setup_agent_db();
-        let expected = vec!["id", "session_id", "key", "content", "created_at", "updated_at"];
+        let expected = vec![
+            "id",
+            "session_id",
+            "key",
+            "content",
+            "created_at",
+            "updated_at",
+        ];
         for col in &expected {
-            assert!(has_column(&conn, "scratch", col), "scratch missing column: {col}");
+            assert!(
+                has_column(&conn, "scratch", col),
+                "scratch missing column: {col}"
+            );
         }
     }
 
@@ -962,15 +1319,30 @@ mod tests {
     fn policies_table_has_all_columns() {
         let conn = setup_agent_db();
         let expected = vec![
-            "id", "name", "priority", "phase", "effect",
-            "actor_pattern", "action_pattern", "resource_pattern",
-            "sql_pattern", "argument_pattern",
-            "agent_id", "channel_pattern", "schedule",
-            "message", "enabled", "created_at",
-            "rule_type", "rule_config",
+            "id",
+            "name",
+            "priority",
+            "phase",
+            "effect",
+            "actor_pattern",
+            "action_pattern",
+            "resource_pattern",
+            "sql_pattern",
+            "argument_pattern",
+            "agent_id",
+            "channel_pattern",
+            "schedule",
+            "message",
+            "enabled",
+            "created_at",
+            "rule_type",
+            "rule_config",
         ];
         for col in &expected {
-            assert!(has_column(&conn, "policies", col), "policies missing column: {col}");
+            assert!(
+                has_column(&conn, "policies", col),
+                "policies missing column: {col}"
+            );
         }
     }
 
@@ -981,7 +1353,8 @@ mod tests {
             "INSERT INTO policies (id, name, effect, created_at)
              VALUES ('p1', 'test', 'deny', 1)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         let (priority, phase, enabled): (i64, String, i64) = conn
             .query_row(
@@ -1004,12 +1377,27 @@ mod tests {
     fn policy_audit_table_has_all_columns() {
         let conn = setup_agent_db();
         let expected = vec![
-            "id", "policy_id", "actor", "action", "resource",
-            "effect", "reason", "content_embedding", "correlation_id", "session_id",
-            "idempotency_key", "idempotency_state", "created_at",
+            "id",
+            "policy_id",
+            "actor",
+            "action",
+            "resource",
+            "effect",
+            "reason",
+            "content_embedding",
+            "embedding_model",
+            "embedding_content_hash",
+            "correlation_id",
+            "session_id",
+            "idempotency_key",
+            "idempotency_state",
+            "created_at",
         ];
         for col in &expected {
-            assert!(has_column(&conn, "policy_audit", col), "policy_audit missing: {col}");
+            assert!(
+                has_column(&conn, "policy_audit", col),
+                "policy_audit missing: {col}"
+            );
         }
     }
 
@@ -1031,10 +1419,41 @@ mod tests {
     fn operation_hooks_table_has_all_columns() {
         let conn = setup_agent_db();
         let expected = vec![
-            "id", "op_pattern", "phase", "hook_type", "config_json", "enabled", "created_at",
+            "id",
+            "op_pattern",
+            "phase",
+            "hook_type",
+            "config_json",
+            "enabled",
+            "created_at",
         ];
         for col in &expected {
-            assert!(has_column(&conn, "operation_hooks", col), "operation_hooks missing: {col}");
+            assert!(
+                has_column(&conn, "operation_hooks", col),
+                "operation_hooks missing: {col}"
+            );
+        }
+    }
+
+    #[test]
+    fn embedding_jobs_table_has_all_columns() {
+        let conn = setup_agent_db();
+        let expected = vec![
+            "target",
+            "row_id",
+            "status",
+            "attempts",
+            "last_error",
+            "next_attempt_at",
+            "lease_expires_at",
+            "created_at",
+            "updated_at",
+        ];
+        for col in &expected {
+            assert!(
+                has_column(&conn, "embedding_jobs", col),
+                "embedding_jobs missing: {col}"
+            );
         }
     }
 
@@ -1066,13 +1485,27 @@ mod tests {
     fn job_specs_table_has_all_columns() {
         let conn = setup_agent_db();
         let expected = vec![
-            "id", "agent_id", "intent", "plan_json", "job_name", "schedule",
-            "job_type", "payload_json", "status", "proposed_by",
-            "source_session_id", "source_message_id", "applied_job_id",
-            "created_at", "updated_at",
+            "id",
+            "agent_id",
+            "intent",
+            "plan_json",
+            "job_name",
+            "schedule",
+            "job_type",
+            "payload_json",
+            "status",
+            "proposed_by",
+            "source_session_id",
+            "source_message_id",
+            "applied_job_id",
+            "created_at",
+            "updated_at",
         ];
         for col in &expected {
-            assert!(has_column(&conn, "job_specs", col), "job_specs missing column: {col}");
+            assert!(
+                has_column(&conn, "job_specs", col),
+                "job_specs missing column: {col}"
+            );
         }
     }
 
@@ -1083,7 +1516,8 @@ mod tests {
             "INSERT INTO job_specs (id, agent_id, intent, created_at, updated_at)
              VALUES ('spec1', 'a', 'weekly maintenance plan', 1, 1)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         let (job_type, status, proposed_by): (String, String, String) = conn
             .query_row(
@@ -1105,11 +1539,24 @@ mod tests {
     fn jobs_table_has_all_columns() {
         let conn = setup_agent_db();
         let expected = vec![
-            "id", "agent_id", "name", "description",
-            "schedule", "next_run_at", "last_run_at", "timezone",
-            "job_type", "payload",
-            "max_retries", "retry_delay_ms", "timeout_ms", "overlap_policy",
-            "status", "enabled", "created_at", "updated_at",
+            "id",
+            "agent_id",
+            "name",
+            "description",
+            "schedule",
+            "next_run_at",
+            "last_run_at",
+            "timezone",
+            "job_type",
+            "payload",
+            "max_retries",
+            "retry_delay_ms",
+            "timeout_ms",
+            "overlap_policy",
+            "status",
+            "enabled",
+            "created_at",
+            "updated_at",
         ];
         for col in &expected {
             assert!(has_column(&conn, "jobs", col), "jobs missing column: {col}");
@@ -1150,11 +1597,22 @@ mod tests {
     fn job_runs_table_has_all_columns() {
         let conn = setup_agent_db();
         let expected = vec![
-            "id", "job_id", "agent_id", "started_at", "ended_at",
-            "status", "result", "policy_decision", "retry_count", "created_at",
+            "id",
+            "job_id",
+            "agent_id",
+            "started_at",
+            "ended_at",
+            "status",
+            "result",
+            "policy_decision",
+            "retry_count",
+            "created_at",
         ];
         for col in &expected {
-            assert!(has_column(&conn, "job_runs", col), "job_runs missing column: {col}");
+            assert!(
+                has_column(&conn, "job_runs", col),
+                "job_runs missing column: {col}"
+            );
         }
     }
 
@@ -1165,10 +1623,15 @@ mod tests {
             "INSERT INTO job_runs (id, job_id, agent_id, started_at, status, created_at)
              VALUES ('r1', 'j1', 'a', 1000, 'running', 1000)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         let retry_count: i64 = conn
-            .query_row("SELECT retry_count FROM job_runs WHERE id = 'r1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT retry_count FROM job_runs WHERE id = 'r1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(retry_count, 0);
     }
@@ -1181,11 +1644,21 @@ mod tests {
     fn metadata_agents_table_has_all_columns() {
         let conn = setup_metadata_db();
         let expected = vec![
-            "id", "name", "persona", "trust_level", "llm_provider",
-            "llm_model", "db_path", "sync_enabled", "created_at",
+            "id",
+            "name",
+            "persona",
+            "trust_level",
+            "llm_provider",
+            "llm_model",
+            "db_path",
+            "sync_enabled",
+            "created_at",
         ];
         for col in &expected {
-            assert!(has_column(&conn, "agents", col), "agents missing column: {col}");
+            assert!(
+                has_column(&conn, "agents", col),
+                "agents missing column: {col}"
+            );
         }
     }
 
@@ -1228,22 +1701,35 @@ mod tests {
     fn agent_db_has_all_tables() {
         let conn = setup_agent_db();
         let expected_tables = vec![
-            "facts", "fact_links", "fact_audit",
-            "sessions", "messages", "tool_calls",
-            "documents", "chunks", "edges", "skills",
+            "facts",
+            "fact_links",
+            "fact_audit",
+            "sessions",
+            "messages",
+            "tool_calls",
+            "documents",
+            "chunks",
+            "edges",
+            "skills",
             "scratch",
-            "policies", "policy_audit",
-            "jobs", "job_runs",
+            "policies",
+            "policy_audit",
+            "jobs",
+            "job_runs",
             "job_specs",
             "policy_specs",
-            "external_events", "ingest_runs",
+            "external_events",
+            "ingest_runs",
             "operation_idempotency",
             "operation_hooks",
+            "embedding_jobs",
         ];
 
-        let mut stmt = conn.prepare(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
-        ).unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+            )
+            .unwrap();
         let tables: Vec<String> = stmt
             .query_map([], |row| row.get(0))
             .unwrap()
@@ -1251,16 +1737,19 @@ mod tests {
             .collect();
 
         for t in &expected_tables {
-            assert!(tables.contains(&t.to_string()), "agent db missing table: {t}");
+            assert!(
+                tables.contains(&t.to_string()),
+                "agent db missing table: {t}"
+            );
         }
     }
 
     #[test]
     fn metadata_db_has_agents_table() {
         let conn = setup_metadata_db();
-        let mut stmt = conn.prepare(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agents'"
-        ).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agents'")
+            .unwrap();
         let tables: Vec<String> = stmt
             .query_map([], |row| row.get(0))
             .unwrap()
@@ -1278,9 +1767,17 @@ mod tests {
     fn schema_version_is_tracked() {
         let conn = setup_agent_db();
         let version: i64 = conn
-            .query_row("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1", [], |r| r.get(0))
+            .query_row(
+                "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
             .expect("schema_version table should exist and have a row");
-        assert_eq!(version, super::AGENT_SCHEMA_VERSION, "schema version should match current");
+        assert_eq!(
+            version,
+            super::AGENT_SCHEMA_VERSION,
+            "schema version should match current"
+        );
     }
 
     #[test]

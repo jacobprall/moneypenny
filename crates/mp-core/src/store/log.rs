@@ -6,23 +6,25 @@ pub mod policy_audit;
 pub mod tool_calls;
 
 pub use messages::{
-    Message, Session, append_message, create_session, end_session, get_messages, get_recent_messages,
-    get_session, messages_without_embedding, set_message_embedding, update_summary,
+    Message, Session, append_message, create_session, end_session, get_messages,
+    get_recent_messages, get_session, messages_without_embedding, set_message_embedding,
+    set_message_embedding_with_meta, update_summary,
 };
 pub use policy_audit::{
     policy_audit_projection_expr, policy_audit_without_embedding, set_policy_audit_embedding,
+    set_policy_audit_embedding_with_meta,
 };
 pub use tool_calls::{
-    ToolCallRecord, record_tool_call, set_tool_call_embedding, tool_call_projection_expr,
-    tool_calls_without_embedding, get_tool_calls,
+    ToolCallRecord, get_tool_calls, record_tool_call, set_tool_call_embedding,
+    set_tool_call_embedding_with_meta, tool_call_projection_expr, tool_calls_without_embedding,
 };
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::params;
-    use rusqlite::Connection;
     use crate::{db, schema};
+    use rusqlite::Connection;
+    use rusqlite::params;
 
     fn setup() -> Connection {
         let conn = db::open_memory().unwrap();
@@ -91,10 +93,17 @@ mod tests {
         let mid = append_message(&conn, &sid, "assistant", "calling tool").unwrap();
 
         record_tool_call(
-            &conn, &mid, &sid, "shell_exec",
-            Some(r#"{"cmd":"ls"}"#), Some("file.txt"), Some("success"),
-            Some("allowed"), Some(42),
-        ).unwrap();
+            &conn,
+            &mid,
+            &sid,
+            "shell_exec",
+            Some(r#"{"cmd":"ls"}"#),
+            Some("file.txt"),
+            Some("success"),
+            Some("allowed"),
+            Some(42),
+        )
+        .unwrap();
 
         let calls = get_tool_calls(&conn, &sid).unwrap();
         assert_eq!(calls.len(), 1);
@@ -152,7 +161,8 @@ mod tests {
             Some("success"),
             Some("allow"),
             Some(5),
-        ).unwrap();
+        )
+        .unwrap();
 
         let pending = tool_calls_without_embedding(&conn, "a").unwrap();
         assert!(pending.iter().any(|(id, _)| id == &tcid));

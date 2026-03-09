@@ -3,9 +3,9 @@
 mod common;
 
 use common::{enable_http_channel, init_project, spawn_gateway};
+use std::io::Read;
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::io::Read;
 use std::time::Duration;
 
 const HTTP_PORT: u16 = 18999;
@@ -107,7 +107,10 @@ fn gateway_http_health_endpoint() {
         let _ = child.kill();
         let mut stderr = String::new();
         let _ = child.stderr.as_mut().unwrap().read_to_string(&mut stderr);
-        panic!("server did not respond at {} within 10s. stderr:\n{}", HEALTH_URL, stderr);
+        panic!(
+            "server did not respond at {} within 10s. stderr:\n{}",
+            HEALTH_URL, stderr
+        );
     }
 
     let r = reqwest::blocking::get(HEALTH_URL).unwrap();
@@ -218,8 +221,9 @@ fn gateway_http_ops_parity_with_mcp_tools_call() {
     }
 
     let op_args = serde_json::json!({ "agent_id": "main", "limit": 5 });
-    let mcp_sidecar_op_resp = run_sidecar_mcp_tools_call_once(&config_path, "session.list", op_args.clone())
-        .expect("MCP tools/call sidecar response");
+    let mcp_sidecar_op_resp =
+        run_sidecar_mcp_tools_call_once(&config_path, "session.list", op_args.clone())
+            .expect("MCP tools/call sidecar response");
 
     let http_op_req = serde_json::json!({
         "op": "session.list",
@@ -271,7 +275,8 @@ fn gateway_ingest_status_parity_http_and_sidecar() {
         }
     });
 
-    let sidecar_resp = run_sidecar_once(&config_path, &request).expect("sidecar ingest.status response");
+    let sidecar_resp =
+        run_sidecar_once(&config_path, &request).expect("sidecar ingest.status response");
     let http_resp = reqwest::blocking::Client::new()
         .post(OPS_URL)
         .json(&request)

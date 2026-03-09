@@ -40,10 +40,25 @@ pub fn set_policy_audit_embedding(
     audit_id: &str,
     blob: &[u8],
 ) -> anyhow::Result<()> {
+    set_policy_audit_embedding_with_meta(conn, audit_id, blob, None, None)
+}
+
+/// Write or overwrite the FLOAT32 content embedding for a policy audit row and
+/// persist embedding provenance metadata.
+pub fn set_policy_audit_embedding_with_meta(
+    conn: &Connection,
+    audit_id: &str,
+    blob: &[u8],
+    embedding_model: Option<&str>,
+    embedding_content_hash: Option<&str>,
+) -> anyhow::Result<()> {
     conn.execute(
-        "UPDATE policy_audit SET content_embedding = ?1 WHERE id = ?2",
-        params![blob, audit_id],
+        "UPDATE policy_audit
+         SET content_embedding = ?1,
+             embedding_model = ?2,
+             embedding_content_hash = ?3
+         WHERE id = ?4",
+        params![blob, embedding_model, embedding_content_hash, audit_id],
     )?;
     Ok(())
 }
-

@@ -29,11 +29,7 @@ impl AnthropicProvider {
         }
     }
 
-    pub fn from_config(
-        api_base: Option<&str>,
-        api_key: Option<&str>,
-        model: Option<&str>,
-    ) -> Self {
+    pub fn from_config(api_base: Option<&str>, api_key: Option<&str>, model: Option<&str>) -> Self {
         Self::new(
             api_base.unwrap_or("https://api.anthropic.com"),
             api_key.map(String::from),
@@ -52,7 +48,8 @@ impl LlmProvider for AnthropicProvider {
     ) -> anyhow::Result<GenerateResponse> {
         let body = build_request(&self.model, messages, tools, config, false);
 
-        let mut req = self.client
+        let mut req = self
+            .client
             .post(format!("{}/v1/messages", self.api_base))
             .header("anthropic-version", ANTHROPIC_API_VERSION)
             .header("content-type", "application/json")
@@ -81,7 +78,8 @@ impl LlmProvider for AnthropicProvider {
     ) -> anyhow::Result<StreamResult> {
         let body = build_request(&self.model, messages, tools, config, true);
 
-        let mut req = self.client
+        let mut req = self
+            .client
             .post(format!("{}/v1/messages", self.api_base))
             .header("anthropic-version", ANTHROPIC_API_VERSION)
             .header("content-type", "application/json")
@@ -156,8 +154,8 @@ fn build_request(
                 }
 
                 for tc in &msg.tool_calls {
-                    let input: serde_json::Value = serde_json::from_str(&tc.arguments)
-                        .unwrap_or(serde_json::json!({}));
+                    let input: serde_json::Value =
+                        serde_json::from_str(&tc.arguments).unwrap_or(serde_json::json!({}));
                     content_blocks.push(serde_json::json!({
                         "type": "tool_use",
                         "id": tc.id,
@@ -191,7 +189,9 @@ fn build_request(
                     if last.get("role").and_then(|r| r.as_str()) == Some("user") {
                         if let Some(content) = last.get_mut("content") {
                             if let Some(arr) = content.as_array_mut() {
-                                if arr.iter().all(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_result")) {
+                                if arr.iter().all(|b| {
+                                    b.get("type").and_then(|t| t.as_str()) == Some("tool_result")
+                                }) {
                                     arr.push(tool_result);
                                     continue;
                                 }
@@ -311,11 +311,14 @@ fn parse_response(resp: ApiResponse) -> anyhow::Result<GenerateResponse> {
         Some(text_parts.join(""))
     };
 
-    let usage = resp.usage.map(|u| Usage {
-        prompt_tokens: u.input_tokens,
-        completion_tokens: u.output_tokens,
-        total_tokens: u.input_tokens + u.output_tokens,
-    }).unwrap_or_default();
+    let usage = resp
+        .usage
+        .map(|u| Usage {
+            prompt_tokens: u.input_tokens,
+            completion_tokens: u.output_tokens,
+            total_tokens: u.input_tokens + u.output_tokens,
+        })
+        .unwrap_or_default();
 
     Ok(GenerateResponse {
         content,

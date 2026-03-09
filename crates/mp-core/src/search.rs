@@ -1,4 +1,4 @@
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, Params, params};
 use std::collections::{HashMap, HashSet};
 
 /// Source store for a search result.
@@ -41,7 +41,11 @@ pub struct StoreWeights {
 
 impl Default for StoreWeights {
     fn default() -> Self {
-        Self { facts: 0.4, log: 0.2, knowledge: 0.4 }
+        Self {
+            facts: 0.4,
+            log: 0.2,
+            knowledge: 0.4,
+        }
     }
 }
 
@@ -49,11 +53,23 @@ impl Default for StoreWeights {
 pub fn detect_intent(query: &str) -> StoreWeights {
     let q = query.to_lowercase();
     if q.contains("know about") || q.contains("what do") || q.contains("what is") {
-        StoreWeights { facts: 0.6, log: 0.1, knowledge: 0.3 }
+        StoreWeights {
+            facts: 0.6,
+            log: 0.1,
+            knowledge: 0.3,
+        }
     } else if q.contains("when did") || q.contains("discuss") || q.contains("last time") {
-        StoreWeights { facts: 0.1, log: 0.7, knowledge: 0.2 }
+        StoreWeights {
+            facts: 0.1,
+            log: 0.7,
+            knowledge: 0.2,
+        }
     } else if q.contains("how do") || q.contains("how to") || q.contains("guide") {
-        StoreWeights { facts: 0.2, log: 0.1, knowledge: 0.7 }
+        StoreWeights {
+            facts: 0.2,
+            log: 0.1,
+            knowledge: 0.7,
+        }
     } else {
         StoreWeights::default()
     }
@@ -97,17 +113,61 @@ const SEARCH_SOURCES: [SearchSource; 5] = [
     },
 ];
 
+fn query_ranked_rows<P: Params>(
+    conn: &Connection,
+    sql: &str,
+    params: P,
+) -> anyhow::Result<Vec<(String, String, f64)>> {
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt
+        .query_map(params, |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+fn query_vector_rows<P: Params>(
+    conn: &Connection,
+    sql: &str,
+    params: P,
+) -> anyhow::Result<Vec<(String, f64)>> {
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt
+        .query_map(params, |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+fn query_optional_string<P: Params>(
+    conn: &Connection,
+    sql: &str,
+    params: P,
+) -> anyhow::Result<Option<String>> {
+    conn.query_row(sql, params, |r| r.get::<_, String>(0))
+        .map(Some)
+        .or_else(|_| Ok(None))
+}
+
 // ---------------------------------------------------------------------------
 // FTS5 search per store
 // ---------------------------------------------------------------------------
 
 /// Search facts using FTS5 on keywords field. Returns (id, content, bm25_rank).
-pub fn fts5_search_facts(conn: &Connection, query: &str, agent_id: &str, limit: usize) -> anyhow::Result<Vec<(String, String, f64)>> {
+pub fn fts5_search_facts(
+    conn: &Connection,
+    query: &str,
+    agent_id: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<(String, String, f64)>> {
     // FTS5 requires a virtual table. If not present, fall back to LIKE.
-    let has_fts: bool = conn.query_row(
-        "SELECT COUNT(*) > 0 FROM sqlite_master WHERE name = 'facts_fts'",
-        [], |r| r.get(0),
-    ).unwrap_or(false);
+    let has_fts: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE name = 'facts_fts'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(false);
 
     if has_fts {
         let mut stmt = conn.prepare(
@@ -116,11 +176,13 @@ pub fn fts5_search_facts(conn: &Connection, query: &str, agent_id: &str, limit: 
              JOIN facts f ON f.id = fts.rowid
              WHERE facts_fts MATCH ?1 AND f.agent_id = ?2 AND f.superseded_at IS NULL
              ORDER BY fts.rank
-             LIMIT ?3"
+             LIMIT ?3",
         )?;
-        let rows = stmt.query_map(params![query, agent_id, limit], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get::<_, f64>(2)?.abs()))
-        })?.collect::<Result<Vec<_>, _>>()?;
+        let rows = stmt
+            .query_map(params![query, agent_id, limit], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get::<_, f64>(2)?.abs()))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     } else {
         let pattern = format!("%{query}%");
@@ -129,34 +191,44 @@ pub fn fts5_search_facts(conn: &Connection, query: &str, agent_id: &str, limit: 
              WHERE agent_id = ?1 AND superseded_at IS NULL
                AND (content LIKE ?2 OR summary LIKE ?2 OR pointer LIKE ?2 OR keywords LIKE ?2)
              ORDER BY updated_at DESC
-             LIMIT ?3"
+             LIMIT ?3",
         )?;
-        let rows = stmt.query_map(params![agent_id, pattern, limit], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-        })?.collect::<Result<Vec<_>, _>>()?;
+        let rows = stmt
+            .query_map(params![agent_id, pattern, limit], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 }
 
 /// Search messages using LIKE fallback (FTS5 table optional).
-pub fn fts5_search_messages(conn: &Connection, query: &str, agent_id: &str, limit: usize) -> anyhow::Result<Vec<(String, String, f64)>> {
+pub fn fts5_search_messages(
+    conn: &Connection,
+    query: &str,
+    agent_id: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<(String, String, f64)>> {
     let pattern = format!("%{query}%");
-    let mut stmt = conn.prepare(
+    query_ranked_rows(
+        conn,
         "SELECT m.id, m.content, 1.0
          FROM messages m
          JOIN sessions s ON s.id = m.session_id
          WHERE s.agent_id = ?1 AND m.content LIKE ?2
          ORDER BY m.created_at DESC
-         LIMIT ?3"
-    )?;
-    let rows = stmt.query_map(params![agent_id, pattern, limit], |r| {
-        Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-    })?.collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+         LIMIT ?3",
+        params![agent_id, pattern, limit],
+    )
 }
 
 /// Search projected tool call logs scoped to the agent's sessions.
-pub fn fts5_search_tool_calls(conn: &Connection, query: &str, agent_id: &str, limit: usize) -> anyhow::Result<Vec<(String, String, f64)>> {
+pub fn fts5_search_tool_calls(
+    conn: &Connection,
+    query: &str,
+    agent_id: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<(String, String, f64)>> {
     let pattern = format!("%{query}%");
     let projection = crate::store::log::tool_call_projection_expr("tc");
     let sql = format!(
@@ -176,15 +248,16 @@ pub fn fts5_search_tool_calls(conn: &Connection, query: &str, agent_id: &str, li
          ORDER BY tc.created_at DESC
          LIMIT ?3"
     );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params![agent_id, pattern, limit], |r| {
-        Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-    })?.collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+    query_ranked_rows(conn, &sql, params![agent_id, pattern, limit])
 }
 
 /// Search projected policy audit logs scoped to the agent (via session or actor).
-pub fn fts5_search_policy_audit(conn: &Connection, query: &str, agent_id: &str, limit: usize) -> anyhow::Result<Vec<(String, String, f64)>> {
+pub fn fts5_search_policy_audit(
+    conn: &Connection,
+    query: &str,
+    agent_id: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<(String, String, f64)>> {
     let pattern = format!("%{query}%");
     let projection = crate::store::log::policy_audit_projection_expr("pa");
     let sql = format!(
@@ -206,26 +279,24 @@ pub fn fts5_search_policy_audit(conn: &Connection, query: &str, agent_id: &str, 
          ORDER BY pa.created_at DESC
          LIMIT ?3"
     );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params![agent_id, pattern, limit], |r| {
-        Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-    })?.collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+    query_ranked_rows(conn, &sql, params![agent_id, pattern, limit])
 }
 
 /// Search knowledge chunks using LIKE fallback.
-pub fn fts5_search_knowledge(conn: &Connection, query: &str, limit: usize) -> anyhow::Result<Vec<(String, String, f64)>> {
+pub fn fts5_search_knowledge(
+    conn: &Connection,
+    query: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<(String, String, f64)>> {
     let pattern = format!("%{query}%");
-    let mut stmt = conn.prepare(
+    query_ranked_rows(
+        conn,
         "SELECT id, content, 1.0 FROM chunks
          WHERE content LIKE ?1
          ORDER BY created_at DESC
-         LIMIT ?2"
-    )?;
-    let rows = stmt.query_map(params![pattern, limit], |r| {
-        Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-    })?.collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+         LIMIT ?2",
+        params![pattern, limit],
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -266,7 +337,11 @@ pub fn jaccard_similarity(a: &str, b: &str) -> f64 {
     }
     let intersection = set_a.intersection(&set_b).count();
     let union = set_a.union(&set_b).count();
-    if union == 0 { 0.0 } else { intersection as f64 / union as f64 }
+    if union == 0 {
+        0.0
+    } else {
+        intersection as f64 / union as f64
+    }
 }
 
 /// Re-rank results using Maximal Marginal Relevance.
@@ -283,7 +358,11 @@ pub fn mmr_rerank(results: &[SearchResult], k: usize, lambda: Option<f64>) -> Ve
     // Normalize scores to [0, 1]
     let max_score = results.iter().map(|r| r.score).fold(0.0_f64, f64::max);
     let min_score = results.iter().map(|r| r.score).fold(f64::MAX, f64::min);
-    let range = if (max_score - min_score).abs() < f64::EPSILON { 1.0 } else { max_score - min_score };
+    let range = if (max_score - min_score).abs() < f64::EPSILON {
+        1.0
+    } else {
+        max_score - min_score
+    };
 
     while selected.len() < k && !remaining.is_empty() {
         let mut best_idx = 0;
@@ -295,7 +374,8 @@ pub fn mmr_rerank(results: &[SearchResult], k: usize, lambda: Option<f64>) -> Ve
             let max_sim = if selected.is_empty() {
                 0.0
             } else {
-                selected.iter()
+                selected
+                    .iter()
                     .map(|s| jaccard_similarity(&candidate.content, &s.content))
                     .fold(0.0_f64, f64::max)
             };
@@ -329,20 +409,16 @@ pub fn vector_search_facts(
 ) -> anyhow::Result<Vec<(String, f64)>> {
     // vector_quantize_scan('facts', 'content_embedding', blob, k) returns (rowid, distance).
     // We join on facts.rowid to get the id string and apply agent_id filter.
-    let mut stmt = conn.prepare(
+    query_vector_rows(
+        conn,
         "SELECT f.id, v.distance
          FROM facts AS f
          JOIN vector_quantize_scan('facts', 'content_embedding', ?1, ?2) AS v
            ON f.rowid = v.rowid
          WHERE f.agent_id = ?3 AND f.superseded_at IS NULL
          ORDER BY v.distance ASC",
-    )?;
-    let rows = stmt
-        .query_map(rusqlite::params![query_blob, limit, agent_id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+        rusqlite::params![query_blob, limit, agent_id],
+    )
 }
 
 /// KNN search over messages.content_embedding using sqlite-vector.
@@ -352,7 +428,8 @@ pub fn vector_search_messages(
     agent_id: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<(String, f64)>> {
-    let mut stmt = conn.prepare(
+    query_vector_rows(
+        conn,
         "SELECT m.id, v.distance
          FROM messages AS m
          JOIN sessions AS s
@@ -361,13 +438,8 @@ pub fn vector_search_messages(
            ON m.rowid = v.rowid
          WHERE s.agent_id = ?3
          ORDER BY v.distance ASC",
-    )?;
-    let rows = stmt
-        .query_map(rusqlite::params![query_blob, limit, agent_id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+        rusqlite::params![query_blob, limit, agent_id],
+    )
 }
 
 /// KNN search over tool_calls.content_embedding using sqlite-vector.
@@ -377,7 +449,8 @@ pub fn vector_search_tool_calls(
     agent_id: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<(String, f64)>> {
-    let mut stmt = conn.prepare(
+    query_vector_rows(
+        conn,
         "SELECT tc.id, v.distance
          FROM tool_calls AS tc
          JOIN sessions AS s
@@ -386,13 +459,8 @@ pub fn vector_search_tool_calls(
            ON tc.rowid = v.rowid
          WHERE s.agent_id = ?3
          ORDER BY v.distance ASC",
-    )?;
-    let rows = stmt
-        .query_map(rusqlite::params![query_blob, limit, agent_id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+        rusqlite::params![query_blob, limit, agent_id],
+    )
 }
 
 /// KNN search over policy_audit.content_embedding using sqlite-vector.
@@ -402,7 +470,8 @@ pub fn vector_search_policy_audit(
     agent_id: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<(String, f64)>> {
-    let mut stmt = conn.prepare(
+    query_vector_rows(
+        conn,
         "SELECT pa.id, v.distance
          FROM policy_audit AS pa
          JOIN vector_quantize_scan('policy_audit', 'content_embedding', ?1, ?2) AS v
@@ -412,13 +481,8 @@ pub fn vector_search_policy_audit(
                 pa.session_id IN (SELECT id FROM sessions WHERE agent_id = ?3)
                )
          ORDER BY v.distance ASC",
-    )?;
-    let rows = stmt
-        .query_map(rusqlite::params![query_blob, limit, agent_id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+        rusqlite::params![query_blob, limit, agent_id],
+    )
 }
 
 /// KNN search over chunks.content_embedding using sqlite-vector.
@@ -427,19 +491,15 @@ pub fn vector_search_knowledge(
     query_blob: &[u8],
     limit: usize,
 ) -> anyhow::Result<Vec<(String, f64)>> {
-    let mut stmt = conn.prepare(
+    query_vector_rows(
+        conn,
         "SELECT c.id, v.distance
          FROM chunks AS c
          JOIN vector_quantize_scan('chunks', 'content_embedding', ?1, ?2) AS v
            ON c.rowid = v.rowid
          ORDER BY v.distance ASC",
-    )?;
-    let rows = stmt
-        .query_map(rusqlite::params![query_blob, limit], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+        rusqlite::params![query_blob, limit],
+    )
 }
 
 fn text_search_for_source(
@@ -469,12 +529,16 @@ fn vector_search_for_source(
         SearchSourceId::Facts => vector_search_facts(conn, query_blob, agent_id, limit),
         SearchSourceId::Messages => vector_search_messages(conn, query_blob, agent_id, limit),
         SearchSourceId::ToolCalls => vector_search_tool_calls(conn, query_blob, agent_id, limit),
-        SearchSourceId::PolicyAudit => vector_search_policy_audit(conn, query_blob, agent_id, limit),
+        SearchSourceId::PolicyAudit => {
+            vector_search_policy_audit(conn, query_blob, agent_id, limit)
+        }
         SearchSourceId::Knowledge => vector_search_knowledge(conn, query_blob, limit),
     }
     .unwrap_or_default();
 
-    rows.into_iter().map(|(id, d)| (id, 1.0 / (1.0 + d))).collect()
+    rows.into_iter()
+        .map(|(id, d)| (id, 1.0 / (1.0 + d)))
+        .collect()
 }
 
 fn fetch_content_for_source(
@@ -484,69 +548,48 @@ fn fetch_content_for_source(
     agent_id: &str,
 ) -> anyhow::Result<Option<String>> {
     match source.id {
-        SearchSourceId::Facts => conn
-            .query_row(
-                "SELECT content FROM facts WHERE id = ?1 AND superseded_at IS NULL",
-                rusqlite::params![id],
-                |r| r.get::<_, String>(0),
-            )
-            .map(Some)
-            .or_else(|_| Ok(None)),
-        SearchSourceId::Messages => conn
-            .query_row(
-                "SELECT m.content
+        SearchSourceId::Facts => query_optional_string(
+            conn,
+            "SELECT content FROM facts WHERE id = ?1 AND superseded_at IS NULL",
+            rusqlite::params![id],
+        ),
+        SearchSourceId::Messages => query_optional_string(
+            conn,
+            "SELECT m.content
                  FROM messages m
                  JOIN sessions s ON s.id = m.session_id
                  WHERE m.id = ?1 AND s.agent_id = ?2",
-                rusqlite::params![id, agent_id],
-                |r| r.get::<_, String>(0),
-            )
-            .map(Some)
-            .or_else(|_| Ok(None)),
-        SearchSourceId::ToolCalls => conn
-            .query_row(
-                &{
-                    let projection = crate::store::log::tool_call_projection_expr("tc");
-                    format!(
-                        "SELECT
-                            {projection}
-                         FROM tool_calls tc
-                         JOIN sessions s ON s.id = tc.session_id
-                         WHERE tc.id = ?1 AND s.agent_id = ?2"
-                    )
-                },
-                rusqlite::params![id, agent_id],
-                |r| r.get::<_, String>(0),
-            )
-            .map(Some)
-            .or_else(|_| Ok(None)),
-        SearchSourceId::PolicyAudit => conn
-            .query_row(
-                &{
-                    let projection = crate::store::log::policy_audit_projection_expr("pa");
-                    format!(
-                        "SELECT
-                            {projection}
-                         FROM policy_audit pa
-                         WHERE pa.id = ?1 AND (
-                             pa.actor = ?2 OR
-                             pa.session_id IN (SELECT id FROM sessions WHERE agent_id = ?2)
-                         )"
-                    )
-                },
-                rusqlite::params![id, agent_id],
-                |r| r.get::<_, String>(0),
-            )
-            .map(Some)
-            .or_else(|_| Ok(None)),
-        SearchSourceId::Knowledge => conn
-            .query_row(
-                "SELECT content FROM chunks WHERE id = ?1",
-                rusqlite::params![id],
-                |r| r.get::<_, String>(0),
-            )
-            .map(Some)
-            .or_else(|_| Ok(None)),
+            rusqlite::params![id, agent_id],
+        ),
+        SearchSourceId::ToolCalls => {
+            let projection = crate::store::log::tool_call_projection_expr("tc");
+            let sql = format!(
+                "SELECT
+                    {projection}
+                 FROM tool_calls tc
+                 JOIN sessions s ON s.id = tc.session_id
+                 WHERE tc.id = ?1 AND s.agent_id = ?2"
+            );
+            query_optional_string(conn, &sql, rusqlite::params![id, agent_id])
+        }
+        SearchSourceId::PolicyAudit => {
+            let projection = crate::store::log::policy_audit_projection_expr("pa");
+            let sql = format!(
+                "SELECT
+                    {projection}
+                 FROM policy_audit pa
+                 WHERE pa.id = ?1 AND (
+                     pa.actor = ?2 OR
+                     pa.session_id IN (SELECT id FROM sessions WHERE agent_id = ?2)
+                 )"
+            );
+            query_optional_string(conn, &sql, rusqlite::params![id, agent_id])
+        }
+        SearchSourceId::Knowledge => query_optional_string(
+            conn,
+            "SELECT content FROM chunks WHERE id = ?1",
+            rusqlite::params![id],
+        ),
     }
 }
 
@@ -615,7 +658,8 @@ pub fn search(
     }
 
     // Apply store weights to fused scores
-    let mut weighted_results: Vec<SearchResult> = fused.into_iter()
+    let mut weighted_results: Vec<SearchResult> = fused
+        .into_iter()
         .filter_map(|(id, score)| {
             let (content, store) = content_map.get(&id)?.clone();
             let weight = match store {
@@ -633,7 +677,11 @@ pub fn search(
         })
         .collect();
 
-    weighted_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    weighted_results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // MMR re-rank
     let reranked = mmr_rerank(&weighted_results, limit, None);
@@ -673,9 +721,11 @@ mod tests {
 
     #[test]
     fn rrf_single_list() {
-        let lists = vec![
-            vec![("a".into(), 10.0), ("b".into(), 5.0), ("c".into(), 1.0)],
-        ];
+        let lists = vec![vec![
+            ("a".into(), 10.0),
+            ("b".into(), 5.0),
+            ("c".into(), 1.0),
+        ]];
         let fused = rrf_fuse(&lists);
         assert_eq!(fused[0].0, "a");
         assert_eq!(fused[1].0, "b");
@@ -744,9 +794,27 @@ mod tests {
     #[test]
     fn mmr_returns_k_results() {
         let results = vec![
-            SearchResult { id: "a".into(), store: Store::Facts, content: "alpha beta".into(), score: 1.0, sources: vec![Store::Facts] },
-            SearchResult { id: "b".into(), store: Store::Facts, content: "gamma delta".into(), score: 0.8, sources: vec![Store::Facts] },
-            SearchResult { id: "c".into(), store: Store::Facts, content: "epsilon zeta".into(), score: 0.6, sources: vec![Store::Facts] },
+            SearchResult {
+                id: "a".into(),
+                store: Store::Facts,
+                content: "alpha beta".into(),
+                score: 1.0,
+                sources: vec![Store::Facts],
+            },
+            SearchResult {
+                id: "b".into(),
+                store: Store::Facts,
+                content: "gamma delta".into(),
+                score: 0.8,
+                sources: vec![Store::Facts],
+            },
+            SearchResult {
+                id: "c".into(),
+                store: Store::Facts,
+                content: "epsilon zeta".into(),
+                score: 0.6,
+                sources: vec![Store::Facts],
+            },
         ];
         let reranked = mmr_rerank(&results, 2, None);
         assert_eq!(reranked.len(), 2);
@@ -755,8 +823,20 @@ mod tests {
     #[test]
     fn mmr_highest_relevance_first() {
         let results = vec![
-            SearchResult { id: "a".into(), store: Store::Facts, content: "unique content one".into(), score: 1.0, sources: vec![Store::Facts] },
-            SearchResult { id: "b".into(), store: Store::Facts, content: "different content two".into(), score: 0.5, sources: vec![Store::Facts] },
+            SearchResult {
+                id: "a".into(),
+                store: Store::Facts,
+                content: "unique content one".into(),
+                score: 1.0,
+                sources: vec![Store::Facts],
+            },
+            SearchResult {
+                id: "b".into(),
+                store: Store::Facts,
+                content: "different content two".into(),
+                score: 0.5,
+                sources: vec![Store::Facts],
+            },
         ];
         let reranked = mmr_rerank(&results, 2, None);
         assert_eq!(reranked[0].id, "a");
@@ -765,15 +845,36 @@ mod tests {
     #[test]
     fn mmr_penalizes_duplicates() {
         let results = vec![
-            SearchResult { id: "a".into(), store: Store::Facts, content: "the quick brown fox".into(), score: 1.0, sources: vec![Store::Facts] },
-            SearchResult { id: "b".into(), store: Store::Facts, content: "the quick brown fox".into(), score: 0.8, sources: vec![Store::Facts] },
-            SearchResult { id: "c".into(), store: Store::Facts, content: "completely different topic here".into(), score: 0.75, sources: vec![Store::Facts] },
+            SearchResult {
+                id: "a".into(),
+                store: Store::Facts,
+                content: "the quick brown fox".into(),
+                score: 1.0,
+                sources: vec![Store::Facts],
+            },
+            SearchResult {
+                id: "b".into(),
+                store: Store::Facts,
+                content: "the quick brown fox".into(),
+                score: 0.8,
+                sources: vec![Store::Facts],
+            },
+            SearchResult {
+                id: "c".into(),
+                store: Store::Facts,
+                content: "completely different topic here".into(),
+                score: 0.75,
+                sources: vec![Store::Facts],
+            },
         ];
         // Use a lower λ to make diversity matter more
         let reranked = mmr_rerank(&results, 2, Some(0.5));
         // "a" first (highest score), then "c" should beat "b" due to diversity
         assert_eq!(reranked[0].id, "a");
-        assert_eq!(reranked[1].id, "c", "diverse result should beat near-duplicate");
+        assert_eq!(
+            reranked[1].id, "c",
+            "diverse result should beat near-duplicate"
+        );
     }
 
     #[test]
@@ -783,9 +884,13 @@ mod tests {
 
     #[test]
     fn mmr_k_zero() {
-        let results = vec![
-            SearchResult { id: "a".into(), store: Store::Facts, content: "x".into(), score: 1.0, sources: vec![Store::Facts] },
-        ];
+        let results = vec![SearchResult {
+            id: "a".into(),
+            store: Store::Facts,
+            content: "x".into(),
+            score: 1.0,
+            sources: vec![Store::Facts],
+        }];
         assert!(mmr_rerank(&results, 0, None).is_empty());
     }
 
@@ -831,35 +936,52 @@ mod tests {
         let conn = setup();
 
         // Seed facts
-        store::facts::add(&conn, &store::facts::NewFact {
-            agent_id: "a".into(),
-            content: "ORDERS table uses soft deletes".into(),
-            summary: "ORDERS soft deletes".into(),
-            pointer: "ORDERS: soft-delete".into(),
-            keywords: Some("orders soft deletes".into()),
-            source_message_id: None,
-            confidence: 1.0,
-        }, None).unwrap();
+        store::facts::add(
+            &conn,
+            &store::facts::NewFact {
+                agent_id: "a".into(),
+                content: "ORDERS table uses soft deletes".into(),
+                summary: "ORDERS soft deletes".into(),
+                pointer: "ORDERS: soft-delete".into(),
+                keywords: Some("orders soft deletes".into()),
+                source_message_id: None,
+                confidence: 1.0,
+            },
+            None,
+        )
+        .unwrap();
 
         // Seed a session + message
         let sid = store::log::create_session(&conn, "a", None).unwrap();
-        store::log::append_message(&conn, &sid, "user", "Tell me about soft deletes in ORDERS").unwrap();
+        store::log::append_message(&conn, &sid, "user", "Tell me about soft deletes in ORDERS")
+            .unwrap();
 
         // Seed knowledge
-        store::knowledge::ingest(&conn, None, None, "Soft deletes use a deleted_at column", None).unwrap();
+        store::knowledge::ingest(
+            &conn,
+            None,
+            None,
+            "Soft deletes use a deleted_at column",
+            None,
+        )
+        .unwrap();
 
         let results = search(&conn, "soft deletes", "a", 10, None, None).unwrap();
         assert!(!results.is_empty(), "should find results across stores");
 
         let stores: HashSet<Store> = results.iter().map(|r| r.store).collect();
-        assert!(stores.len() >= 2, "should have results from multiple stores: {stores:?}");
+        assert!(
+            stores.len() >= 2,
+            "should have results from multiple stores: {stores:?}"
+        );
     }
 
     #[test]
     fn search_includes_projected_logs() {
         let conn = setup();
         let sid = store::log::create_session(&conn, "a", None).unwrap();
-        let mid = store::log::append_message(&conn, &sid, "assistant", "running deploy checks").unwrap();
+        let mid =
+            store::log::append_message(&conn, &sid, "assistant", "running deploy checks").unwrap();
 
         conn.execute(
             "INSERT INTO tool_calls (id, message_id, session_id, tool_name, arguments, result, status, policy_decision, duration_ms, created_at)
@@ -896,11 +1018,15 @@ mod tests {
 
         let results = search(&conn, "deploy denied", "a", 10, None, None).unwrap();
         assert!(
-            results.iter().any(|r| r.store == Store::Log && r.content.contains("tool=shell_exec")),
+            results
+                .iter()
+                .any(|r| r.store == Store::Log && r.content.contains("tool=shell_exec")),
             "should include tool_calls search hit"
         );
         assert!(
-            results.iter().any(|r| r.store == Store::Log && r.content.contains("policy_audit")),
+            results
+                .iter()
+                .any(|r| r.store == Store::Log && r.content.contains("policy_audit")),
             "should include policy_audit search hit"
         );
     }
@@ -916,15 +1042,20 @@ mod tests {
     fn search_respects_limit() {
         let conn = setup();
         for i in 0..20 {
-            store::facts::add(&conn, &store::facts::NewFact {
-                agent_id: "a".into(),
-                content: format!("fact about topic {i}"),
-                summary: format!("topic {i}"),
-                pointer: format!("topic-{i}"),
-                keywords: Some("topic".into()),
-                source_message_id: None,
-                confidence: 1.0,
-            }, None).unwrap();
+            store::facts::add(
+                &conn,
+                &store::facts::NewFact {
+                    agent_id: "a".into(),
+                    content: format!("fact about topic {i}"),
+                    summary: format!("topic {i}"),
+                    pointer: format!("topic-{i}"),
+                    keywords: Some("topic".into()),
+                    source_message_id: None,
+                    confidence: 1.0,
+                },
+                None,
+            )
+            .unwrap();
         }
         let results = search(&conn, "topic", "a", 5, None, None).unwrap();
         assert!(results.len() <= 5);
@@ -974,19 +1105,25 @@ mod tests {
         ).unwrap();
 
         // Add an unrelated embedding so vector ranking has non-trivial choices.
-        let fact_id = store::facts::add(&conn, &store::facts::NewFact {
-            agent_id: "a".into(),
-            content: "Unrelated fact".into(),
-            summary: "unrelated".into(),
-            pointer: "unrelated".into(),
-            keywords: None,
-            source_message_id: None,
-            confidence: 1.0,
-        }, None).unwrap();
+        let fact_id = store::facts::add(
+            &conn,
+            &store::facts::NewFact {
+                agent_id: "a".into(),
+                content: "Unrelated fact".into(),
+                summary: "unrelated".into(),
+                pointer: "unrelated".into(),
+                keywords: None,
+                source_message_id: None,
+                confidence: 1.0,
+            },
+            None,
+        )
+        .unwrap();
         conn.execute(
             "UPDATE facts SET content_embedding = ?1 WHERE id = ?2",
             params![f32_blob(&[0.0, 1.0, 0.0]), fact_id],
-        ).unwrap();
+        )
+        .unwrap();
 
         for (table, col) in &[
             ("facts", "content_embedding"),
@@ -997,19 +1134,32 @@ mod tests {
                 "SELECT vector_quantize(?1, ?2)",
                 params![table, col],
                 |_| Ok::<_, rusqlite::Error>(()),
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         // No lexical overlap with inserted content; recall should come from vectors.
         let query_embedding = f32_blob(&[1.0, 0.0, 0.0]);
-        let results = search(&conn, "qzv no lexical overlap", "a", 10, None, Some(&query_embedding)).unwrap();
+        let results = search(
+            &conn,
+            "qzv no lexical overlap",
+            "a",
+            10,
+            None,
+            Some(&query_embedding),
+        )
+        .unwrap();
 
         assert!(
-            results.iter().any(|r| r.store == Store::Log && r.content.contains("[tool_call]")),
+            results
+                .iter()
+                .any(|r| r.store == Store::Log && r.content.contains("[tool_call]")),
             "semantic search should surface tool call logs"
         );
         assert!(
-            results.iter().any(|r| r.store == Store::Log && r.content.contains("[policy_audit]")),
+            results
+                .iter()
+                .any(|r| r.store == Store::Log && r.content.contains("[policy_audit]")),
             "semantic search should surface policy audit logs"
         );
     }

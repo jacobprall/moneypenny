@@ -53,9 +53,25 @@ pub fn set_tool_call_embedding(
     tool_call_id: &str,
     blob: &[u8],
 ) -> anyhow::Result<()> {
+    set_tool_call_embedding_with_meta(conn, tool_call_id, blob, None, None)
+}
+
+/// Write or overwrite the FLOAT32 content embedding for a tool call and persist
+/// embedding provenance metadata.
+pub fn set_tool_call_embedding_with_meta(
+    conn: &Connection,
+    tool_call_id: &str,
+    blob: &[u8],
+    embedding_model: Option<&str>,
+    embedding_content_hash: Option<&str>,
+) -> anyhow::Result<()> {
     conn.execute(
-        "UPDATE tool_calls SET content_embedding = ?1 WHERE id = ?2",
-        params![blob, tool_call_id],
+        "UPDATE tool_calls
+         SET content_embedding = ?1,
+             embedding_model = ?2,
+             embedding_content_hash = ?3
+         WHERE id = ?4",
+        params![blob, embedding_model, embedding_content_hash, tool_call_id],
     )?;
     Ok(())
 }
@@ -117,4 +133,3 @@ pub fn get_tool_calls(conn: &Connection, session_id: &str) -> anyhow::Result<Vec
         .collect::<Result<Vec<_>, _>>()?;
     Ok(calls)
 }
-

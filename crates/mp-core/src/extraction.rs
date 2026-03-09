@@ -42,11 +42,14 @@ pub fn assemble_extraction_context(
     let mut parts = Vec::new();
 
     // Rolling summary from the session
-    let summary: Option<String> = conn.query_row(
-        "SELECT summary FROM sessions WHERE id = ?1",
-        [session_id],
-        |r| r.get(0),
-    ).ok().flatten();
+    let summary: Option<String> = conn
+        .query_row(
+            "SELECT summary FROM sessions WHERE id = ?1",
+            [session_id],
+            |r| r.get(0),
+        )
+        .ok()
+        .flatten();
     if let Some(s) = &summary {
         parts.push(format!("## Rolling Summary\n{s}"));
     }
@@ -84,17 +87,18 @@ pub fn find_similar_fact(
 ) -> anyhow::Result<Option<(String, f64)>> {
     let active = crate::store::facts::list_active(conn, agent_id)?;
 
-    let candidate_words: std::collections::HashSet<&str> = candidate.content
-        .split_whitespace()
-        .collect();
+    let candidate_words: std::collections::HashSet<&str> =
+        candidate.content.split_whitespace().collect();
 
     let mut best: Option<(String, f64)> = None;
     for fact in &active {
-        let fact_words: std::collections::HashSet<&str> = fact.content
-            .split_whitespace()
-            .collect();
+        let fact_words: std::collections::HashSet<&str> = fact.content.split_whitespace().collect();
         let sim = crate::search::jaccard_similarity(
-            &candidate_words.iter().copied().collect::<Vec<_>>().join(" "),
+            &candidate_words
+                .iter()
+                .copied()
+                .collect::<Vec<_>>()
+                .join(" "),
             &fact_words.iter().copied().collect::<Vec<_>>().join(" "),
         );
         if sim > 0.5 {
@@ -157,8 +161,11 @@ pub fn process_candidate(
         DeduplicationDecision::Update => {
             if let Some(eid) = existing_fact_id {
                 crate::store::facts::update(
-                    conn, eid,
-                    &candidate.content, &candidate.summary, &candidate.pointer,
+                    conn,
+                    eid,
+                    &candidate.content,
+                    &candidate.summary,
+                    &candidate.pointer,
                     Some("extraction pipeline: updated"),
                     source_message_id,
                 )?;
@@ -217,14 +224,21 @@ pub fn run_pipeline(
         };
 
         let outcome = process_candidate(
-            &tx, agent_id, candidate, &decision,
-            existing_id.as_deref(), source_message_id,
+            &tx,
+            agent_id,
+            candidate,
+            &decision,
+            existing_id.as_deref(),
+            source_message_id,
         )?;
 
         // Link new/updated facts to related facts
         if outcome.policy_allowed {
             if let Some(ref fid) = outcome.fact_id {
-                if matches!(decision, DeduplicationDecision::Add | DeduplicationDecision::Update) {
+                if matches!(
+                    decision,
+                    DeduplicationDecision::Add | DeduplicationDecision::Update
+                ) {
                     link_related_facts(&tx, agent_id, fid, candidate)?;
                 }
             }
@@ -258,7 +272,6 @@ fn link_related_facts(
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,10 +300,13 @@ mod tests {
         let conn = setup();
         let sid = store::log::create_session(&conn, "a", None).unwrap();
         let ctx = assemble_extraction_context(
-            &conn, "a", &sid,
+            &conn,
+            "a",
+            &sid,
             &["user said hello".into(), "assistant replied".into()],
             5,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(ctx.contains("user said hello"));
         assert!(ctx.contains("assistant replied"));
     }
@@ -309,15 +325,20 @@ mod tests {
     fn extraction_context_includes_existing_facts() {
         let conn = setup();
         let sid = store::log::create_session(&conn, "a", None).unwrap();
-        store::facts::add(&conn, &store::facts::NewFact {
-            agent_id: "a".into(),
-            content: "ORDERS uses soft deletes".into(),
-            summary: "ORDERS soft deletes".into(),
-            pointer: "ORDERS: soft-delete".into(),
-            keywords: Some("orders".into()),
-            source_message_id: None,
-            confidence: 0.9,
-        }, None).unwrap();
+        store::facts::add(
+            &conn,
+            &store::facts::NewFact {
+                agent_id: "a".into(),
+                content: "ORDERS uses soft deletes".into(),
+                summary: "ORDERS soft deletes".into(),
+                pointer: "ORDERS: soft-delete".into(),
+                keywords: Some("orders".into()),
+                source_message_id: None,
+                confidence: 0.9,
+            },
+            None,
+        )
+        .unwrap();
 
         let ctx = assemble_extraction_context(&conn, "a", &sid, &[], 5).unwrap();
         assert!(ctx.contains("ORDERS: soft-delete"));
@@ -351,15 +372,20 @@ mod tests {
     #[test]
     fn find_similar_fact_detects_overlap() {
         let conn = setup();
-        store::facts::add(&conn, &store::facts::NewFact {
-            agent_id: "a".into(),
-            content: "the quick brown fox jumps over the lazy dog".into(),
-            summary: "fox/dog".into(),
-            pointer: "fox-dog".into(),
-            keywords: None,
-            source_message_id: None,
-            confidence: 1.0,
-        }, None).unwrap();
+        store::facts::add(
+            &conn,
+            &store::facts::NewFact {
+                agent_id: "a".into(),
+                content: "the quick brown fox jumps over the lazy dog".into(),
+                summary: "fox/dog".into(),
+                pointer: "fox-dog".into(),
+                keywords: None,
+                source_message_id: None,
+                confidence: 1.0,
+            },
+            None,
+        )
+        .unwrap();
 
         let candidate = CandidateFact {
             content: "the quick brown fox jumps over a lazy dog".into(),
@@ -375,15 +401,20 @@ mod tests {
     #[test]
     fn find_similar_fact_no_match() {
         let conn = setup();
-        store::facts::add(&conn, &store::facts::NewFact {
-            agent_id: "a".into(),
-            content: "completely unrelated topic about elephants".into(),
-            summary: "elephants".into(),
-            pointer: "elephants".into(),
-            keywords: None,
-            source_message_id: None,
-            confidence: 1.0,
-        }, None).unwrap();
+        store::facts::add(
+            &conn,
+            &store::facts::NewFact {
+                agent_id: "a".into(),
+                content: "completely unrelated topic about elephants".into(),
+                summary: "elephants".into(),
+                pointer: "elephants".into(),
+                keywords: None,
+                source_message_id: None,
+                confidence: 1.0,
+            },
+            None,
+        )
+        .unwrap();
 
         let candidate = CandidateFact {
             content: "quantum physics string theory dimensions".into(),
@@ -432,15 +463,20 @@ mod tests {
         let sid = store::log::create_session(&conn, "a", None).unwrap();
 
         // Pre-existing fact
-        let _existing_id = store::facts::add(&conn, &store::facts::NewFact {
-            agent_id: "a".into(),
-            content: "the quick brown fox jumps over the lazy dog in the park".into(),
-            summary: "fox/dog".into(),
-            pointer: "fox-dog".into(),
-            keywords: None,
-            source_message_id: None,
-            confidence: 1.0,
-        }, None).unwrap();
+        let _existing_id = store::facts::add(
+            &conn,
+            &store::facts::NewFact {
+                agent_id: "a".into(),
+                content: "the quick brown fox jumps over the lazy dog in the park".into(),
+                summary: "fox/dog".into(),
+                pointer: "fox-dog".into(),
+                keywords: None,
+                source_message_id: None,
+                confidence: 1.0,
+            },
+            None,
+        )
+        .unwrap();
 
         // Candidate very similar to existing (high Jaccard overlap)
         let candidates = vec![CandidateFact {
@@ -456,8 +492,12 @@ mod tests {
         assert!(outcomes[0].policy_allowed);
         // High similarity should yield Update
         assert!(
-            matches!(outcomes[0].decision, DeduplicationDecision::Update | DeduplicationDecision::Noop),
-            "decision: {:?}", outcomes[0].decision
+            matches!(
+                outcomes[0].decision,
+                DeduplicationDecision::Update | DeduplicationDecision::Noop
+            ),
+            "decision: {:?}",
+            outcomes[0].decision
         );
     }
 
@@ -524,15 +564,20 @@ mod tests {
         let sid = store::log::create_session(&conn, "a", None).unwrap();
 
         // Add an existing fact
-        let _existing_id = store::facts::add(&conn, &store::facts::NewFact {
-            agent_id: "a".into(),
-            content: "deployment uses kubernetes pods containers".into(),
-            summary: "k8s deployment".into(),
-            pointer: "k8s".into(),
-            keywords: None,
-            source_message_id: None,
-            confidence: 1.0,
-        }, None).unwrap();
+        let _existing_id = store::facts::add(
+            &conn,
+            &store::facts::NewFact {
+                agent_id: "a".into(),
+                content: "deployment uses kubernetes pods containers".into(),
+                summary: "k8s deployment".into(),
+                pointer: "k8s".into(),
+                keywords: None,
+                source_message_id: None,
+                confidence: 1.0,
+            },
+            None,
+        )
+        .unwrap();
 
         // Add a related candidate
         let candidates = vec![CandidateFact {

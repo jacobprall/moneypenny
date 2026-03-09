@@ -35,19 +35,20 @@ where
 ///
 /// Using a relative config path and cwd=temp_dir ensures default `data_dir = "./mp-data"`
 /// resolves to `<temp_dir>/mp-data`, so the agent DB is at `<temp_dir>/mp-data/main.db`.
-pub fn init_project() -> Result<(tempfile::TempDir, std::path::PathBuf), Box<dyn std::error::Error>> {
+pub fn init_project() -> Result<(tempfile::TempDir, std::path::PathBuf), Box<dyn std::error::Error>>
+{
     let temp = tempfile::tempdir()?;
     let config_path = temp.path().join(CONFIG_NAME);
 
-    let out = run_mp(
-        ["--config", CONFIG_NAME, "init"],
-        Some(temp.path()),
-    )?;
+    let out = run_mp(["--config", CONFIG_NAME, "init"], Some(temp.path()))?;
 
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         let stdout = String::from_utf8_lossy(&out.stdout);
-        panic!("mp init failed: status={}\nstdout:\n{}\nstderr:\n{}", out.status, stdout, stderr);
+        panic!(
+            "mp init failed: status={}\nstdout:\n{}\nstderr:\n{}",
+            out.status, stdout, stderr
+        );
     }
 
     assert!(config_path.exists(), "config file should exist after init");
@@ -56,10 +57,7 @@ pub fn init_project() -> Result<(tempfile::TempDir, std::path::PathBuf), Box<dyn
 
 /// Run `mp` with `--config <path>` from the directory that contains the config.
 /// Use this for all commands after init (so that `data_dir` relative paths resolve).
-pub fn run_mp_with_config(
-    config_path: &Path,
-    args: &[&str],
-) -> std::io::Result<Output> {
+pub fn run_mp_with_config(config_path: &Path, args: &[&str]) -> std::io::Result<Output> {
     let cwd = config_path.parent().unwrap_or(Path::new("."));
     let mut all = vec!["--config", config_path.to_str().unwrap()];
     all.extend(args.iter().copied());
@@ -68,7 +66,10 @@ pub fn run_mp_with_config(
 
 /// Patch the config file to enable the HTTP channel and disable CLI.
 /// Use before spawning the gateway so `mp start` runs the server without waiting for stdin.
-pub fn enable_http_channel(config_path: &Path, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+pub fn enable_http_channel(
+    config_path: &Path,
+    port: u16,
+) -> Result<(), Box<dyn std::error::Error>> {
     let s = std::fs::read_to_string(config_path)?;
     let mut t: toml::Table = toml::from_str(&s)?;
     let channels = t
@@ -104,6 +105,9 @@ mod tests {
 
     #[test]
     fn mp_bin_exists() {
-        assert!(std::path::Path::new(MP_BIN).exists(), "binary should exist when tests run");
+        assert!(
+            std::path::Path::new(MP_BIN).exists(),
+            "binary should exist when tests run"
+        );
     }
 }

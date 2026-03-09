@@ -88,11 +88,10 @@ pub fn update(
 ) -> anyhow::Result<()> {
     let now = chrono::Utc::now().timestamp();
 
-    let old_content: String = conn.query_row(
-        "SELECT content FROM facts WHERE id = ?1",
-        [fact_id],
-        |r| r.get(0),
-    )?;
+    let old_content: String =
+        conn.query_row("SELECT content FROM facts WHERE id = ?1", [fact_id], |r| {
+            r.get(0)
+        })?;
 
     conn.execute(
         "UPDATE facts SET content = ?1, summary = ?2, pointer = ?3, updated_at = ?4, version = version + 1
@@ -114,11 +113,10 @@ pub fn update(
 pub fn delete(conn: &Connection, fact_id: &str, reason: Option<&str>) -> anyhow::Result<()> {
     let now = chrono::Utc::now().timestamp();
 
-    let old_content: String = conn.query_row(
-        "SELECT content FROM facts WHERE id = ?1",
-        [fact_id],
-        |r| r.get(0),
-    )?;
+    let old_content: String =
+        conn.query_row("SELECT content FROM facts WHERE id = ?1", [fact_id], |r| {
+            r.get(0)
+        })?;
 
     conn.execute(
         "UPDATE facts SET superseded_at = ?1 WHERE id = ?2",
@@ -142,31 +140,33 @@ pub fn get(conn: &Connection, fact_id: &str) -> anyhow::Result<Option<Fact>> {
                 pointer_embedding, keywords, source_message_id, confidence,
                 created_at, updated_at, superseded_at, version,
                 context_compact, compaction_level, last_compacted_at
-         FROM facts WHERE id = ?1"
+         FROM facts WHERE id = ?1",
     )?;
 
-    let fact = stmt.query_row([fact_id], |r| {
-        Ok(Fact {
-            id: r.get(0)?,
-            agent_id: r.get(1)?,
-            content: r.get(2)?,
-            summary: r.get(3)?,
-            pointer: r.get(4)?,
-            content_embedding: r.get(5)?,
-            summary_embedding: r.get(6)?,
-            pointer_embedding: r.get(7)?,
-            keywords: r.get(8)?,
-            source_message_id: r.get(9)?,
-            confidence: r.get(10)?,
-            created_at: r.get(11)?,
-            updated_at: r.get(12)?,
-            superseded_at: r.get(13)?,
-            version: r.get(14)?,
-            context_compact: r.get(15)?,
-            compaction_level: r.get(16)?,
-            last_compacted_at: r.get(17)?,
+    let fact = stmt
+        .query_row([fact_id], |r| {
+            Ok(Fact {
+                id: r.get(0)?,
+                agent_id: r.get(1)?,
+                content: r.get(2)?,
+                summary: r.get(3)?,
+                pointer: r.get(4)?,
+                content_embedding: r.get(5)?,
+                summary_embedding: r.get(6)?,
+                pointer_embedding: r.get(7)?,
+                keywords: r.get(8)?,
+                source_message_id: r.get(9)?,
+                confidence: r.get(10)?,
+                created_at: r.get(11)?,
+                updated_at: r.get(12)?,
+                superseded_at: r.get(13)?,
+                version: r.get(14)?,
+                context_compact: r.get(15)?,
+                compaction_level: r.get(16)?,
+                last_compacted_at: r.get(17)?,
+            })
         })
-    }).ok();
+        .ok();
 
     Ok(fact)
 }
@@ -179,44 +179,52 @@ pub fn list_active(conn: &Connection, agent_id: &str) -> anyhow::Result<Vec<Fact
                 created_at, updated_at, superseded_at, version,
                 context_compact, compaction_level, last_compacted_at
          FROM facts WHERE agent_id = ?1 AND superseded_at IS NULL
-         ORDER BY updated_at DESC"
+         ORDER BY updated_at DESC",
     )?;
 
-    let facts = stmt.query_map([agent_id], |r| {
-        Ok(Fact {
-            id: r.get(0)?,
-            agent_id: r.get(1)?,
-            content: r.get(2)?,
-            summary: r.get(3)?,
-            pointer: r.get(4)?,
-            content_embedding: r.get(5)?,
-            summary_embedding: r.get(6)?,
-            pointer_embedding: r.get(7)?,
-            keywords: r.get(8)?,
-            source_message_id: r.get(9)?,
-            confidence: r.get(10)?,
-            created_at: r.get(11)?,
-            updated_at: r.get(12)?,
-            superseded_at: r.get(13)?,
-            version: r.get(14)?,
-            context_compact: r.get(15)?,
-            compaction_level: r.get(16)?,
-            last_compacted_at: r.get(17)?,
-        })
-    })?.collect::<Result<Vec<_>, _>>()?;
+    let facts = stmt
+        .query_map([agent_id], |r| {
+            Ok(Fact {
+                id: r.get(0)?,
+                agent_id: r.get(1)?,
+                content: r.get(2)?,
+                summary: r.get(3)?,
+                pointer: r.get(4)?,
+                content_embedding: r.get(5)?,
+                summary_embedding: r.get(6)?,
+                pointer_embedding: r.get(7)?,
+                keywords: r.get(8)?,
+                source_message_id: r.get(9)?,
+                confidence: r.get(10)?,
+                created_at: r.get(11)?,
+                updated_at: r.get(12)?,
+                superseded_at: r.get(13)?,
+                version: r.get(14)?,
+                context_compact: r.get(15)?,
+                compaction_level: r.get(16)?,
+                last_compacted_at: r.get(17)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(facts)
 }
 
 /// Get all Level 2 pointers for an agent (for context loading).
-pub fn all_pointers(conn: &Connection, agent_id: &str) -> anyhow::Result<Vec<(String, String, Option<String>, i64)>> {
+pub fn all_pointers(
+    conn: &Connection,
+    agent_id: &str,
+) -> anyhow::Result<Vec<(String, String, Option<String>, i64)>> {
     let mut stmt = conn.prepare(
         "SELECT id, pointer, context_compact, compaction_level
          FROM facts
          WHERE agent_id = ?1 AND superseded_at IS NULL
-         ORDER BY updated_at DESC"
+         ORDER BY updated_at DESC",
     )?;
-    let rows = stmt.query_map([agent_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+    let rows = stmt
+        .query_map([agent_id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -227,7 +235,13 @@ fn halve_words_for_context(text: &str) -> Option<String> {
         return None;
     }
     let next_len = ((words.len() + 1) / 2).max(MIN_CONTEXT_COMPACT_WORDS);
-    Some(words.into_iter().take(next_len).collect::<Vec<_>>().join(" "))
+    Some(
+        words
+            .into_iter()
+            .take(next_len)
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
 }
 
 fn seed_compaction_text(content: &str, summary: &str, pointer: &str) -> String {
@@ -267,7 +281,8 @@ pub fn compact_for_context(conn: &Connection, agent_id: &str) -> anyhow::Result<
     let mut compacted_count = 0usize;
     for (id, content, summary, pointer, context_compact) in rows {
         let existing = context_compact.clone().unwrap_or_default();
-        let current = context_compact.unwrap_or_else(|| seed_compaction_text(&content, &summary, &pointer));
+        let current =
+            context_compact.unwrap_or_else(|| seed_compaction_text(&content, &summary, &pointer));
         if let Some(next_compact) = halve_words_for_context(&current) {
             conn.execute(
                 "UPDATE facts
@@ -305,7 +320,13 @@ pub fn reset_compaction(conn: &Connection, fact_id: &str) -> anyhow::Result<()> 
 }
 
 /// Link two facts.
-pub fn link(conn: &Connection, source_id: &str, target_id: &str, relation: Option<&str>, strength: f64) -> anyhow::Result<()> {
+pub fn link(
+    conn: &Connection,
+    source_id: &str,
+    target_id: &str,
+    relation: Option<&str>,
+    strength: f64,
+) -> anyhow::Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO fact_links (source_id, target_id, relation, strength)
          VALUES (?1, ?2, ?3, ?4)",
@@ -318,16 +339,18 @@ pub fn link(conn: &Connection, source_id: &str, target_id: &str, relation: Optio
 pub fn get_links(conn: &Connection, fact_id: &str) -> anyhow::Result<Vec<FactLink>> {
     let mut stmt = conn.prepare(
         "SELECT source_id, target_id, relation, strength FROM fact_links
-         WHERE source_id = ?1 OR target_id = ?1"
+         WHERE source_id = ?1 OR target_id = ?1",
     )?;
-    let links = stmt.query_map([fact_id], |r| {
-        Ok(FactLink {
-            source_id: r.get(0)?,
-            target_id: r.get(1)?,
-            relation: r.get(2)?,
-            strength: r.get(3)?,
-        })
-    })?.collect::<Result<Vec<_>, _>>()?;
+    let links = stmt
+        .query_map([fact_id], |r| {
+            Ok(FactLink {
+                source_id: r.get(0)?,
+                target_id: r.get(1)?,
+                relation: r.get(2)?,
+                strength: r.get(3)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(links)
 }
 
@@ -337,18 +360,20 @@ pub fn get_audit(conn: &Connection, fact_id: &str) -> anyhow::Result<Vec<FactAud
         "SELECT id, fact_id, operation, old_content, new_content, reason, source_message_id, created_at
          FROM fact_audit WHERE fact_id = ?1 ORDER BY created_at ASC"
     )?;
-    let entries = stmt.query_map([fact_id], |r| {
-        Ok(FactAuditEntry {
-            id: r.get(0)?,
-            fact_id: r.get(1)?,
-            operation: r.get(2)?,
-            old_content: r.get(3)?,
-            new_content: r.get(4)?,
-            reason: r.get(5)?,
-            source_message_id: r.get(6)?,
-            created_at: r.get(7)?,
-        })
-    })?.collect::<Result<Vec<_>, _>>()?;
+    let entries = stmt
+        .query_map([fact_id], |r| {
+            Ok(FactAuditEntry {
+                id: r.get(0)?,
+                fact_id: r.get(1)?,
+                operation: r.get(2)?,
+                old_content: r.get(3)?,
+                new_content: r.get(4)?,
+                reason: r.get(5)?,
+                source_message_id: r.get(6)?,
+                created_at: r.get(7)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(entries)
 }
 
@@ -366,9 +391,25 @@ pub fn bump_confidence(conn: &Connection, fact_id: &str, amount: f64) -> anyhow:
 /// Called from the async agent layer after `embed()` returns so that the
 /// synchronous store layer never has to touch async code.
 pub fn set_content_embedding(conn: &Connection, fact_id: &str, blob: &[u8]) -> anyhow::Result<()> {
+    set_content_embedding_with_meta(conn, fact_id, blob, None, None)
+}
+
+/// Write or overwrite the FLOAT32 content embedding for a fact and persist
+/// embedding provenance metadata.
+pub fn set_content_embedding_with_meta(
+    conn: &Connection,
+    fact_id: &str,
+    blob: &[u8],
+    embedding_model: Option<&str>,
+    embedding_content_hash: Option<&str>,
+) -> anyhow::Result<()> {
     conn.execute(
-        "UPDATE facts SET content_embedding = ?1 WHERE id = ?2",
-        params![blob, fact_id],
+        "UPDATE facts
+         SET content_embedding = ?1,
+             embedding_model = ?2,
+             embedding_content_hash = ?3
+         WHERE id = ?4",
+        params![blob, embedding_model, embedding_content_hash, fact_id],
     )?;
     Ok(())
 }
@@ -413,8 +454,14 @@ mod tests {
         let id = add(&conn, &sample(), Some("extracted from conversation")).unwrap();
         let fact = get(&conn, &id).unwrap().unwrap();
 
-        assert_eq!(fact.content, "The ORDERS table uses soft deletes via deleted_at");
-        assert_eq!(fact.summary, "ORDERS uses soft deletes; filter WHERE deleted_at IS NULL");
+        assert_eq!(
+            fact.content,
+            "The ORDERS table uses soft deletes via deleted_at"
+        );
+        assert_eq!(
+            fact.summary,
+            "ORDERS uses soft deletes; filter WHERE deleted_at IS NULL"
+        );
         assert_eq!(fact.pointer, "ORDERS: soft-delete filter");
         assert_eq!(fact.confidence, 1.0);
         assert_eq!(fact.version, 1);
@@ -429,7 +476,10 @@ mod tests {
 
         assert_eq!(audit.len(), 1);
         assert_eq!(audit[0].operation, "add");
-        assert_eq!(audit[0].new_content.as_deref(), Some("The ORDERS table uses soft deletes via deleted_at"));
+        assert_eq!(
+            audit[0].new_content.as_deref(),
+            Some("The ORDERS table uses soft deletes via deleted_at")
+        );
         assert_eq!(audit[0].reason.as_deref(), Some("test reason"));
         assert!(audit[0].old_content.is_none());
     }
@@ -439,7 +489,16 @@ mod tests {
         let conn = setup();
         let id = add(&conn, &sample(), None).unwrap();
 
-        update(&conn, &id, "Updated content", "Updated summary", "Updated ptr", Some("refined"), None).unwrap();
+        update(
+            &conn,
+            &id,
+            "Updated content",
+            "Updated summary",
+            "Updated ptr",
+            Some("refined"),
+            None,
+        )
+        .unwrap();
 
         let fact = get(&conn, &id).unwrap().unwrap();
         assert_eq!(fact.content, "Updated content");
@@ -452,12 +511,24 @@ mod tests {
     fn update_creates_audit_with_old_and_new() {
         let conn = setup();
         let id = add(&conn, &sample(), None).unwrap();
-        update(&conn, &id, "New content", "New summary", "New ptr", Some("refined"), None).unwrap();
+        update(
+            &conn,
+            &id,
+            "New content",
+            "New summary",
+            "New ptr",
+            Some("refined"),
+            None,
+        )
+        .unwrap();
 
         let audit = get_audit(&conn, &id).unwrap();
         assert_eq!(audit.len(), 2);
         assert_eq!(audit[1].operation, "update");
-        assert_eq!(audit[1].old_content.as_deref(), Some("The ORDERS table uses soft deletes via deleted_at"));
+        assert_eq!(
+            audit[1].old_content.as_deref(),
+            Some("The ORDERS table uses soft deletes via deleted_at")
+        );
         assert_eq!(audit[1].new_content.as_deref(), Some("New content"));
     }
 
@@ -487,15 +558,20 @@ mod tests {
     fn list_active_excludes_superseded() {
         let conn = setup();
         let id1 = add(&conn, &sample(), None).unwrap();
-        let _id2 = add(&conn, &NewFact {
-            agent_id: "agent-main".into(),
-            content: "Second fact".into(),
-            summary: "Second".into(),
-            pointer: "second".into(),
-            keywords: None,
-            source_message_id: None,
-            confidence: 1.0,
-        }, None).unwrap();
+        let _id2 = add(
+            &conn,
+            &NewFact {
+                agent_id: "agent-main".into(),
+                content: "Second fact".into(),
+                summary: "Second".into(),
+                pointer: "second".into(),
+                keywords: None,
+                source_message_id: None,
+                confidence: 1.0,
+            },
+            None,
+        )
+        .unwrap();
         delete(&conn, &id1, None).unwrap();
 
         let active = list_active(&conn, "agent-main").unwrap();
@@ -567,15 +643,20 @@ mod tests {
     fn link_and_get_links() {
         let conn = setup();
         let id1 = add(&conn, &sample(), None).unwrap();
-        let id2 = add(&conn, &NewFact {
-            agent_id: "agent-main".into(),
-            content: "Second".into(),
-            summary: "s".into(),
-            pointer: "p".into(),
-            keywords: None,
-            source_message_id: None,
-            confidence: 1.0,
-        }, None).unwrap();
+        let id2 = add(
+            &conn,
+            &NewFact {
+                agent_id: "agent-main".into(),
+                content: "Second".into(),
+                summary: "s".into(),
+                pointer: "p".into(),
+                keywords: None,
+                source_message_id: None,
+                confidence: 1.0,
+            },
+            None,
+        )
+        .unwrap();
 
         link(&conn, &id1, &id2, Some("relates_to"), 0.9).unwrap();
         let links = get_links(&conn, &id1).unwrap();

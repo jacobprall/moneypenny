@@ -14,28 +14,52 @@ pub fn dispatch(tool_name: &str, arguments: &str) -> anyhow::Result<ToolResult> 
 
 fn file_read(arguments: &str) -> anyhow::Result<ToolResult> {
     let args: serde_json::Value = serde_json::from_str(arguments)?;
-    let path = args["path"].as_str().ok_or_else(|| anyhow::anyhow!("missing 'path'"))?;
+    let path = args["path"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'path'"))?;
 
     match std::fs::read_to_string(path) {
-        Ok(content) => Ok(ToolResult { output: content, success: true, duration_ms: 0 }),
-        Err(e) => Ok(ToolResult { output: format!("Error: {e}"), success: false, duration_ms: 0 }),
+        Ok(content) => Ok(ToolResult {
+            output: content,
+            success: true,
+            duration_ms: 0,
+        }),
+        Err(e) => Ok(ToolResult {
+            output: format!("Error: {e}"),
+            success: false,
+            duration_ms: 0,
+        }),
     }
 }
 
 fn file_write(arguments: &str) -> anyhow::Result<ToolResult> {
     let args: serde_json::Value = serde_json::from_str(arguments)?;
-    let path = args["path"].as_str().ok_or_else(|| anyhow::anyhow!("missing 'path'"))?;
-    let content = args["content"].as_str().ok_or_else(|| anyhow::anyhow!("missing 'content'"))?;
+    let path = args["path"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'path'"))?;
+    let content = args["content"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'content'"))?;
 
     match std::fs::write(path, content) {
-        Ok(()) => Ok(ToolResult { output: format!("Wrote {} bytes to {path}", content.len()), success: true, duration_ms: 0 }),
-        Err(e) => Ok(ToolResult { output: format!("Error: {e}"), success: false, duration_ms: 0 }),
+        Ok(()) => Ok(ToolResult {
+            output: format!("Wrote {} bytes to {path}", content.len()),
+            success: true,
+            duration_ms: 0,
+        }),
+        Err(e) => Ok(ToolResult {
+            output: format!("Error: {e}"),
+            success: false,
+            duration_ms: 0,
+        }),
     }
 }
 
 fn shell_exec(arguments: &str) -> anyhow::Result<ToolResult> {
     let args: serde_json::Value = serde_json::from_str(arguments)?;
-    let command = args["command"].as_str().ok_or_else(|| anyhow::anyhow!("missing 'command'"))?;
+    let command = args["command"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'command'"))?;
     let _timeout_ms = args["timeout_ms"].as_u64().unwrap_or(30_000);
 
     let output = std::process::Command::new("sh")
@@ -58,7 +82,11 @@ fn shell_exec(arguments: &str) -> anyhow::Result<ToolResult> {
                 duration_ms: 0,
             })
         }
-        Err(e) => Ok(ToolResult { output: format!("Error: {e}"), success: false, duration_ms: 0 }),
+        Err(e) => Ok(ToolResult {
+            output: format!("Error: {e}"),
+            success: false,
+            duration_ms: 0,
+        }),
     }
 }
 
@@ -72,7 +100,8 @@ fn http_request(_arguments: &str) -> anyhow::Result<ToolResult> {
 
 fn sql_query(_arguments: &str) -> anyhow::Result<ToolResult> {
     Ok(ToolResult {
-        output: "SQL tool requires database connection; use execute() with connection context".into(),
+        output: "SQL tool requires database connection; use execute() with connection context"
+            .into(),
         success: false,
         duration_ms: 0,
     })
@@ -113,7 +142,10 @@ mod tests {
     #[test]
     fn dispatch_routes_to_file_write() {
         let path = std::env::temp_dir().join("mp_test_write.txt");
-        let args = format!(r#"{{"path": "{}", "content": "test data"}}"#, path.to_string_lossy());
+        let args = format!(
+            r#"{{"path": "{}", "content": "test data"}}"#,
+            path.to_string_lossy()
+        );
         let result = dispatch("file_write", &args).unwrap();
         assert!(result.success);
         assert!(result.output.contains("Wrote 9 bytes"));

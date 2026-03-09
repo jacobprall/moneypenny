@@ -60,7 +60,12 @@ pub struct PolicyAuditContext<'a> {
 /// - `DenyByDefault` — rejects the request (production/governed)
 /// - `AllowByDefault` — permits the request (development/exploration)
 pub fn evaluate(conn: &Connection, req: &PolicyRequest) -> anyhow::Result<PolicyDecision> {
-    evaluate_with_mode_and_audit(conn, req, PolicyMode::default(), &PolicyAuditContext::default())
+    evaluate_with_mode_and_audit(
+        conn,
+        req,
+        PolicyMode::default(),
+        &PolicyAuditContext::default(),
+    )
 }
 
 /// A fetched policy row with all columns.
@@ -79,7 +84,11 @@ struct PolicyRow {
 }
 
 /// Evaluate with an explicit policy mode.
-pub fn evaluate_with_mode(conn: &Connection, req: &PolicyRequest, mode: PolicyMode) -> anyhow::Result<PolicyDecision> {
+pub fn evaluate_with_mode(
+    conn: &Connection,
+    req: &PolicyRequest,
+    mode: PolicyMode,
+) -> anyhow::Result<PolicyDecision> {
     evaluate_with_mode_and_audit(conn, req, mode, &PolicyAuditContext::default())
 }
 
@@ -103,24 +112,26 @@ fn evaluate_with_mode_and_audit(
                 rule_type, rule_config
          FROM policies
          WHERE enabled = 1
-         ORDER BY priority DESC"
+         ORDER BY priority DESC",
     )?;
 
-    let policies = stmt.query_map([], |r| {
-        Ok(PolicyRow {
-            id: r.get(0)?,
-            effect: r.get(1)?,
-            actor_pattern: r.get(2)?,
-            action_pattern: r.get(3)?,
-            resource_pattern: r.get(4)?,
-            sql_pattern: r.get(5)?,
-            argument_pattern: r.get(6)?,
-            channel_pattern: r.get(7)?,
-            message: r.get(8)?,
-            rule_type: r.get(9)?,
-            rule_config: r.get(10)?,
-        })
-    })?.collect::<Result<Vec<_>, _>>()?;
+    let policies = stmt
+        .query_map([], |r| {
+            Ok(PolicyRow {
+                id: r.get(0)?,
+                effect: r.get(1)?,
+                actor_pattern: r.get(2)?,
+                action_pattern: r.get(3)?,
+                resource_pattern: r.get(4)?,
+                sql_pattern: r.get(5)?,
+                argument_pattern: r.get(6)?,
+                channel_pattern: r.get(7)?,
+                message: r.get(8)?,
+                rule_type: r.get(9)?,
+                rule_config: r.get(10)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
 
     for row in &policies {
         if !matches_pattern(row.actor_pattern.as_deref(), req.actor) {
@@ -232,14 +243,19 @@ fn eval_rate_limit(
     let window = cfg["window_seconds"].as_i64().unwrap_or(300);
     let since = chrono::Utc::now().timestamp() - window;
 
-    let resource_pattern = format!("%{}%", req.resource.split(':').last().unwrap_or(req.resource));
+    let resource_pattern = format!(
+        "%{}%",
+        req.resource.split(':').last().unwrap_or(req.resource)
+    );
 
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM tool_calls
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tool_calls
          WHERE tool_name LIKE ?1 AND created_at >= ?2",
-        params![resource_pattern, since],
-        |r| r.get(0),
-    ).unwrap_or(0);
+            params![resource_pattern, since],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
 
     Ok(count >= max)
 }
@@ -256,15 +272,17 @@ fn eval_retry_loop(
     let window = cfg["window_seconds"].as_i64().unwrap_or(60);
     let since = chrono::Utc::now().timestamp() - window;
 
-    let max_repeat: i64 = conn.query_row(
-        "SELECT COALESCE(MAX(cnt), 0) FROM (
+    let max_repeat: i64 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(cnt), 0) FROM (
             SELECT COUNT(*) as cnt FROM tool_calls
             WHERE created_at >= ?1
             GROUP BY tool_name, arguments
         )",
-        params![since],
-        |r| r.get(0),
-    ).unwrap_or(0);
+            params![since],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
 
     Ok(max_repeat >= threshold)
 }
@@ -272,19 +290,18 @@ fn eval_retry_loop(
 /// token_budget: triggers when estimated session tokens exceed the budget.
 /// Config: {"max_tokens_per_session": N}
 /// Approximates tokens as character_count / 4.
-fn eval_token_budget(
-    conn: &Connection,
-    config_json: &str,
-) -> anyhow::Result<bool> {
+fn eval_token_budget(conn: &Connection, config_json: &str) -> anyhow::Result<bool> {
     let cfg: serde_json::Value = serde_json::from_str(config_json)?;
     let max_tokens = cfg["max_tokens_per_session"].as_i64().unwrap_or(500_000);
 
-    let total_chars: i64 = conn.query_row(
-        "SELECT COALESCE(SUM(LENGTH(content)), 0) FROM messages
+    let total_chars: i64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(LENGTH(content)), 0) FROM messages
          WHERE session_id = (SELECT id FROM sessions ORDER BY started_at DESC LIMIT 1)",
-        [],
-        |r| r.get(0),
-    ).unwrap_or(0);
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
 
     let estimated_tokens = total_chars / 4;
     Ok(estimated_tokens >= max_tokens)
@@ -293,9 +310,7 @@ fn eval_token_budget(
 /// time_window: triggers when the current time is within the specified hours.
 /// Config: {"start_hour": H, "end_hour": H, "days": [1,2,3,4,5]} (1=Mon, 7=Sun)
 /// If no config, always triggers (rule is always active).
-fn eval_time_window(
-    config_json: &str,
-) -> anyhow::Result<bool> {
+fn eval_time_window(config_json: &str) -> anyhow::Result<bool> {
     let cfg: serde_json::Value = serde_json::from_str(config_json)?;
     let now = chrono::Utc::now();
     let hour = now.format("%H").to_string().parse::<u32>().unwrap_or(0);
@@ -309,7 +324,10 @@ fn eval_time_window(
     }
 
     if let Some(days) = cfg["days"].as_array() {
-        let day_list: Vec<u32> = days.iter().filter_map(|d| d.as_u64().map(|v| v as u32)).collect();
+        let day_list: Vec<u32> = days
+            .iter()
+            .filter_map(|d| d.as_u64().map(|v| v as u32))
+            .collect();
         if !day_list.is_empty() && !day_list.contains(&weekday) {
             return Ok(false);
         }
@@ -322,18 +340,18 @@ fn eval_time_window(
 /// For example, fact scope filtering based on agent identity.
 pub fn generate_sql_filter(conn: &Connection, agent_id: &str) -> anyhow::Result<String> {
     // Base filter: agent sees its own private facts + all shared facts
-    let mut clauses: Vec<String> = vec![
-        format!("(agent_id = '{agent_id}')"),
-    ];
+    let mut clauses: Vec<String> = vec![format!("(agent_id = '{agent_id}')")];
 
     // Check for confidence threshold policies
-    let threshold: Option<f64> = conn.query_row(
-        "SELECT CAST(message AS REAL) FROM policies
+    let threshold: Option<f64> = conn
+        .query_row(
+            "SELECT CAST(message AS REAL) FROM policies
          WHERE enabled = 1 AND effect = 'deny' AND resource_pattern = 'fact:low_confidence'
          ORDER BY priority DESC LIMIT 1",
-        [],
-        |r| r.get(0),
-    ).ok();
+            [],
+            |r| r.get(0),
+        )
+        .ok();
 
     if let Some(min_confidence) = threshold {
         clauses.push(format!("confidence >= {min_confidence}"));
@@ -489,14 +507,19 @@ mod tests {
     #[test]
     fn deny_by_default_when_no_policies() {
         let conn = setup();
-        let decision = evaluate_with_mode(&conn, &PolicyRequest {
-            actor: "agent:main",
-            action: "call",
-            resource: "tool:shell_exec",
-            sql_content: None,
-            channel: None,
-            arguments: None,
-        }, PolicyMode::DenyByDefault).unwrap();
+        let decision = evaluate_with_mode(
+            &conn,
+            &PolicyRequest {
+                actor: "agent:main",
+                action: "call",
+                resource: "tool:shell_exec",
+                sql_content: None,
+                channel: None,
+                arguments: None,
+            },
+            PolicyMode::DenyByDefault,
+        )
+        .unwrap();
 
         assert_eq!(decision.effect, Effect::Deny);
         assert!(decision.policy_id.is_none());
@@ -505,14 +528,19 @@ mod tests {
     #[test]
     fn allow_by_default_when_no_policies() {
         let conn = setup();
-        let decision = evaluate_with_mode(&conn, &PolicyRequest {
-            actor: "agent:main",
-            action: "call",
-            resource: "tool:shell_exec",
-            sql_content: None,
-            channel: None,
-            arguments: None,
-        }, PolicyMode::AllowByDefault).unwrap();
+        let decision = evaluate_with_mode(
+            &conn,
+            &PolicyRequest {
+                actor: "agent:main",
+                action: "call",
+                resource: "tool:shell_exec",
+                sql_content: None,
+                channel: None,
+                arguments: None,
+            },
+            PolicyMode::AllowByDefault,
+        )
+        .unwrap();
 
         assert_eq!(decision.effect, Effect::Allow);
         assert!(decision.policy_id.is_none());
@@ -521,14 +549,18 @@ mod tests {
     #[test]
     fn default_mode_is_allow() {
         let conn = setup();
-        let decision = evaluate(&conn, &PolicyRequest {
-            actor: "agent:main",
-            action: "call",
-            resource: "tool:shell_exec",
-            sql_content: None,
-            channel: None,
-            arguments: None,
-        }).unwrap();
+        let decision = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "agent:main",
+                action: "call",
+                resource: "tool:shell_exec",
+                sql_content: None,
+                channel: None,
+                arguments: None,
+            },
+        )
+        .unwrap();
 
         assert_eq!(decision.effect, Effect::Allow);
     }
@@ -546,14 +578,18 @@ mod tests {
             [],
         ).unwrap();
 
-        let decision = evaluate(&conn, &PolicyRequest {
-            actor: "agent:main",
-            action: "call",
-            resource: "tool:http_get",
-            sql_content: None,
-            channel: None,
-            arguments: None,
-        }).unwrap();
+        let decision = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "agent:main",
+                action: "call",
+                resource: "tool:http_get",
+                sql_content: None,
+                channel: None,
+                arguments: None,
+            },
+        )
+        .unwrap();
 
         assert_eq!(decision.effect, Effect::Allow);
         assert_eq!(decision.policy_id.as_deref(), Some("p1"));
@@ -577,14 +613,18 @@ mod tests {
             [],
         ).unwrap();
 
-        let decision = evaluate(&conn, &PolicyRequest {
-            actor: "agent:untrusted-bob",
-            action: "call",
-            resource: "tool:shell_exec",
-            sql_content: None,
-            channel: None,
-            arguments: None,
-        }).unwrap();
+        let decision = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "agent:untrusted-bob",
+                action: "call",
+                resource: "tool:shell_exec",
+                sql_content: None,
+                channel: None,
+                arguments: None,
+            },
+        )
+        .unwrap();
 
         assert_eq!(decision.effect, Effect::Deny);
         assert_eq!(decision.reason.as_deref(), Some("Shell blocked"));
@@ -604,14 +644,18 @@ mod tests {
             [],
         ).unwrap();
 
-        let decision = evaluate(&conn, &PolicyRequest {
-            actor: "agent:trusted-alice",
-            action: "call",
-            resource: "tool:shell_exec",
-            sql_content: None,
-            channel: None,
-            arguments: None,
-        }).unwrap();
+        let decision = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "agent:trusted-alice",
+                action: "call",
+                resource: "tool:shell_exec",
+                sql_content: None,
+                channel: None,
+                arguments: None,
+            },
+        )
+        .unwrap();
 
         assert_eq!(decision.effect, Effect::Allow);
     }
@@ -629,14 +673,18 @@ mod tests {
             [],
         ).unwrap();
 
-        let decision = evaluate(&conn, &PolicyRequest {
-            actor: "agent:main",
-            action: "execute",
-            resource: "sql:ddl",
-            sql_content: Some("DROP TABLE users"),
-            channel: None,
-            arguments: None,
-        }).unwrap();
+        let decision = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "agent:main",
+                action: "execute",
+                resource: "sql:ddl",
+                sql_content: Some("DROP TABLE users"),
+                channel: None,
+                arguments: None,
+            },
+        )
+        .unwrap();
 
         assert_eq!(decision.effect, Effect::Deny);
         assert_eq!(decision.reason.as_deref(), Some("Destructive SQL blocked"));
@@ -656,14 +704,18 @@ mod tests {
             [],
         ).unwrap();
 
-        let decision = evaluate(&conn, &PolicyRequest {
-            actor: "agent:main",
-            action: "execute",
-            resource: "sql:query",
-            sql_content: Some("SELECT * FROM orders WHERE id = 1"),
-            channel: None,
-            arguments: None,
-        }).unwrap();
+        let decision = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "agent:main",
+                action: "execute",
+                resource: "sql:query",
+                sql_content: Some("SELECT * FROM orders WHERE id = 1"),
+                channel: None,
+                arguments: None,
+            },
+        )
+        .unwrap();
 
         assert_eq!(decision.effect, Effect::Allow);
     }
@@ -681,14 +733,18 @@ mod tests {
             [],
         ).unwrap();
 
-        let decision = evaluate(&conn, &PolicyRequest {
-            actor: "agent:main",
-            action: "call",
-            resource: "tool:search",
-            sql_content: None,
-            channel: Some("slack:general"),
-            arguments: None,
-        }).unwrap();
+        let decision = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "agent:main",
+                action: "call",
+                resource: "tool:search",
+                sql_content: None,
+                channel: Some("slack:general"),
+                arguments: None,
+            },
+        )
+        .unwrap();
 
         assert_eq!(decision.effect, Effect::Audit);
     }
@@ -711,14 +767,18 @@ mod tests {
             [],
         ).unwrap();
 
-        let decision = evaluate(&conn, &PolicyRequest {
-            actor: "agent:main",
-            action: "call",
-            resource: "tool:shell_exec",
-            sql_content: None,
-            channel: None,
-            arguments: None,
-        }).unwrap();
+        let decision = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "agent:main",
+                action: "call",
+                resource: "tool:shell_exec",
+                sql_content: None,
+                channel: None,
+                arguments: None,
+            },
+        )
+        .unwrap();
 
         assert_eq!(decision.effect, Effect::Deny);
         assert_eq!(decision.policy_id.as_deref(), Some("high"));
@@ -732,27 +792,30 @@ mod tests {
     fn decisions_are_logged() {
         let conn = setup();
 
-        evaluate_with_mode(&conn, &PolicyRequest {
-            actor: "agent:main",
-            action: "call",
-            resource: "tool:shell_exec",
-            sql_content: None,
-            channel: None,
-            arguments: None,
-        }, PolicyMode::DenyByDefault).unwrap();
+        evaluate_with_mode(
+            &conn,
+            &PolicyRequest {
+                actor: "agent:main",
+                action: "call",
+                resource: "tool:shell_exec",
+                sql_content: None,
+                channel: None,
+                arguments: None,
+            },
+            PolicyMode::DenyByDefault,
+        )
+        .unwrap();
 
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM policy_audit",
-            [],
-            |r| r.get(0),
-        ).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM policy_audit", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(count, 1);
 
-        let (actor, effect): (String, String) = conn.query_row(
-            "SELECT actor, effect FROM policy_audit LIMIT 1",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        ).unwrap();
+        let (actor, effect): (String, String) = conn
+            .query_row("SELECT actor, effect FROM policy_audit LIMIT 1", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
         assert_eq!(actor, "agent:main");
         assert_eq!(effect, "denied");
     }
@@ -767,19 +830,23 @@ mod tests {
         ).unwrap();
 
         for _ in 0..5 {
-            evaluate(&conn, &PolicyRequest {
-                actor: "agent:main",
-                action: "call",
-                resource: "tool:test",
-                sql_content: None,
-                channel: None,
-                arguments: None,
-            }).unwrap();
+            evaluate(
+                &conn,
+                &PolicyRequest {
+                    actor: "agent:main",
+                    action: "call",
+                    resource: "tool:test",
+                    sql_content: None,
+                    channel: None,
+                    arguments: None,
+                },
+            )
+            .unwrap();
         }
 
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM policy_audit", [], |r| r.get(0),
-        ).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM policy_audit", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(count, 5);
     }
 
@@ -796,16 +863,25 @@ mod tests {
             [],
         ).unwrap();
 
-        let decision = evaluate_with_mode(&conn, &PolicyRequest {
-            actor: "agent:main",
-            action: "call",
-            resource: "tool:test",
-            sql_content: None,
-            channel: None,
-            arguments: None,
-        }, PolicyMode::DenyByDefault).unwrap();
+        let decision = evaluate_with_mode(
+            &conn,
+            &PolicyRequest {
+                actor: "agent:main",
+                action: "call",
+                resource: "tool:test",
+                sql_content: None,
+                channel: None,
+                arguments: None,
+            },
+            PolicyMode::DenyByDefault,
+        )
+        .unwrap();
 
-        assert_eq!(decision.effect, Effect::Deny, "disabled rule should not match, fall through to deny-by-default");
+        assert_eq!(
+            decision.effect,
+            Effect::Deny,
+            "disabled rule should not match, fall through to deny-by-default"
+        );
     }
 
     // ========================================================================
@@ -842,9 +918,17 @@ mod tests {
         let mid = crate::store::log::append_message(conn, &sid, "assistant", "call").unwrap();
         for _ in 0..count {
             crate::store::log::record_tool_call(
-                conn, &mid, &sid, tool, Some(args), Some("ok"),
-                Some("success"), Some("allowed"), Some(10),
-            ).unwrap();
+                conn,
+                &mid,
+                &sid,
+                tool,
+                Some(args),
+                Some("ok"),
+                Some("success"),
+                Some("allowed"),
+                Some(10),
+            )
+            .unwrap();
         }
     }
 
@@ -860,12 +944,21 @@ mod tests {
                      'rate_limit', '{\"max\": 10, \"window_seconds\": 300}',
                      'Rate limited', 1)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
-        let decision = evaluate(&conn, &PolicyRequest {
-            actor: "a", action: "call", resource: "tool:shell_exec",
-            sql_content: None, channel: None, arguments: None,
-        }).unwrap();
+        let decision = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "a",
+                action: "call",
+                resource: "tool:shell_exec",
+                sql_content: None,
+                channel: None,
+                arguments: None,
+            },
+        )
+        .unwrap();
 
         assert_eq!(decision.effect, Effect::Deny);
         assert_eq!(decision.reason.as_deref(), Some("Rate limited"));
@@ -883,15 +976,27 @@ mod tests {
                      'rate_limit', '{\"max\": 10, \"window_seconds\": 300}',
                      'Rate limited', 1)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
-        let decision = evaluate(&conn, &PolicyRequest {
-            actor: "a", action: "call", resource: "tool:shell_exec",
-            sql_content: None, channel: None, arguments: None,
-        }).unwrap();
+        let decision = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "a",
+                action: "call",
+                resource: "tool:shell_exec",
+                sql_content: None,
+                channel: None,
+                arguments: None,
+            },
+        )
+        .unwrap();
 
-        assert_ne!(decision.effect, Effect::Deny,
-            "should not deny when under rate limit");
+        assert_ne!(
+            decision.effect,
+            Effect::Deny,
+            "should not deny when under rate limit"
+        );
     }
 
     #[test]
@@ -906,12 +1011,21 @@ mod tests {
                      'retry_loop', '{\"same_tool_same_args\": 3, \"window_seconds\": 60}',
                      'Retry loop', 1)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
-        let decision = evaluate(&conn, &PolicyRequest {
-            actor: "a", action: "call", resource: "tool:file_read",
-            sql_content: None, channel: None, arguments: None,
-        }).unwrap();
+        let decision = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "a",
+                action: "call",
+                resource: "tool:file_read",
+                sql_content: None,
+                channel: None,
+                arguments: None,
+            },
+        )
+        .unwrap();
 
         assert_eq!(decision.effect, Effect::Deny);
         assert_eq!(decision.reason.as_deref(), Some("Retry loop"));
@@ -924,10 +1038,17 @@ mod tests {
         let mid = crate::store::log::append_message(&conn, &sid, "assistant", "call").unwrap();
         for i in 0..5 {
             crate::store::log::record_tool_call(
-                &conn, &mid, &sid, "file_read",
-                Some(&format!(r#"{{"path":"/tmp/{i}"}}"#)), Some("ok"),
-                Some("success"), Some("allowed"), Some(10),
-            ).unwrap();
+                &conn,
+                &mid,
+                &sid,
+                "file_read",
+                Some(&format!(r#"{{"path":"/tmp/{i}"}}"#)),
+                Some("ok"),
+                Some("success"),
+                Some("allowed"),
+                Some(10),
+            )
+            .unwrap();
         }
 
         conn.execute(
@@ -937,15 +1058,27 @@ mod tests {
                      'retry_loop', '{\"same_tool_same_args\": 3, \"window_seconds\": 60}',
                      'Retry loop', 1)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
-        let decision = evaluate(&conn, &PolicyRequest {
-            actor: "a", action: "call", resource: "tool:file_read",
-            sql_content: None, channel: None, arguments: None,
-        }).unwrap();
+        let decision = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "a",
+                action: "call",
+                resource: "tool:file_read",
+                sql_content: None,
+                channel: None,
+                arguments: None,
+            },
+        )
+        .unwrap();
 
-        assert_ne!(decision.effect, Effect::Deny,
-            "varied args should not trigger retry loop");
+        assert_ne!(
+            decision.effect,
+            Effect::Deny,
+            "varied args should not trigger retry loop"
+        );
     }
 
     #[test]
@@ -962,12 +1095,21 @@ mod tests {
                      'token_budget', '{\"max_tokens_per_session\": 10000}',
                      'Budget exceeded', 1)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
-        let decision = evaluate(&conn, &PolicyRequest {
-            actor: "a", action: "respond", resource: "conversation",
-            sql_content: None, channel: None, arguments: None,
-        }).unwrap();
+        let decision = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "a",
+                action: "respond",
+                resource: "conversation",
+                sql_content: None,
+                channel: None,
+                arguments: None,
+            },
+        )
+        .unwrap();
 
         assert_eq!(decision.effect, Effect::Deny);
         assert_eq!(decision.reason.as_deref(), Some("Budget exceeded"));
@@ -986,21 +1128,37 @@ mod tests {
                      'token_budget', '{\"max_tokens_per_session\": 500000}',
                      'Budget exceeded', 1)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
-        let decision = evaluate(&conn, &PolicyRequest {
-            actor: "a", action: "respond", resource: "conversation",
-            sql_content: None, channel: None, arguments: None,
-        }).unwrap();
+        let decision = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "a",
+                action: "respond",
+                resource: "conversation",
+                sql_content: None,
+                channel: None,
+                arguments: None,
+            },
+        )
+        .unwrap();
 
-        assert_ne!(decision.effect, Effect::Deny,
-            "should not deny under token budget");
+        assert_ne!(
+            decision.effect,
+            Effect::Deny,
+            "should not deny under token budget"
+        );
     }
 
     #[test]
     fn time_window_triggers_during_matching_hours() {
         let conn = setup();
-        let now_hour = chrono::Utc::now().format("%H").to_string().parse::<u32>().unwrap();
+        let now_hour = chrono::Utc::now()
+            .format("%H")
+            .to_string()
+            .parse::<u32>()
+            .unwrap();
 
         conn.execute(
             &format!(
@@ -1009,23 +1167,41 @@ mod tests {
                  VALUES ('tw', 'time window', 80, 'deny',
                          'time_window', '{{\"start_hour\": {}, \"end_hour\": {}}}',
                          'Not now', 1)",
-                now_hour, now_hour + 1
+                now_hour,
+                now_hour + 1
             ),
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
-        let decision = evaluate(&conn, &PolicyRequest {
-            actor: "a", action: "call", resource: "tool:test",
-            sql_content: None, channel: None, arguments: None,
-        }).unwrap();
+        let decision = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "a",
+                action: "call",
+                resource: "tool:test",
+                sql_content: None,
+                channel: None,
+                arguments: None,
+            },
+        )
+        .unwrap();
 
-        assert_eq!(decision.effect, Effect::Deny, "should deny during matching window");
+        assert_eq!(
+            decision.effect,
+            Effect::Deny,
+            "should deny during matching window"
+        );
     }
 
     #[test]
     fn time_window_does_not_trigger_outside_hours() {
         let conn = setup();
-        let now_hour = chrono::Utc::now().format("%H").to_string().parse::<u32>().unwrap();
+        let now_hour = chrono::Utc::now()
+            .format("%H")
+            .to_string()
+            .parse::<u32>()
+            .unwrap();
         let outside = (now_hour + 12) % 24;
 
         conn.execute(
@@ -1035,18 +1211,31 @@ mod tests {
                  VALUES ('tw', 'time window', 80, 'deny',
                          'time_window', '{{\"start_hour\": {}, \"end_hour\": {}}}',
                          'Not now', 1)",
-                outside, (outside + 1) % 24
+                outside,
+                (outside + 1) % 24
             ),
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
-        let decision = evaluate(&conn, &PolicyRequest {
-            actor: "a", action: "call", resource: "tool:test",
-            sql_content: None, channel: None, arguments: None,
-        }).unwrap();
+        let decision = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "a",
+                action: "call",
+                resource: "tool:test",
+                sql_content: None,
+                channel: None,
+                arguments: None,
+            },
+        )
+        .unwrap();
 
-        assert_ne!(decision.effect, Effect::Deny,
-            "should not deny outside the time window");
+        assert_ne!(
+            decision.effect,
+            Effect::Deny,
+            "should not deny outside the time window"
+        );
     }
 
     #[test]
@@ -1061,20 +1250,33 @@ mod tests {
                      'rate_limit', '{\"max\": 100, \"window_seconds\": 300}',
                      'Rate limited', 1)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, created_at)
              VALUES ('allow', 'allow all', 10, 'allow', '*', '*', '*', 1)",
             [],
         ).unwrap();
 
-        let decision = evaluate_with_mode(&conn, &PolicyRequest {
-            actor: "a", action: "call", resource: "tool:test",
-            sql_content: None, channel: None, arguments: None,
-        }, PolicyMode::DenyByDefault).unwrap();
+        let decision = evaluate_with_mode(
+            &conn,
+            &PolicyRequest {
+                actor: "a",
+                action: "call",
+                resource: "tool:test",
+                sql_content: None,
+                channel: None,
+                arguments: None,
+            },
+            PolicyMode::DenyByDefault,
+        )
+        .unwrap();
 
-        assert_eq!(decision.effect, Effect::Allow,
-            "behavioral rule should be skipped, falling through to allow-all");
+        assert_eq!(
+            decision.effect,
+            Effect::Allow,
+            "behavioral rule should be skipped, falling through to allow-all"
+        );
         assert_eq!(decision.policy_id.as_deref(), Some("allow"));
     }
 
@@ -1091,14 +1293,18 @@ mod tests {
             [],
         ).unwrap();
 
-        let decision = evaluate(&conn, &PolicyRequest {
-            actor: "agent:main",
-            action: "ingest",
-            resource: "knowledge:url",
-            sql_content: None,
-            channel: None,
-            arguments: Some("https://docs.example.com/guide/intro.html"),
-        }).unwrap();
+        let decision = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "agent:main",
+                action: "ingest",
+                resource: "knowledge:url",
+                sql_content: None,
+                channel: None,
+                arguments: Some("https://docs.example.com/guide/intro.html"),
+            },
+        )
+        .unwrap();
 
         assert_eq!(decision.effect, Effect::Allow);
         assert_eq!(decision.policy_id.as_deref(), Some("url-allow"));
@@ -1118,14 +1324,18 @@ mod tests {
             [],
         ).unwrap();
 
-        let decision = evaluate(&conn, &PolicyRequest {
-            actor: "agent:main",
-            action: "ingest",
-            resource: "knowledge:url",
-            sql_content: None,
-            channel: None,
-            arguments: Some("https://evil.example.org/payload"),
-        }).unwrap();
+        let decision = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "agent:main",
+                action: "ingest",
+                resource: "knowledge:url",
+                sql_content: None,
+                channel: None,
+                arguments: Some("https://evil.example.org/payload"),
+            },
+        )
+        .unwrap();
 
         assert_eq!(decision.effect, Effect::Deny);
         assert_eq!(decision.policy_id.as_deref(), Some("url-deny"));
@@ -1141,17 +1351,24 @@ mod tests {
             [],
         ).unwrap();
 
-        let decision = evaluate(&conn, &PolicyRequest {
-            actor: "agent:main",
-            action: "ingest",
-            resource: "knowledge",
-            sql_content: None,
-            channel: None,
-            arguments: None,
-        }).unwrap();
+        let decision = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "agent:main",
+                action: "ingest",
+                resource: "knowledge",
+                sql_content: None,
+                channel: None,
+                arguments: None,
+            },
+        )
+        .unwrap();
 
-        assert_ne!(decision.effect, Effect::Deny,
-            "policy with argument_pattern should be skipped when request has no arguments");
+        assert_ne!(
+            decision.effect,
+            Effect::Deny,
+            "policy with argument_pattern should be skipped when request has no arguments"
+        );
     }
 
     #[test]
@@ -1163,17 +1380,24 @@ mod tests {
             [],
         ).unwrap();
 
-        let decision = evaluate(&conn, &PolicyRequest {
-            actor: "agent:main",
-            action: "ingest",
-            resource: "knowledge",
-            sql_content: None,
-            channel: None,
-            arguments: None,
-        }).unwrap();
+        let decision = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "agent:main",
+                action: "ingest",
+                resource: "knowledge",
+                sql_content: None,
+                channel: None,
+                arguments: None,
+            },
+        )
+        .unwrap();
 
-        assert_eq!(decision.effect, Effect::Allow,
-            "file ingest (resource=knowledge) should not be affected by knowledge:url deny rule");
+        assert_eq!(
+            decision.effect,
+            Effect::Allow,
+            "file ingest (resource=knowledge) should not be affected by knowledge:url deny rule"
+        );
     }
 
     #[test]
@@ -1195,25 +1419,46 @@ mod tests {
             [],
         ).unwrap();
 
-        let d1 = evaluate(&conn, &PolicyRequest {
-            actor: "a", action: "ingest", resource: "knowledge:url",
-            sql_content: None, channel: None,
-            arguments: Some("https://docs.rust-lang.org/book/"),
-        }).unwrap();
+        let d1 = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "a",
+                action: "ingest",
+                resource: "knowledge:url",
+                sql_content: None,
+                channel: None,
+                arguments: Some("https://docs.rust-lang.org/book/"),
+            },
+        )
+        .unwrap();
         assert_eq!(d1.effect, Effect::Allow);
 
-        let d2 = evaluate(&conn, &PolicyRequest {
-            actor: "a", action: "ingest", resource: "knowledge:url",
-            sql_content: None, channel: None,
-            arguments: Some("https://wiki.internal.co/page"),
-        }).unwrap();
+        let d2 = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "a",
+                action: "ingest",
+                resource: "knowledge:url",
+                sql_content: None,
+                channel: None,
+                arguments: Some("https://wiki.internal.co/page"),
+            },
+        )
+        .unwrap();
         assert_eq!(d2.effect, Effect::Allow);
 
-        let d3 = evaluate(&conn, &PolicyRequest {
-            actor: "a", action: "ingest", resource: "knowledge:url",
-            sql_content: None, channel: None,
-            arguments: Some("https://malware.bad/exploit"),
-        }).unwrap();
+        let d3 = evaluate(
+            &conn,
+            &PolicyRequest {
+                actor: "a",
+                action: "ingest",
+                resource: "knowledge:url",
+                sql_content: None,
+                channel: None,
+                arguments: Some("https://malware.bad/exploit"),
+            },
+        )
+        .unwrap();
         assert_eq!(d3.effect, Effect::Deny);
     }
 }

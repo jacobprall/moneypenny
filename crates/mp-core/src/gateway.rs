@@ -31,42 +31,48 @@ pub enum AgentStatus {
 pub fn list_agents(meta_conn: &Connection) -> anyhow::Result<Vec<AgentEntry>> {
     let mut stmt = meta_conn.prepare(
         "SELECT id, name, persona, trust_level, llm_provider, llm_model, db_path, sync_enabled
-         FROM agents ORDER BY name"
+         FROM agents ORDER BY name",
     )?;
-    let agents = stmt.query_map([], |r| {
-        Ok(AgentEntry {
-            id: r.get(0)?,
-            name: r.get(1)?,
-            persona: r.get(2)?,
-            trust_level: r.get(3)?,
-            llm_provider: r.get(4)?,
-            llm_model: r.get(5)?,
-            db_path: r.get(6)?,
-            sync_enabled: r.get::<_, i64>(7).unwrap_or(1) != 0,
-            status: AgentStatus::Stopped,
-        })
-    })?.collect::<Result<Vec<_>, _>>()?;
+    let agents = stmt
+        .query_map([], |r| {
+            Ok(AgentEntry {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                persona: r.get(2)?,
+                trust_level: r.get(3)?,
+                llm_provider: r.get(4)?,
+                llm_model: r.get(5)?,
+                db_path: r.get(6)?,
+                sync_enabled: r.get::<_, i64>(7).unwrap_or(1) != 0,
+                status: AgentStatus::Stopped,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(agents)
 }
 
 /// Get a single agent by name.
 pub fn get_agent(meta_conn: &Connection, name: &str) -> anyhow::Result<Option<AgentEntry>> {
-    let entry = meta_conn.query_row(
-        "SELECT id, name, persona, trust_level, llm_provider, llm_model, db_path, sync_enabled
+    let entry = meta_conn
+        .query_row(
+            "SELECT id, name, persona, trust_level, llm_provider, llm_model, db_path, sync_enabled
          FROM agents WHERE name = ?1",
-        [name],
-        |r| Ok(AgentEntry {
-            id: r.get(0)?,
-            name: r.get(1)?,
-            persona: r.get(2)?,
-            trust_level: r.get(3)?,
-            llm_provider: r.get(4)?,
-            llm_model: r.get(5)?,
-            db_path: r.get(6)?,
-            sync_enabled: r.get::<_, i64>(7).unwrap_or(1) != 0,
-            status: AgentStatus::Stopped,
-        }),
-    ).ok();
+            [name],
+            |r| {
+                Ok(AgentEntry {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    persona: r.get(2)?,
+                    trust_level: r.get(3)?,
+                    llm_provider: r.get(4)?,
+                    llm_model: r.get(5)?,
+                    db_path: r.get(6)?,
+                    sync_enabled: r.get::<_, i64>(7).unwrap_or(1) != 0,
+                    status: AgentStatus::Stopped,
+                })
+            },
+        )
+        .ok();
     Ok(entry)
 }
 
@@ -198,7 +204,6 @@ pub fn can_access_fact(
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,7 +221,8 @@ mod tests {
             "INSERT INTO agents (id, name, trust_level, llm_provider, db_path, created_at)
              VALUES (?1, ?2, 'standard', 'local', ':memory:', 1)",
             params![name, name],
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     // ========================================================================
@@ -266,7 +272,8 @@ mod tests {
 
         let response = route_message(&conn, &msg, &|agent, content| {
             Ok(format!("{} received: {}", agent.name, content))
-        }).unwrap();
+        })
+        .unwrap();
 
         assert_eq!(response, "alpha received: hello");
     }
@@ -305,7 +312,8 @@ mod tests {
         };
         let result = route_message(&conn, &msg, &|agent, content| {
             Ok(format!("{}: done with {}", agent.name, content))
-        }).unwrap();
+        })
+        .unwrap();
         assert!(result.contains("beta: done with"));
     }
 
@@ -315,7 +323,11 @@ mod tests {
         insert_agent(&conn, "alpha");
 
         let result = delegate(
-            &conn, "alpha", "alpha", "loop forever", MAX_DELEGATION_DEPTH,
+            &conn,
+            "alpha",
+            "alpha",
+            "loop forever",
+            MAX_DELEGATION_DEPTH,
             &|_, _| Ok("ok".into()),
         );
         assert!(result.is_err());
@@ -349,7 +361,12 @@ mod tests {
     #[test]
     fn protected_fact_requires_trust() {
         assert!(can_access_fact("standard", &FactScope::Protected, "a", "a"));
-        assert!(!can_access_fact("standard", &FactScope::Protected, "a", "b"));
+        assert!(!can_access_fact(
+            "standard",
+            &FactScope::Protected,
+            "a",
+            "b"
+        ));
         assert!(can_access_fact("elevated", &FactScope::Protected, "a", "b"));
         assert!(can_access_fact("admin", &FactScope::Protected, "a", "b"));
     }

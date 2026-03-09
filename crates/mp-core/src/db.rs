@@ -26,4 +26,3 @@ fn configure(conn: &Connection) -> anyhow::Result<()> {
     )?;
     Ok(())
 }
-

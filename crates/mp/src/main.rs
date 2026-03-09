@@ -1,5 +1,5 @@
-mod cli;
 mod adapters;
+mod cli;
 
 use anyhow::Result;
 use clap::Parser;
@@ -38,9 +38,11 @@ async fn main() -> Result<()> {
         Command::Stop => cmd_stop(&config).await,
         Command::Agent(cmd) => cmd_agent(&config, cmd).await,
         Command::Chat { agent, session_id } => cmd_chat(&config, agent, session_id).await,
-        Command::Send { agent, message, session_id } => {
-            cmd_send(&config, &agent, &message, session_id).await
-        },
+        Command::Send {
+            agent,
+            message,
+            session_id,
+        } => cmd_send(&config, &agent, &message, session_id).await,
         Command::Facts(cmd) => cmd_facts(&config, cmd).await,
         Command::Ingest {
             path,
@@ -82,7 +84,7 @@ async fn main() -> Result<()> {
                 claude_code,
             )
             .await
-        },
+        }
         Command::Session(cmd) => cmd_session(&config, cmd).await,
         Command::Knowledge(cmd) => cmd_knowledge(&config, cmd).await,
         Command::Skill(cmd) => cmd_skill(&config, cmd).await,
@@ -99,20 +101,24 @@ async fn main() -> Result<()> {
 }
 
 fn init_logging(level: &str) {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(level));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
-    fmt()
-        .with_env_filter(filter)
-        .with_target(true)
-        .init();
+    fmt().with_env_filter(filter).with_target(true).init();
 }
 
-fn resolve_agent<'a>(config: &'a Config, name: Option<&str>) -> Result<&'a mp_core::config::AgentConfig> {
+fn resolve_agent<'a>(
+    config: &'a Config,
+    name: Option<&str>,
+) -> Result<&'a mp_core::config::AgentConfig> {
     match name {
-        Some(n) => config.agents.iter().find(|a| a.name == n)
+        Some(n) => config
+            .agents
+            .iter()
+            .find(|a| a.name == n)
             .ok_or_else(|| anyhow::anyhow!("Agent '{n}' not found in config")),
-        None => config.agents.first()
+        None => config
+            .agents
+            .first()
             .ok_or_else(|| anyhow::anyhow!("No agents configured")),
     }
 }
@@ -133,7 +139,9 @@ fn open_agent_db(config: &Config, agent_name: &str) -> Result<rusqlite::Connecti
         // Runs synchronously at open time; unreachable servers are skipped with a warning.
         if !agent.mcp_servers.is_empty() {
             match mp_core::mcp::discover_and_register(&conn, &agent.mcp_servers) {
-                Ok(n) if n > 0 => tracing::info!(agent = agent_name, tools = n, "MCP tools registered"),
+                Ok(n) if n > 0 => {
+                    tracing::info!(agent = agent_name, tools = n, "MCP tools registered")
+                }
                 Ok(_) => {}
                 Err(e) => tracing::warn!(agent = agent_name, "MCP discovery error: {e}"),
             }
@@ -163,6 +171,14 @@ fn build_embedding_provider(
         agent.embedding.dimensions,
         agent.embedding.api_base.as_deref(),
         agent.embedding.api_key.as_deref(),
+    )
+}
+
+fn embedding_model_id(agent: &mp_core::config::AgentConfig) -> String {
+    mp_core::store::embedding::model_identity(
+        &agent.embedding.provider,
+        &agent.embedding.model,
+        agent.embedding.dimensions,
     )
 }
 
@@ -460,33 +476,31 @@ fn is_read_only_tool(name: &str) -> bool {
 
 /// Load user-defined JS tools from the skills table as LLM ToolDefs.
 fn load_js_tool_defs(conn: &rusqlite::Connection) -> Vec<(String, String, serde_json::Value)> {
-    let mut stmt = match conn.prepare(
-        "SELECT name, description FROM skills WHERE tool_id LIKE 'sqlite_js:%'"
-    ) {
+    let mut stmt = match conn
+        .prepare("SELECT name, description FROM skills WHERE tool_id LIKE 'sqlite_js:%'")
+    {
         Ok(s) => s,
         Err(_) => return vec![],
     };
-    stmt.query_map([], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-    })
-    .ok()
-    .map(|rows| {
-        rows.flatten()
-            .map(|(name, desc)| {
-                let schema = serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "args": {
-                            "type": "object",
-                            "description": "Arguments passed to the run(args) function"
+    stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .ok()
+        .map(|rows| {
+            rows.flatten()
+                .map(|(name, desc)| {
+                    let schema = serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "args": {
+                                "type": "object",
+                                "description": "Arguments passed to the run(args) function"
+                            }
                         }
-                    }
-                });
-                (name, desc, schema)
-            })
-            .collect()
-    })
-    .unwrap_or_default()
+                    });
+                    (name, desc, schema)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 async fn agent_turn(
@@ -504,7 +518,13 @@ async fn agent_turn(
 
     let budget = mp_core::context::TokenBudget::new(128_000);
     let segments = mp_core::context::assemble(
-        conn, agent_id, session_id, persona, user_message, &budget, None,
+        conn,
+        agent_id,
+        session_id,
+        persona,
+        user_message,
+        &budget,
+        None,
     )?;
 
     let mut messages: Vec<mp_llm::types::Message> = Vec::new();
@@ -609,11 +629,14 @@ async fn agent_turn(
 
         messages.push(mp_llm::types::Message::assistant_with_tool_calls(
             response.content.clone(),
-            planned_calls.iter().map(|tc| mp_llm::types::ToolCall {
-                id: tc.id.clone(),
-                name: tc.name.clone(),
-                arguments: tc.arguments.clone(),
-            }).collect(),
+            planned_calls
+                .iter()
+                .map(|tc| mp_llm::types::ToolCall {
+                    id: tc.id.clone(),
+                    name: tc.name.clone(),
+                    arguments: tc.arguments.clone(),
+                })
+                .collect(),
         ));
 
         for tc in planned_calls {
@@ -648,21 +671,22 @@ async fn agent_turn(
             }
 
             let msg_id = mp_core::store::log::append_message(
-                conn, session_id, "assistant",
+                conn,
+                session_id,
+                "assistant",
                 &format!("[tool: {}]", tc.name),
             )?;
             let mut effective_arguments = tc.arguments.clone();
             if tc.name == "memory_search" {
-                effective_arguments = enrich_memory_search_args_with_embedding(
-                    &effective_arguments,
-                    embed_provider,
-                ).await;
+                effective_arguments =
+                    enrich_memory_search_args_with_embedding(&effective_arguments, embed_provider)
+                        .await;
             }
 
             // Delegation tool is handled at the gateway layer (not via the registry).
             if tc.name == "delegate_to_agent" {
-                let args: serde_json::Value = serde_json::from_str(&tc.arguments)
-                    .unwrap_or_default();
+                let args: serde_json::Value =
+                    serde_json::from_str(&tc.arguments).unwrap_or_default();
                 let target = args["to"].as_str().unwrap_or("");
                 let msg = args["message"].as_str().unwrap_or("");
 
@@ -674,7 +698,9 @@ async fn agent_turn(
                     }
                 } else {
                     // Standalone mode: delegation not available without a running gateway
-                    format!("Delegation to '{target}' is only available in gateway mode (mp start).")
+                    format!(
+                        "Delegation to '{target}' is only available in gateway mode (mp start)."
+                    )
                 };
 
                 tracing::info!(target, "delegation tool call");
@@ -683,8 +709,12 @@ async fn agent_turn(
             }
 
             let result = mp_core::tools::registry::execute(
-                conn, agent_id, session_id, &msg_id,
-                &tc.name, &effective_arguments,
+                conn,
+                agent_id,
+                session_id,
+                &msg_id,
+                &tc.name,
+                &effective_arguments,
                 &|name, args| mp_core::tools::builtins::dispatch(name, args),
                 None,
             )?;
@@ -812,12 +842,17 @@ async fn extract_facts(
         return Ok(0);
     }
 
-    let new_messages: Vec<String> = recent.iter()
+    let new_messages: Vec<String> = recent
+        .iter()
         .map(|m| format!("{}: {}", m.role, m.content))
         .collect();
 
     let extraction_ctx = mp_core::extraction::assemble_extraction_context(
-        conn, agent_id, session_id, &new_messages, 30,
+        conn,
+        agent_id,
+        session_id,
+        &new_messages,
+        30,
     )?;
 
     let messages = vec![
@@ -834,7 +869,8 @@ async fn extract_facts(
     let response = provider.generate(&messages, &[], &config).await?;
     let text = response.content.unwrap_or_default();
 
-    let json_text = text.trim()
+    let json_text = text
+        .trim()
         .trim_start_matches("```json")
         .trim_start_matches("```")
         .trim_end_matches("```")
@@ -853,9 +889,8 @@ async fn extract_facts(
     }
 
     let last_msg_id = recent.last().map(|m| m.id.as_str());
-    let outcomes = mp_core::extraction::run_pipeline(
-        conn, agent_id, session_id, &candidates, last_msg_id,
-    )?;
+    let outcomes =
+        mp_core::extraction::run_pipeline(conn, agent_id, session_id, &candidates, last_msg_id)?;
 
     let extracted = outcomes.iter().filter(|o| o.policy_allowed).count();
     if extracted > 0 {
@@ -864,19 +899,29 @@ async fn extract_facts(
     Ok(extracted)
 }
 
-/// Compute and store FLOAT32 embeddings for any facts/messages/chunks that are missing them,
-/// then rebuild the vector quantized index so `vector_quantize_scan` stays fresh.
-///
-/// Runs after each extraction pass. Idempotent — only processes NULL-embedding rows.
+/// Process the durable embedding job queue:
+/// - enqueue drifted or missing rows for this embedding model,
+/// - claim due jobs with retries/leases,
+/// - compute FLOAT32 embeddings and persist provenance metadata,
+/// - refresh vector quantization indexes for touched targets.
 async fn embed_pending(
     conn: &rusqlite::Connection,
     embed: &dyn mp_llm::provider::EmbeddingProvider,
     agent_id: &str,
+    embedding_model_id: &str,
 ) {
-    let stats = match mp_core::store::embedding::embed_all_pending(conn, agent_id, |content| async move {
-        let vec = embed.embed(&content).await?;
-        Ok::<Vec<u8>, anyhow::Error>(mp_llm::f32_slice_to_blob(&vec))
-    })
+    let stats = match mp_core::store::embedding::process_embedding_jobs(
+        conn,
+        agent_id,
+        embedding_model_id,
+        128,
+        5,
+        8,
+        |content| async move {
+            let vec = embed.embed(&content).await?;
+            Ok::<Vec<u8>, anyhow::Error>(mp_llm::f32_slice_to_blob(&vec))
+        },
+    )
     .await
     {
         Ok(stats) => stats,
@@ -889,8 +934,15 @@ async fn embed_pending(
     if stats.failed > 0 {
         tracing::warn!(failed = stats.failed, "some embeddings failed");
     }
-    if stats.embedded > 0 {
-        tracing::debug!(count = stats.embedded, "embeddings updated and indexes rebuilt");
+    if stats.embedded > 0 || stats.queued > 0 || stats.claimed > 0 {
+        tracing::debug!(
+            queued = stats.queued,
+            claimed = stats.claimed,
+            embedded = stats.embedded,
+            failed = stats.failed,
+            skipped = stats.skipped,
+            "embedding queue processed"
+        );
     }
 }
 
@@ -922,11 +974,13 @@ async fn maybe_summarize_session(
     provider: &dyn LlmProvider,
     session_id: &str,
 ) {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM messages WHERE session_id = ?1",
-        rusqlite::params![session_id],
-        |r| r.get(0),
-    ).unwrap_or(0);
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM messages WHERE session_id = ?1",
+            rusqlite::params![session_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
 
     // Only run on exact multiples so we don't re-summarize the same window
     if count < SUMMARIZE_EVERY as i64 || count % SUMMARIZE_EVERY as i64 != 0 {
@@ -935,7 +989,10 @@ async fn maybe_summarize_session(
 
     let all = match mp_core::store::log::get_messages(conn, session_id) {
         Ok(m) => m,
-        Err(e) => { tracing::warn!("summarize: failed to load messages: {e}"); return; }
+        Err(e) => {
+            tracing::warn!("summarize: failed to load messages: {e}");
+            return;
+        }
     };
 
     let keep = RECENT_KEEP.min(all.len());
@@ -944,22 +1001,25 @@ async fn maybe_summarize_session(
         return;
     }
 
-    let existing: Option<String> = conn.query_row(
-        "SELECT summary FROM sessions WHERE id = ?1",
-        rusqlite::params![session_id],
-        |r| r.get(0),
-    ).unwrap_or(None);
+    let existing: Option<String> = conn
+        .query_row(
+            "SELECT summary FROM sessions WHERE id = ?1",
+            rusqlite::params![session_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(None);
 
-    let conv_text = to_summarize.iter()
+    let conv_text = to_summarize
+        .iter()
         .map(|m| format!("{}: {}", m.role, m.content))
         .collect::<Vec<_>>()
         .join("\n");
 
     let user_prompt = match &existing {
-        Some(prev) if !prev.trim().is_empty() =>
-            format!("Prior summary:\n{prev}\n\nNew conversation to incorporate:\n{conv_text}"),
-        _ =>
-            format!("Conversation:\n{conv_text}"),
+        Some(prev) if !prev.trim().is_empty() => {
+            format!("Prior summary:\n{prev}\n\nNew conversation to incorporate:\n{conv_text}")
+        }
+        _ => format!("Conversation:\n{conv_text}"),
     };
 
     let messages = vec![
@@ -976,7 +1036,8 @@ async fn maybe_summarize_session(
         Ok(resp) => {
             if let Some(summary) = resp.content {
                 if !summary.trim().is_empty() {
-                    if let Err(e) = mp_core::store::log::update_summary(conn, session_id, &summary) {
+                    if let Err(e) = mp_core::store::log::update_summary(conn, session_id, &summary)
+                    {
                         tracing::warn!("summarize: failed to save summary: {e}");
                     } else {
                         tracing::debug!(session_id, "rolling session summary updated");
@@ -1036,7 +1097,11 @@ async fn cmd_init(config_path: &str) -> Result<()> {
         );
         let resp = mp_core::operations::execute(&bootstrap_conn, &req)?;
         if !resp.ok && resp.code != "already_exists" {
-            anyhow::bail!("failed to initialize agent '{}': {}", agent.name, resp.message);
+            anyhow::bail!(
+                "failed to initialize agent '{}': {}",
+                agent.name,
+                resp.message
+            );
         }
     }
 
@@ -1050,13 +1115,15 @@ async fn cmd_init(config_path: &str) -> Result<()> {
     println!("  \u{2713} Created models directory");
     for agent in &config.agents {
         println!("  \u{2713} Initialized agent \"{}\"", agent.name);
-        println!("      LLM:       {} ({})",
+        println!(
+            "      LLM:       {} ({})",
             agent.llm.provider,
-            agent.llm.model.as_deref().unwrap_or("default"));
-        println!("      Embedding: {} ({}, {}D)",
-            agent.embedding.provider,
-            agent.embedding.model,
-            agent.embedding.dimensions);
+            agent.llm.model.as_deref().unwrap_or("default")
+        );
+        println!(
+            "      Embedding: {} ({}, {}D)",
+            agent.embedding.provider, agent.embedding.model, agent.embedding.dimensions
+        );
     }
     println!();
     println!("  Ready. Run `mp start` to begin.");
@@ -1108,7 +1175,15 @@ async fn cmd_setup(config: &Config, cmd: cli::SetupCommand) -> Result<()> {
 
         cli::SetupCommand::Cortex { .. } => {
             let status = std::process::Command::new("cortex")
-                .args(["mcp", "add", "moneypenny", &mp_bin_str, "sidecar", "--agent", &ag.name])
+                .args([
+                    "mcp",
+                    "add",
+                    "moneypenny",
+                    &mp_bin_str,
+                    "sidecar",
+                    "--agent",
+                    &ag.name,
+                ])
                 .status();
 
             match status {
@@ -1128,10 +1203,14 @@ async fn cmd_setup(config: &Config, cmd: cli::SetupCommand) -> Result<()> {
                     println!();
                 }
                 Ok(s) => {
-                    anyhow::bail!("`cortex mcp add` exited with status {s}. Is Cortex Code CLI installed?");
+                    anyhow::bail!(
+                        "`cortex mcp add` exited with status {s}. Is Cortex Code CLI installed?"
+                    );
                 }
                 Err(e) => {
-                    anyhow::bail!("Failed to run `cortex`: {e}\nInstall Cortex Code CLI first: https://docs.snowflake.com/en/user-guide/cortex-code");
+                    anyhow::bail!(
+                        "Failed to run `cortex`: {e}\nInstall Cortex Code CLI first: https://docs.snowflake.com/en/user-guide/cortex-code"
+                    );
                 }
             }
         }
@@ -1179,21 +1258,29 @@ fn upsert_json_mcp_config(
         serde_json::json!({})
     };
 
-    let root_obj = root.as_object_mut()
+    let root_obj = root
+        .as_object_mut()
         .ok_or_else(|| anyhow::anyhow!("{} is not a JSON object", path.display()))?;
 
     // OpenClaw nests under mcp.servers; Claude Code uses mcpServers directly
     if servers_key == "mcp" {
-        let mcp = root_obj.entry("mcp").or_insert_with(|| serde_json::json!({}));
-        let mcp_obj = mcp.as_object_mut()
+        let mcp = root_obj
+            .entry("mcp")
+            .or_insert_with(|| serde_json::json!({}));
+        let mcp_obj = mcp
+            .as_object_mut()
             .ok_or_else(|| anyhow::anyhow!("\"mcp\" is not a JSON object in {}", path.display()))?;
-        let servers = mcp_obj.entry("servers").or_insert_with(|| serde_json::json!({}));
-        servers.as_object_mut()
+        let servers = mcp_obj
+            .entry("servers")
+            .or_insert_with(|| serde_json::json!({}));
+        servers
+            .as_object_mut()
             .ok_or_else(|| anyhow::anyhow!("\"mcp.servers\" is not a JSON object"))?
             .insert(server_name.to_string(), entry);
     } else {
         if let Some(servers) = root_obj.get_mut(servers_key) {
-            servers.as_object_mut()
+            servers
+                .as_object_mut()
                 .ok_or_else(|| anyhow::anyhow!("\"{servers_key}\" is not a JSON object"))?
                 .insert(server_name.to_string(), entry);
         } else {
@@ -1219,7 +1306,10 @@ fn print_setup_success(
     println!();
     println!("  Moneypenny v{}", env!("CARGO_PKG_VERSION"));
     println!();
-    println!("  \u{2713} Registered as MCP server for {target} in {}", config_path.display());
+    println!(
+        "  \u{2713} Registered as MCP server for {target} in {}",
+        config_path.display()
+    );
     println!();
     println!("  Binary:  {binary}");
     println!("  Agent:   {agent}");
@@ -1251,9 +1341,8 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
     // Spawn the scheduler loop
     let sched_config = config.clone();
     let mut sched_shutdown = shutdown.subscribe();
-    let scheduler_handle = tokio::spawn(async move {
-        run_scheduler(&sched_config, &mut sched_shutdown).await
-    });
+    let scheduler_handle =
+        tokio::spawn(async move { run_scheduler(&sched_config, &mut sched_shutdown).await });
 
     // Build the shared dispatcher used by all channel adapters.
     // It routes (agent, message, session_id) through the WorkerBus.
@@ -1261,7 +1350,8 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
     let dispatch: adapters::DispatchFn = Arc::new(move |agent, message, session_id| {
         let bus = Arc::clone(&bus_for_dispatch);
         Box::pin(async move {
-            bus.route_full(&agent, &message, session_id.as_deref()).await
+            bus.route_full(&agent, &message, session_id.as_deref())
+                .await
         })
     });
 
@@ -1288,13 +1378,16 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
 
             let resp = match mp_core::operations::execute(&conn, &req) {
                 Ok(r) => r,
-                Err(e) => return Ok(sidecar_error_response("http_ops_execute_error", e.to_string())),
+                Err(e) => {
+                    return Ok(sidecar_error_response(
+                        "http_ops_execute_error",
+                        e.to_string(),
+                    ));
+                }
             };
 
-            Ok(
-                serde_json::to_value(resp)
-                    .unwrap_or_else(|e| sidecar_error_response("serialization_error", e.to_string())),
-            )
+            Ok(serde_json::to_value(resp)
+                .unwrap_or_else(|e| sidecar_error_response("serialization_error", e.to_string())))
         })
     });
 
@@ -1307,7 +1400,9 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
         let http_cfg = config.channels.http.clone();
         let slack_cfg = config.channels.slack.clone();
         let discord_cfg = config.channels.discord.clone();
-        let default_agent = config.agents.first()
+        let default_agent = config
+            .agents
+            .first()
             .map(|a| a.name.clone())
             .unwrap_or_else(|| "main".into());
         let dispatch_clone = Arc::clone(&dispatch);
@@ -1332,13 +1427,16 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
 
     // Spawn the Telegram long-polling adapter if configured.
     if let Some(tg_cfg) = config.channels.telegram.clone() {
-        let default_agent = config.agents.first()
+        let default_agent = config
+            .agents
+            .first()
             .map(|a| a.name.clone())
             .unwrap_or_else(|| "main".into());
         let dispatch_clone = Arc::clone(&dispatch);
         let tg_shutdown = shutdown.subscribe();
         tokio::spawn(async move {
-            adapters::run_telegram_polling(tg_cfg, default_agent, dispatch_clone, tg_shutdown).await;
+            adapters::run_telegram_polling(tg_cfg, default_agent, dispatch_clone, tg_shutdown)
+                .await;
         });
     }
 
@@ -1362,7 +1460,10 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
                     let db_path = sync_data_dir.join(format!("{agent_name}.db"));
                     let conn = match rusqlite::Connection::open(&db_path) {
                         Ok(c) => c,
-                        Err(e) => { tracing::warn!("sync: cannot open {agent_name}: {e}"); continue; }
+                        Err(e) => {
+                            tracing::warn!("sync: cannot open {agent_name}: {e}");
+                            continue;
+                        }
                     };
                     if let Err(e) = mp_ext::init_all_extensions(&conn) {
                         tracing::warn!("sync: ext init for {agent_name}: {e}");
@@ -1370,27 +1471,40 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
                     }
                     let _ = mp_core::sync::init_sync_tables(&conn, &tables);
                     for peer in &sync_config.peers {
-                        let peer_path = if std::path::Path::new(peer).is_absolute() || peer.ends_with(".db") {
-                            std::path::PathBuf::from(peer)
-                        } else {
-                            sync_data_dir.join(format!("{peer}.db"))
-                        };
-                        if !peer_path.exists() { continue; }
-                        let peer_conn = match rusqlite::Connection::open(&peer_path)
-                            .and_then(|c| { mp_ext::init_all_extensions(&c).ok(); Ok(c) })
-                        {
+                        let peer_path =
+                            if std::path::Path::new(peer).is_absolute() || peer.ends_with(".db") {
+                                std::path::PathBuf::from(peer)
+                            } else {
+                                sync_data_dir.join(format!("{peer}.db"))
+                            };
+                        if !peer_path.exists() {
+                            continue;
+                        }
+                        let peer_conn = match rusqlite::Connection::open(&peer_path).and_then(|c| {
+                            mp_ext::init_all_extensions(&c).ok();
+                            Ok(c)
+                        }) {
                             Ok(c) => c,
-                            Err(e) => { tracing::warn!("auto-sync: cannot open peer {peer}: {e}"); continue; }
+                            Err(e) => {
+                                tracing::warn!("auto-sync: cannot open peer {peer}: {e}");
+                                continue;
+                            }
                         };
                         let _ = mp_core::sync::init_sync_tables(&peer_conn, &tables);
                         match mp_core::sync::local_sync_bidirectional(&conn, &peer_conn, &tables) {
-                            Ok(r) => tracing::debug!(agent = %agent_name, peer = %peer, sent = r.sent, received = r.received, "auto-sync"),
-                            Err(e) => tracing::warn!(agent = %agent_name, peer = %peer, "auto-sync error: {e}"),
+                            Ok(r) => {
+                                tracing::debug!(agent = %agent_name, peer = %peer, sent = r.sent, received = r.received, "auto-sync")
+                            }
+                            Err(e) => {
+                                tracing::warn!(agent = %agent_name, peer = %peer, "auto-sync error: {e}")
+                            }
                         }
                     }
                     if let Some(ref url) = sync_config.cloud_url {
                         match mp_core::sync::cloud_sync(&conn, url) {
-                            Ok(r) => tracing::debug!(agent = %agent_name, batches = r.sent, "cloud auto-sync"),
+                            Ok(r) => {
+                                tracing::debug!(agent = %agent_name, batches = r.sent, "cloud auto-sync")
+                            }
                             Err(e) => tracing::warn!(agent = %agent_name, "cloud sync error: {e}"),
                         }
                     }
@@ -1406,8 +1520,15 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
     println!();
     println!("  Gateway ready. {} agent(s) running.", config.agents.len());
     if has_http_channel {
-        let port = config.channels.http.as_ref().map(|h| h.port).unwrap_or(8080);
-        println!("  HTTP API listening on port {port}  (POST /v1/chat, POST /v1/ops, WS /v1/ws, GET /health)");
+        let port = config
+            .channels
+            .http
+            .as_ref()
+            .map(|h| h.port)
+            .unwrap_or(8080);
+        println!(
+            "  HTTP API listening on port {port}  (POST /v1/chat, POST /v1/ops, WS /v1/ws, GET /health)"
+        );
     }
     if config.channels.slack.is_some() {
         println!("  Slack Events API endpoint: POST /slack/events");
@@ -1419,16 +1540,25 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
         println!("  Telegram long-polling active");
     }
     if has_sync {
-        println!("  Auto-sync every {}s ({} peer(s){})", config.sync.interval_secs,
+        println!(
+            "  Auto-sync every {}s ({} peer(s){})",
+            config.sync.interval_secs,
             config.sync.peers.len(),
-            if config.sync.cloud_url.is_some() { " + cloud" } else { "" });
+            if config.sync.cloud_url.is_some() {
+                " + cloud"
+            } else {
+                ""
+            }
+        );
     }
     println!("  Press Ctrl-C to shut down.");
     println!();
 
     // If CLI channel is enabled, run interactive chat on the default agent
     if config.channels.cli {
-        let default_agent = config.agents.first()
+        let default_agent = config
+            .agents
+            .first()
             .map(|a| a.name.clone())
             .unwrap_or_else(|| "main".into());
         let ag = resolve_agent(config, Some(&default_agent))?;
@@ -1455,10 +1585,16 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
                 _ = shutdown_rx.recv() => break,
             };
 
-            if read == 0 { break; }
+            if read == 0 {
+                break;
+            }
             let trimmed = line.trim();
-            if trimmed.is_empty() { continue; }
-            if trimmed == "/quit" || trimmed == "/exit" { break; }
+            if trimmed.is_empty() {
+                continue;
+            }
+            if trimmed == "/quit" || trimmed == "/exit" {
+                break;
+            }
 
             if trimmed == "/help" {
                 println!("  /facts    — list stored facts");
@@ -1472,26 +1608,47 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
                 if facts.is_empty() {
                     println!("  No facts stored.");
                 } else {
-                    for f in &facts { println!("  [{:.1}] {}", f.confidence, f.pointer); }
+                    for f in &facts {
+                        println!("  [{:.1}] {}", f.confidence, f.pointer);
+                    }
                 }
                 println!();
                 continue;
             }
 
-            match agent_turn(&conn, provider.as_ref(), embed.as_deref(), &ag.name, &sid, ag.persona.as_deref(), trimmed, ag.policy_mode(), Some(&bus)).await {
+            match agent_turn(
+                &conn,
+                provider.as_ref(),
+                embed.as_deref(),
+                &ag.name,
+                &sid,
+                ag.persona.as_deref(),
+                trimmed,
+                ag.policy_mode(),
+                Some(&bus),
+            )
+            .await
+            {
                 Ok(response) => {
                     println!();
-                    for l in response.lines() { println!("  {l}"); }
+                    for l in response.lines() {
+                        println!("  {l}");
+                    }
                     println!();
                     if let Ok(n) = extract_facts(&conn, provider.as_ref(), &ag.name, &sid).await {
-                        if n > 0 { println!("  ({n} fact{} learned)\n", if n == 1 { "" } else { "s" }); }
+                        if n > 0 {
+                            println!("  ({n} fact{} learned)\n", if n == 1 { "" } else { "s" });
+                        }
                     }
                     if let Some(ref ep) = embed {
-                        embed_pending(&conn, ep.as_ref(), &ag.name).await;
+                        let model_id = embedding_model_id(ag);
+                        embed_pending(&conn, ep.as_ref(), &ag.name, &model_id).await;
                     }
                     maybe_summarize_session(&conn, provider.as_ref(), &sid).await;
                 }
-                Err(e) => { eprintln!("  Error: {e}\n"); }
+                Err(e) => {
+                    eprintln!("  Error: {e}\n");
+                }
             }
         }
     } else {
@@ -1516,7 +1673,10 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
 async fn cmd_stop(config: &Config) -> Result<()> {
     let pid_path = config.data_dir.join("mp.pid");
     if !pid_path.exists() {
-        println!("  No running gateway found (no PID file at {}).", pid_path.display());
+        println!(
+            "  No running gateway found (no PID file at {}).",
+            pid_path.display()
+        );
         return Ok(());
     }
 
@@ -1594,10 +1754,13 @@ impl WorkerBus {
         stdout: tokio::process::ChildStdout,
     ) {
         let mut ch = self.channels.lock().await;
-        ch.insert(agent_name, WorkerChannel {
-            stdin,
-            stdout: tokio::io::BufReader::new(stdout),
-        });
+        ch.insert(
+            agent_name,
+            WorkerChannel {
+                stdin,
+                stdout: tokio::io::BufReader::new(stdout),
+            },
+        );
     }
 
     /// Send `message` to the named agent's worker and return its response text.
@@ -1623,7 +1786,8 @@ impl WorkerBus {
     ) -> anyhow::Result<(String, String)> {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
         let mut channels = self.channels.lock().await;
-        let ch = channels.get_mut(target)
+        let ch = channels
+            .get_mut(target)
             .ok_or_else(|| anyhow::anyhow!("No running worker for agent '{target}'"))?;
 
         let req = serde_json::json!({"message": message, "session_id": session_id});
@@ -1653,7 +1817,11 @@ fn spawn_worker(
     _config: &Config,
     config_path: &Path,
     agent_name: &str,
-) -> Result<(WorkerHandle, tokio::process::ChildStdin, tokio::process::ChildStdout)> {
+) -> Result<(
+    WorkerHandle,
+    tokio::process::ChildStdin,
+    tokio::process::ChildStdout,
+)> {
     let exe = std::env::current_exe()?;
     // Resolve config path to absolute so worker can load it; worker CWD = config dir so data_dir resolves.
     let config_abs = if config_path.is_absolute() {
@@ -1675,12 +1843,24 @@ fn spawn_worker(
         .spawn()?;
 
     let pid = child.id().unwrap_or(0);
-    let stdin = child.stdin.take()
+    let stdin = child
+        .stdin
+        .take()
         .ok_or_else(|| anyhow::anyhow!("worker process has no stdin pipe"))?;
-    let stdout = child.stdout.take()
+    let stdout = child
+        .stdout
+        .take()
         .ok_or_else(|| anyhow::anyhow!("worker process has no stdout pipe"))?;
 
-    Ok((WorkerHandle { pid, agent_name: agent_name.to_string(), child }, stdin, stdout))
+    Ok((
+        WorkerHandle {
+            pid,
+            agent_name: agent_name.to_string(),
+            child,
+        },
+        stdin,
+        stdout,
+    ))
 }
 
 /// Worker process: owns one agent's DB, processes messages from stdin.
@@ -1703,7 +1883,8 @@ async fn cmd_worker(config: &Config, agent_name: &str) -> Result<()> {
             Ok(v) => v,
             Err(e) => {
                 let err = serde_json::json!({"error": e.to_string()});
-                tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{err}\n").as_bytes()).await?;
+                tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{err}\n").as_bytes())
+                    .await?;
                 continue;
             }
         };
@@ -1718,20 +1899,31 @@ async fn cmd_worker(config: &Config, agent_name: &str) -> Result<()> {
         };
 
         let response = match agent_turn(
-            &conn, provider.as_ref(), embed.as_deref(), &agent.name, &sid,
-            agent.persona.as_deref(), msg, agent.policy_mode(), None,
-        ).await {
+            &conn,
+            provider.as_ref(),
+            embed.as_deref(),
+            &agent.name,
+            &sid,
+            agent.persona.as_deref(),
+            msg,
+            agent.policy_mode(),
+            None,
+        )
+        .await
+        {
             Ok(r) => serde_json::json!({"response": r, "session_id": sid}),
             Err(e) => serde_json::json!({"error": e.to_string(), "session_id": sid}),
         };
 
-        tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{response}\n").as_bytes()).await?;
+        tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{response}\n").as_bytes())
+            .await?;
         tokio::io::AsyncWriteExt::flush(&mut stdout).await?;
 
         // Post-response extraction and rolling summarization
         let _ = extract_facts(&conn, provider.as_ref(), &agent.name, &sid).await;
         if let Some(ref ep) = embed {
-            embed_pending(&conn, ep.as_ref(), &agent.name).await;
+            let model_id = embedding_model_id(agent);
+            embed_pending(&conn, ep.as_ref(), &agent.name, &model_id).await;
         }
         maybe_summarize_session(&conn, provider.as_ref(), &sid).await;
     }
@@ -1766,10 +1958,7 @@ fn resolve_or_create_session(
 // Scheduler
 // =========================================================================
 
-async fn run_scheduler(
-    config: &Config,
-    shutdown: &mut tokio::sync::broadcast::Receiver<()>,
-) {
+async fn run_scheduler(config: &Config, shutdown: &mut tokio::sync::broadcast::Receiver<()>) {
     loop {
         tokio::select! {
             _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
@@ -1829,12 +2018,20 @@ async fn cmd_agent(config: &Config, cmd: cli::AgentCommand) -> Result<()> {
     match cmd {
         cli::AgentCommand::List => {
             println!();
-            println!("  {:20} {:15} {:15} {:10}", "NAME", "TRUST", "LLM", "SOURCE");
-            println!("  {:20} {:15} {:15} {:10}", "----", "-----", "---", "------");
+            println!(
+                "  {:20} {:15} {:15} {:10}",
+                "NAME", "TRUST", "LLM", "SOURCE"
+            );
+            println!(
+                "  {:20} {:15} {:15} {:10}",
+                "----", "-----", "---", "------"
+            );
             let mut listed: std::collections::HashSet<String> = std::collections::HashSet::new();
             for agent in &config.agents {
-                println!("  {:20} {:15} {:15} {:10}",
-                    agent.name, agent.trust_level, agent.llm.provider, "config");
+                println!(
+                    "  {:20} {:15} {:15} {:10}",
+                    agent.name, agent.trust_level, agent.llm.provider, "config"
+                );
                 listed.insert(agent.name.clone());
             }
             let meta_path = config.metadata_db_path();
@@ -1843,8 +2040,10 @@ async fn cmd_agent(config: &Config, cmd: cli::AgentCommand) -> Result<()> {
                     if let Ok(db_agents) = mp_core::gateway::list_agents(&meta_conn) {
                         for a in db_agents {
                             if !listed.contains(&a.name) {
-                                println!("  {:20} {:15} {:15} {:10}",
-                                    a.name, a.trust_level, a.llm_provider, "runtime");
+                                println!(
+                                    "  {:20} {:15} {:15} {:10}",
+                                    a.name, a.trust_level, a.llm_provider, "runtime"
+                                );
                                 listed.insert(a.name.clone());
                             }
                         }
@@ -1872,7 +2071,10 @@ async fn cmd_agent(config: &Config, cmd: cli::AgentCommand) -> Result<()> {
                 println!("  Agent create failed: {}", resp.message);
                 return Ok(());
             }
-            println!("  Agent {} created.", resp.data["name"].as_str().unwrap_or("-"));
+            println!(
+                "  Agent {} created.",
+                resp.data["name"].as_str().unwrap_or("-")
+            );
         }
         cli::AgentCommand::Delete { name, confirm } => {
             if !confirm {
@@ -1894,30 +2096,44 @@ async fn cmd_agent(config: &Config, cmd: cli::AgentCommand) -> Result<()> {
                 println!("  Agent delete failed: {}", resp.message);
                 return Ok(());
             }
-            println!("  Agent {} deleted.", resp.data["name"].as_str().unwrap_or("-"));
+            println!(
+                "  Agent {} deleted.",
+                resp.data["name"].as_str().unwrap_or("-")
+            );
         }
         cli::AgentCommand::Status { name } => {
             let agent = resolve_agent(config, name.as_deref())?;
             let conn = open_agent_db(config, &agent.name)?;
 
-            let fact_count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM facts WHERE superseded_at IS NULL", [], |r| r.get(0)
-            ).unwrap_or(0);
-            let session_count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM sessions", [], |r| r.get(0)
-            ).unwrap_or(0);
-            let doc_count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM documents", [], |r| r.get(0)
-            ).unwrap_or(0);
-            let skill_count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM skills", [], |r| r.get(0)
-            ).unwrap_or(0);
+            let fact_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM facts WHERE superseded_at IS NULL",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            let session_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+                .unwrap_or(0);
+            let doc_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM documents", [], |r| r.get(0))
+                .unwrap_or(0);
+            let skill_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM skills", [], |r| r.get(0))
+                .unwrap_or(0);
 
             println!();
             println!("  Agent: {}", agent.name);
             println!("  Trust: {}", agent.trust_level);
-            println!("  LLM:       {} ({})", agent.llm.provider, agent.llm.model.as_deref().unwrap_or("default"));
-            println!("  Embedding: {} ({}, {}D)", agent.embedding.provider, agent.embedding.model, agent.embedding.dimensions);
+            println!(
+                "  LLM:       {} ({})",
+                agent.llm.provider,
+                agent.llm.model.as_deref().unwrap_or("default")
+            );
+            println!(
+                "  Embedding: {} ({}, {}D)",
+                agent.embedding.provider, agent.embedding.model, agent.embedding.dimensions
+            );
             println!();
             println!("  Facts:     {fact_count}");
             println!("  Sessions:  {session_count}");
@@ -1958,7 +2174,11 @@ async fn cmd_agent(config: &Config, cmd: cli::AgentCommand) -> Result<()> {
 // Chat & Send
 // =========================================================================
 
-async fn cmd_chat(config: &Config, agent: Option<String>, session_id: Option<String>) -> Result<()> {
+async fn cmd_chat(
+    config: &Config,
+    agent: Option<String>,
+    session_id: Option<String>,
+) -> Result<()> {
     let ag = resolve_agent(config, agent.as_deref())?;
     let conn = open_agent_db(config, &ag.name)?;
     let provider = build_provider(ag)?;
@@ -1966,9 +2186,20 @@ async fn cmd_chat(config: &Config, agent: Option<String>, session_id: Option<Str
     let sid = resolve_or_create_session(&conn, &ag.name, Some("cli"), session_id)?;
 
     println!();
-    println!("  Moneypenny v{} — agent: {}", env!("CARGO_PKG_VERSION"), ag.name);
-    println!("  LLM:       {} ({})", ag.llm.provider, ag.llm.model.as_deref().unwrap_or("default"));
-    println!("  Embedding: {} ({}, {}D)", ag.embedding.provider, ag.embedding.model, ag.embedding.dimensions);
+    println!(
+        "  Moneypenny v{} — agent: {}",
+        env!("CARGO_PKG_VERSION"),
+        ag.name
+    );
+    println!(
+        "  LLM:       {} ({})",
+        ag.llm.provider,
+        ag.llm.model.as_deref().unwrap_or("default")
+    );
+    println!(
+        "  Embedding: {} ({}, {}D)",
+        ag.embedding.provider, ag.embedding.model, ag.embedding.dimensions
+    );
     println!("  Type /help for commands, Ctrl-C to exit.");
     println!();
 
@@ -2031,7 +2262,19 @@ async fn cmd_chat(config: &Config, agent: Option<String>, session_id: Option<Str
             _ => {}
         }
 
-        match agent_turn(&conn, provider.as_ref(), embed.as_deref(), &ag.name, &sid, ag.persona.as_deref(), line, ag.policy_mode(), None).await {
+        match agent_turn(
+            &conn,
+            provider.as_ref(),
+            embed.as_deref(),
+            &ag.name,
+            &sid,
+            ag.persona.as_deref(),
+            line,
+            ag.policy_mode(),
+            None,
+        )
+        .await
+        {
             Ok(response) => {
                 println!();
                 for resp_line in response.lines() {
@@ -2048,7 +2291,8 @@ async fn cmd_chat(config: &Config, agent: Option<String>, session_id: Option<Str
                     _ => {}
                 }
                 if let Some(ref ep) = embed {
-                    embed_pending(&conn, ep.as_ref(), &ag.name).await;
+                    let model_id = embedding_model_id(ag);
+                    embed_pending(&conn, ep.as_ref(), &ag.name, &model_id).await;
                 }
                 maybe_summarize_session(&conn, provider.as_ref(), &sid).await;
             }
@@ -2076,9 +2320,17 @@ async fn cmd_send(
     let sid = resolve_or_create_session(&conn, &agent.name, Some("cli"), session_id)?;
 
     let response = agent_turn(
-        &conn, provider.as_ref(), embed.as_deref(), &agent.name, &sid,
-        agent.persona.as_deref(), message, agent.policy_mode(), None,
-    ).await?;
+        &conn,
+        provider.as_ref(),
+        embed.as_deref(),
+        &agent.name,
+        &sid,
+        agent.persona.as_deref(),
+        message,
+        agent.policy_mode(),
+        None,
+    )
+    .await?;
 
     println!();
     for line in response.lines() {
@@ -2093,7 +2345,8 @@ async fn cmd_send(
         }
     }
     if let Some(ref ep) = embed {
-        embed_pending(&conn, ep.as_ref(), &agent.name).await;
+        let model_id = embedding_model_id(agent);
+        embed_pending(&conn, ep.as_ref(), &agent.name, &model_id).await;
     }
     maybe_summarize_session(&conn, provider.as_ref(), &sid).await;
 
@@ -2118,7 +2371,10 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
                 println!("  {:36} {:6} {:6} {:50}", "ID", "CONF", "CMPCT", "POINTER");
                 println!("  {:36} {:6} {:6} {:50}", "--", "----", "-----", "-------");
                 for f in &facts {
-                    println!("  {:36} {:<6.1} {:<6} {}", f.id, f.confidence, f.compaction_level, f.pointer);
+                    println!(
+                        "  {:36} {:<6.1} {:<6} {}",
+                        f.id, f.confidence, f.compaction_level, f.pointer
+                    );
                 }
                 println!();
                 println!("  {} active facts", facts.len());
@@ -2149,7 +2405,12 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
                 println!("  No results for \"{query}\".");
             } else {
                 for r in &results {
-                    let preview: String = r["content"].as_str().unwrap_or("").chars().take(80).collect();
+                    let preview: String = r["content"]
+                        .as_str()
+                        .unwrap_or("")
+                        .chars()
+                        .take(80)
+                        .collect();
                     println!(
                         "  [{}] {:.4}  {}",
                         r["store"].as_str().unwrap_or("-"),
@@ -2178,11 +2439,26 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
 
             println!();
             println!("  ID:         {}", resp.data["id"].as_str().unwrap_or("-"));
-            println!("  Pointer:    {}", resp.data["pointer"].as_str().unwrap_or("-"));
-            println!("  Summary:    {}", resp.data["summary"].as_str().unwrap_or("-"));
-            println!("  Confidence: {:.1}", resp.data["confidence"].as_f64().unwrap_or(0.0));
-            println!("  Version:    {}", resp.data["version"].as_i64().unwrap_or(1));
-            println!("  Compact Lv: {}", resp.data["compaction_level"].as_i64().unwrap_or(0));
+            println!(
+                "  Pointer:    {}",
+                resp.data["pointer"].as_str().unwrap_or("-")
+            );
+            println!(
+                "  Summary:    {}",
+                resp.data["summary"].as_str().unwrap_or("-")
+            );
+            println!(
+                "  Confidence: {:.1}",
+                resp.data["confidence"].as_f64().unwrap_or(0.0)
+            );
+            println!(
+                "  Version:    {}",
+                resp.data["version"].as_i64().unwrap_or(1)
+            );
+            println!(
+                "  Compact Lv: {}",
+                resp.data["compaction_level"].as_i64().unwrap_or(0)
+            );
             if let Some(compact) = resp.data["context_compact"].as_str() {
                 println!("  Compact:    {}", compact);
             }
@@ -2195,7 +2471,11 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
             if !audit.is_empty() {
                 println!("  Audit trail:");
                 for a in &audit {
-                    println!("    {} — {}", a.operation, a.reason.as_deref().unwrap_or(""));
+                    println!(
+                        "    {} — {}",
+                        a.operation,
+                        a.reason.as_deref().unwrap_or("")
+                    );
                 }
             }
             println!();
@@ -2203,29 +2483,36 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
         cli::FactsCommand::Expand { id } => {
             let ag = resolve_agent(config, None)?;
             let conn = open_agent_db(config, &ag.name)?;
-            let req = op_request(
-                &ag.name,
-                "memory.fact.get",
-                serde_json::json!({ "id": id }),
-            );
+            let req = op_request(&ag.name, "memory.fact.get", serde_json::json!({ "id": id }));
             let resp = mp_core::operations::execute(&conn, &req)?;
             if !resp.ok {
                 println!("  {}", resp.message);
                 return Ok(());
             }
             println!();
-            println!("  [{}] {}", resp.data["id"].as_str().unwrap_or("-"), resp.data["pointer"].as_str().unwrap_or("-"));
+            println!(
+                "  [{}] {}",
+                resp.data["id"].as_str().unwrap_or("-"),
+                resp.data["pointer"].as_str().unwrap_or("-")
+            );
             println!("  Full content:");
             println!("  {}", resp.data["content"].as_str().unwrap_or(""));
             println!();
         }
-        cli::FactsCommand::ResetCompaction { id, all, agent, confirm } => {
+        cli::FactsCommand::ResetCompaction {
+            id,
+            all,
+            agent,
+            confirm,
+        } => {
             let ag = resolve_agent(config, agent.as_deref())?;
             let conn = open_agent_db(config, &ag.name)?;
 
             if all {
                 if !confirm {
-                    println!("  Use --confirm with --all to reset compaction for every active fact.");
+                    println!(
+                        "  Use --confirm with --all to reset compaction for every active fact."
+                    );
                     return Ok(());
                 }
                 let facts = mp_core::store::facts::list_active(&conn, &ag.name)?;
@@ -2249,7 +2536,10 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
                         reset_count += 1;
                     }
                 }
-                println!("  Reset compaction for {reset_count}/{} facts.", facts.len());
+                println!(
+                    "  Reset compaction for {reset_count}/{} facts.",
+                    facts.len()
+                );
                 return Ok(());
             }
 
@@ -2274,7 +2564,10 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
                 println!("  Fact reset failed: {}", resp.message);
                 return Ok(());
             }
-            println!("  Fact {} compaction reset.", resp.data["id"].as_str().unwrap_or("-"));
+            println!(
+                "  Fact {} compaction reset.",
+                resp.data["id"].as_str().unwrap_or("-")
+            );
         }
         cli::FactsCommand::Promote { id, scope } => {
             println!("  [mp facts promote {id} --scope {scope} — requires sync (M13)]");
@@ -2299,7 +2592,10 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
                     println!("  Fact delete failed: {}", resp.message);
                     return Ok(());
                 }
-                println!("  Fact {} deleted.", resp.data["id"].as_str().unwrap_or("-"));
+                println!(
+                    "  Fact {} deleted.",
+                    resp.data["id"].as_str().unwrap_or("-")
+                );
             }
         }
     }
@@ -2350,7 +2646,10 @@ async fn cmd_ingest(
         if rows.is_empty() {
             println!("  No ingest runs found.");
         } else {
-            println!("  {:36} {:10} {:22} {:8} {:8} {:8} {:8} {:8}", "RUN_ID", "SOURCE", "STATUS", "PROC", "INS", "DEDUP", "PROJ", "ERR");
+            println!(
+                "  {:36} {:10} {:22} {:8} {:8} {:8} {:8} {:8}",
+                "RUN_ID", "SOURCE", "STATUS", "PROC", "INS", "DEDUP", "PROJ", "ERR"
+            );
             for r in rows {
                 println!(
                     "  {:36} {:10} {:22} {:8} {:8} {:8} {:8} {:8}",
@@ -2468,7 +2767,11 @@ async fn cmd_ingest(
             let lines = match mp_core::ingest::convert_cortex_session(session_path) {
                 Ok(l) => l,
                 Err(e) => {
-                    eprintln!("  Skipping {:?}: {}", session_path.file_name().unwrap_or_default(), e);
+                    eprintln!(
+                        "  Skipping {:?}: {}",
+                        session_path.file_name().unwrap_or_default(),
+                        e
+                    );
                     total_errors += 1;
                     continue;
                 }
@@ -2477,11 +2780,19 @@ async fn cmd_ingest(
                 continue;
             }
             let tmp = mp_core::ingest::write_temp_jsonl(&lines, "cortex")?;
-            let summary = mp_core::ingest::ingest_jsonl_file(&conn, "cortex", &tmp, replay, &ag.name)?;
-            let fname = session_path.file_name().unwrap_or_default().to_string_lossy();
+            let summary =
+                mp_core::ingest::ingest_jsonl_file(&conn, "cortex", &tmp, replay, &ag.name)?;
+            let fname = session_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy();
             println!(
                 "  {}: inserted={}, deduped={}, projected={}, errors={}",
-                fname, summary.inserted_count, summary.deduped_count, summary.projected_count, summary.error_count,
+                fname,
+                summary.inserted_count,
+                summary.deduped_count,
+                summary.projected_count,
+                summary.error_count,
             );
             total_inserted += summary.inserted_count;
             total_deduped += summary.deduped_count;
@@ -2489,7 +2800,13 @@ async fn cmd_ingest(
             let _ = std::fs::remove_file(&tmp);
         }
         println!();
-        println!("  Total: {} sessions, {} inserted, {} deduped, {} errors", sessions.len(), total_inserted, total_deduped, total_errors);
+        println!(
+            "  Total: {} sessions, {} inserted, {} deduped, {} errors",
+            sessions.len(),
+            total_inserted,
+            total_deduped,
+            total_errors
+        );
     } else if claude_code.is_some() {
         let slug = claude_code.as_deref().filter(|s| !s.is_empty());
         let sessions = mp_core::ingest::discover_claude_code_sessions(slug);
@@ -2510,7 +2827,11 @@ async fn cmd_ingest(
             let lines = match mp_core::ingest::convert_claude_code_session(session_path) {
                 Ok(l) => l,
                 Err(e) => {
-                    eprintln!("  Skipping {:?}: {}", session_path.file_name().unwrap_or_default(), e);
+                    eprintln!(
+                        "  Skipping {:?}: {}",
+                        session_path.file_name().unwrap_or_default(),
+                        e
+                    );
                     total_errors += 1;
                     continue;
                 }
@@ -2519,11 +2840,19 @@ async fn cmd_ingest(
                 continue;
             }
             let tmp = mp_core::ingest::write_temp_jsonl(&lines, "claude-code")?;
-            let summary = mp_core::ingest::ingest_jsonl_file(&conn, "claude-code", &tmp, replay, &ag.name)?;
-            let fname = session_path.file_name().unwrap_or_default().to_string_lossy();
+            let summary =
+                mp_core::ingest::ingest_jsonl_file(&conn, "claude-code", &tmp, replay, &ag.name)?;
+            let fname = session_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy();
             println!(
                 "  {}: inserted={}, deduped={}, projected={}, errors={}",
-                fname, summary.inserted_count, summary.deduped_count, summary.projected_count, summary.error_count,
+                fname,
+                summary.inserted_count,
+                summary.deduped_count,
+                summary.projected_count,
+                summary.error_count,
             );
             total_inserted += summary.inserted_count;
             total_deduped += summary.deduped_count;
@@ -2531,10 +2860,17 @@ async fn cmd_ingest(
             let _ = std::fs::remove_file(&tmp);
         }
         println!();
-        println!("  Total: {} sessions, {} inserted, {} deduped, {} errors", sessions.len(), total_inserted, total_deduped, total_errors);
+        println!(
+            "  Total: {} sessions, {} inserted, {} deduped, {} errors",
+            sessions.len(),
+            total_inserted,
+            total_deduped,
+            total_errors
+        );
     } else if let Some(p) = path {
         let content = std::fs::read_to_string(&p)?;
-        let title = Path::new(&p).file_name()
+        let title = Path::new(&p)
+            .file_name()
             .map(|n| n.to_string_lossy().to_string());
         let req = op_request(
             &ag.name,
@@ -2554,22 +2890,27 @@ async fn cmd_ingest(
         println!("  Ingested {p}: {chunks} chunks (doc {doc_id})");
         // Embed new chunks in the background; fails gracefully if model is missing.
         if let Ok(ep) = build_embedding_provider(config, ag) {
-            embed_pending(&conn, ep.as_ref(), &ag.name).await;
+            let model_id = embedding_model_id(ag);
+            embed_pending(&conn, ep.as_ref(), &ag.name, &model_id).await;
         }
     } else if let Some(u) = url {
         println!("  Fetching {u} …");
-        let response = reqwest::get(&u).await
+        let response = reqwest::get(&u)
+            .await
             .map_err(|e| anyhow::anyhow!("HTTP fetch failed for {u}: {e}"))?;
         let status_code = response.status();
         if !status_code.is_success() {
             anyhow::bail!("HTTP {status_code} for {u}");
         }
-        let content_type = response.headers()
+        let content_type = response
+            .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_string();
-        let body = response.text().await
+        let body = response
+            .text()
+            .await
             .map_err(|e| anyhow::anyhow!("failed to read response body from {u}: {e}"))?;
 
         let is_html = content_type.contains("text/html");
@@ -2577,8 +2918,10 @@ async fn cmd_ingest(
             extract_html_title(&body)
         } else {
             None
-        }.unwrap_or_else(|| {
-            u.rsplit('/').find(|s| !s.is_empty())
+        }
+        .unwrap_or_else(|| {
+            u.rsplit('/')
+                .find(|s| !s.is_empty())
                 .unwrap_or(&u)
                 .to_string()
         });
@@ -2611,7 +2954,8 @@ async fn cmd_ingest(
         let chunks = resp.data["chunks_created"].as_u64().unwrap_or(0);
         println!("  Ingested {u}: {chunks} chunks (doc {doc_id})");
         if let Ok(ep) = build_embedding_provider(config, ag) {
-            embed_pending(&conn, ep.as_ref(), &ag.name).await;
+            let model_id = embedding_model_id(ag);
+            embed_pending(&conn, ep.as_ref(), &ag.name, &model_id).await;
         }
     } else {
         anyhow::bail!("Provide a path, --openclaw-file, or --url to ingest.");
@@ -2643,10 +2987,32 @@ fn strip_html_tags(html: &str) -> String {
                 } else if tag_name == "/script" || tag_name == "/style" || tag_name == "/noscript" {
                     in_skip_block = false;
                 }
-                if matches!(tag_name, "br" | "br/" | "p" | "/p" | "div" | "/div"
-                    | "h1" | "/h1" | "h2" | "/h2" | "h3" | "/h3"
-                    | "h4" | "/h4" | "h5" | "/h5" | "h6" | "/h6"
-                    | "li" | "/li" | "tr" | "/tr" | "blockquote" | "/blockquote") {
+                if matches!(
+                    tag_name,
+                    "br" | "br/"
+                        | "p"
+                        | "/p"
+                        | "div"
+                        | "/div"
+                        | "h1"
+                        | "/h1"
+                        | "h2"
+                        | "/h2"
+                        | "h3"
+                        | "/h3"
+                        | "h4"
+                        | "/h4"
+                        | "h5"
+                        | "/h5"
+                        | "h6"
+                        | "/h6"
+                        | "li"
+                        | "/li"
+                        | "tr"
+                        | "/tr"
+                        | "blockquote"
+                        | "/blockquote"
+                ) {
                     out.push('\n');
                 }
             } else {
@@ -2674,7 +3040,9 @@ fn strip_html_tags(html: &str) -> String {
                 "quot" => out.push('"'),
                 "apos" => out.push('\''),
                 "nbsp" => out.push(' '),
-                _ => { out.push(' '); }
+                _ => {
+                    out.push(' ');
+                }
             }
             continue;
         }
@@ -2714,7 +3082,11 @@ fn extract_html_title(html: &str) -> Option<String> {
     if title.is_empty() { None } else { Some(title) }
 }
 
-fn op_request(agent_id: &str, op: &str, args: serde_json::Value) -> mp_core::operations::OperationRequest {
+fn op_request(
+    agent_id: &str,
+    op: &str,
+    args: serde_json::Value,
+) -> mp_core::operations::OperationRequest {
     let request_id = uuid::Uuid::new_v4().to_string();
     mp_core::operations::OperationRequest {
         op: op.to_string(),
@@ -2798,7 +3170,10 @@ fn canonical_operation_catalog() -> &'static [(&'static str, &'static str)] {
         ("memory.fact.add", "Create a fact"),
         ("memory.fact.update", "Update a fact"),
         ("memory.fact.get", "Get full fact content"),
-        ("memory.fact.compaction.reset", "Reset fact compaction state"),
+        (
+            "memory.fact.compaction.reset",
+            "Reset fact compaction state",
+        ),
         ("skill.add", "Add a skill"),
         ("skill.promote", "Promote a skill"),
         ("fact.delete", "Delete a fact"),
@@ -2993,7 +3368,8 @@ fn build_sidecar_request(
     input: serde_json::Value,
     default_agent_id: &str,
 ) -> anyhow::Result<mp_core::operations::OperationRequest> {
-    if let Ok(req) = serde_json::from_value::<mp_core::operations::OperationRequest>(input.clone()) {
+    if let Ok(req) = serde_json::from_value::<mp_core::operations::OperationRequest>(input.clone())
+    {
         return Ok(req);
     }
 
@@ -3047,14 +3423,19 @@ async fn cmd_sidecar(config: &Config, agent: Option<String>) -> Result<()> {
             Ok(v) => v,
             Err(e) => {
                 let err = sidecar_error_response("invalid_json", e.to_string());
-                tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{err}\n").as_bytes()).await?;
+                tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{err}\n").as_bytes())
+                    .await?;
                 tokio::io::AsyncWriteExt::flush(&mut stdout).await?;
                 continue;
             }
         };
 
         if let Some(mcp_response) = handle_sidecar_mcp_request(&conn, &parsed, &ag.name)? {
-            tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{mcp_response}\n").as_bytes()).await?;
+            tokio::io::AsyncWriteExt::write_all(
+                &mut stdout,
+                format!("{mcp_response}\n").as_bytes(),
+            )
+            .await?;
             tokio::io::AsyncWriteExt::flush(&mut stdout).await?;
             continue;
         }
@@ -3063,7 +3444,8 @@ async fn cmd_sidecar(config: &Config, agent: Option<String>) -> Result<()> {
             Ok(r) => r,
             Err(e) => {
                 let err = sidecar_error_response("invalid_request", e.to_string());
-                tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{err}\n").as_bytes()).await?;
+                tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{err}\n").as_bytes())
+                    .await?;
                 tokio::io::AsyncWriteExt::flush(&mut stdout).await?;
                 continue;
             }
@@ -3075,7 +3457,8 @@ async fn cmd_sidecar(config: &Config, agent: Option<String>) -> Result<()> {
             Err(e) => sidecar_error_response("sidecar_execute_error", e.to_string()),
         };
 
-        tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{response}\n").as_bytes()).await?;
+        tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{response}\n").as_bytes())
+            .await?;
         tokio::io::AsyncWriteExt::flush(&mut stdout).await?;
     }
     Ok(())
@@ -3083,7 +3466,9 @@ async fn cmd_sidecar(config: &Config, agent: Option<String>) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_sidecar_request, build_sidecar_request_from_mcp_call, mcp_tools_list_result};
+    use super::{
+        build_sidecar_request, build_sidecar_request_from_mcp_call, mcp_tools_list_result,
+    };
 
     #[test]
     fn sidecar_compact_request_uses_defaults() {
@@ -3196,7 +3581,8 @@ async fn cmd_knowledge(config: &Config, cmd: cli::KnowledgeCommand) -> Result<()
                 println!("  {:36} {:30} {:20}", "ID", "TITLE", "PATH");
                 println!("  {:36} {:30} {:20}", "--", "-----", "----");
                 for d in &docs {
-                    println!("  {:36} {:30} {:20}",
+                    println!(
+                        "  {:36} {:30} {:20}",
                         d.id,
                         d.title.as_deref().unwrap_or("-"),
                         d.path.as_deref().unwrap_or("-"),
@@ -3220,7 +3606,8 @@ async fn cmd_skill(config: &Config, cmd: cli::SkillCommand) -> Result<()> {
     match cmd {
         cli::SkillCommand::Add { path, .. } => {
             let content = std::fs::read_to_string(&path)?;
-            let name = Path::new(&path).file_stem()
+            let name = Path::new(&path)
+                .file_stem()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "unnamed".into());
             let req = op_request(
@@ -3245,36 +3632,57 @@ async fn cmd_skill(config: &Config, cmd: cli::SkillCommand) -> Result<()> {
             let mut stmt = conn.prepare(
                 "SELECT id, name, usage_count, success_rate, promoted FROM skills ORDER BY usage_count DESC"
             )?;
-            let skills: Vec<(String, String, i64, Option<f64>, bool)> = stmt.query_map([], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get::<_, i64>(4)? != 0))
-            })?.collect::<Result<Vec<_>, _>>()?;
+            let skills: Vec<(String, String, i64, Option<f64>, bool)> = stmt
+                .query_map([], |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get::<_, i64>(4)? != 0,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
 
             println!();
             if skills.is_empty() {
                 println!("  No skills registered.");
             } else {
-                println!("  {:36} {:20} {:6} {:8} {:8}", "ID", "NAME", "USES", "RATE", "PROMO");
-                println!("  {:36} {:20} {:6} {:8} {:8}", "--", "----", "----", "----", "-----");
+                println!(
+                    "  {:36} {:20} {:6} {:8} {:8}",
+                    "ID", "NAME", "USES", "RATE", "PROMO"
+                );
+                println!(
+                    "  {:36} {:20} {:6} {:8} {:8}",
+                    "--", "----", "----", "----", "-----"
+                );
                 for (id, name, uses, rate, promoted) in &skills {
-                    let rate_str = rate.map(|r| format!("{:.0}%", r * 100.0)).unwrap_or("-".into());
-                    println!("  {:36} {:20} {:6} {:8} {:8}",
-                        id, name, uses, rate_str, if *promoted { "yes" } else { "" });
+                    let rate_str = rate
+                        .map(|r| format!("{:.0}%", r * 100.0))
+                        .unwrap_or("-".into());
+                    println!(
+                        "  {:36} {:20} {:6} {:8} {:8}",
+                        id,
+                        name,
+                        uses,
+                        rate_str,
+                        if *promoted { "yes" } else { "" }
+                    );
                 }
             }
             println!();
         }
         cli::SkillCommand::Promote { id } => {
-            let req = op_request(
-                &ag.name,
-                "skill.promote",
-                serde_json::json!({ "id": id }),
-            );
+            let req = op_request(&ag.name, "skill.promote", serde_json::json!({ "id": id }));
             let resp = mp_core::operations::execute(&conn, &req)?;
             if !resp.ok {
                 println!("  Skill promote failed: {}", resp.message);
                 return Ok(());
             }
-            println!("  Skill {} promoted.", resp.data["id"].as_str().unwrap_or("-"));
+            println!(
+                "  Skill {} promoted.",
+                resp.data["id"].as_str().unwrap_or("-")
+            );
         }
     }
     Ok(())
@@ -3294,21 +3702,45 @@ async fn cmd_policy(config: &Config, cmd: cli::PolicyCommand) -> Result<()> {
                 "SELECT id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, enabled
                  FROM policies ORDER BY priority DESC"
             )?;
-            let policies: Vec<(String, String, i64, String, Option<String>, Option<String>, Option<String>, bool)> =
-                stmt.query_map([], |r| {
-                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?,
-                        r.get(4)?, r.get(5)?, r.get(6)?, r.get::<_, i64>(7)? != 0))
-                })?.collect::<Result<Vec<_>, _>>()?;
+            let policies: Vec<(
+                String,
+                String,
+                i64,
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                bool,
+            )> = stmt
+                .query_map([], |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                        r.get::<_, i64>(7)? != 0,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
 
             println!();
             if policies.is_empty() {
                 println!("  No policies configured.");
             } else {
-                println!("  {:36} {:20} {:4} {:6} {:10} {:10} {:15}",
-                    "ID", "NAME", "PRI", "EFFECT", "ACTOR", "ACTION", "RESOURCE");
+                println!(
+                    "  {:36} {:20} {:4} {:6} {:10} {:10} {:15}",
+                    "ID", "NAME", "PRI", "EFFECT", "ACTOR", "ACTION", "RESOURCE"
+                );
                 for (id, name, pri, effect, actor, action, resource, _) in &policies {
-                    println!("  {:36} {:20} {:4} {:6} {:10} {:10} {:15}",
-                        id, name, pri, effect,
+                    println!(
+                        "  {:36} {:20} {:4} {:6} {:10} {:10} {:15}",
+                        id,
+                        name,
+                        pri,
+                        effect,
                         actor.as_deref().unwrap_or("*"),
                         action.as_deref().unwrap_or("*"),
                         resource.as_deref().unwrap_or("*"),
@@ -3317,7 +3749,20 @@ async fn cmd_policy(config: &Config, cmd: cli::PolicyCommand) -> Result<()> {
             }
             println!();
         }
-        cli::PolicyCommand::Add { name, effect, priority, actor, action, resource, argument, channel, sql, rule_type, rule_config, message } => {
+        cli::PolicyCommand::Add {
+            name,
+            effect,
+            priority,
+            actor,
+            action,
+            resource,
+            argument,
+            channel,
+            sql,
+            rule_type,
+            rule_config,
+            message,
+        } => {
             let req = op_request(
                 &ag.name,
                 "policy.add",
@@ -3363,7 +3808,10 @@ async fn cmd_policy(config: &Config, cmd: cli::PolicyCommand) -> Result<()> {
                 println!("  Policy explain denied: {}", resp.message);
                 return Ok(());
             }
-            println!("  Effect: {}", resp.data["effect"].as_str().unwrap_or("unknown"));
+            println!(
+                "  Effect: {}",
+                resp.data["effect"].as_str().unwrap_or("unknown")
+            );
             if let Some(reason) = resp.data["reason"].as_str() {
                 println!("  Reason: {reason}");
             }
@@ -3401,7 +3849,8 @@ async fn cmd_policy(config: &Config, cmd: cli::PolicyCommand) -> Result<()> {
                 println!("  No policy violations in the last {last}.");
             } else {
                 for v in &violations {
-                    println!("  [{effect}] {actor} → {action} on {resource}: {}",
+                    println!(
+                        "  [{effect}] {actor} → {action} on {resource}: {}",
                         v["reason"].as_str().unwrap_or(""),
                         effect = v["effect"].as_str().unwrap_or(""),
                         actor = v["actor"].as_str().unwrap_or(""),
@@ -3495,24 +3944,36 @@ async fn cmd_job(config: &Config, cmd: cli::JobCommand) -> Result<()> {
                 println!("  Job list denied: {}", resp.message);
                 return Ok(());
             }
-            let jobs: Vec<serde_json::Value> = serde_json::from_value(resp.data).unwrap_or_default();
+            let jobs: Vec<serde_json::Value> =
+                serde_json::from_value(resp.data).unwrap_or_default();
             println!();
             if jobs.is_empty() {
                 println!("  No jobs scheduled.");
             } else {
-                println!("  {:36} {:20} {:8} {:10} {:8}", "ID", "NAME", "TYPE", "STATUS", "SCHED");
+                println!(
+                    "  {:36} {:20} {:8} {:10} {:8}",
+                    "ID", "NAME", "TYPE", "STATUS", "SCHED"
+                );
                 for j in &jobs {
-                    println!("  {:36} {:20} {:8} {:10} {:8}",
+                    println!(
+                        "  {:36} {:20} {:8} {:10} {:8}",
                         j["id"].as_str().unwrap_or("-"),
                         j["name"].as_str().unwrap_or("-"),
                         j["job_type"].as_str().unwrap_or("-"),
                         j["status"].as_str().unwrap_or("-"),
-                        j["schedule"].as_str().unwrap_or("-"));
+                        j["schedule"].as_str().unwrap_or("-")
+                    );
                 }
             }
             println!();
         }
-        cli::JobCommand::Create { name, schedule, job_type, payload, agent } => {
+        cli::JobCommand::Create {
+            name,
+            schedule,
+            job_type,
+            payload,
+            agent,
+        } => {
             let req = op_request(
                 &ag.name,
                 "job.create",
@@ -3540,7 +4001,8 @@ async fn cmd_job(config: &Config, cmd: cli::JobCommand) -> Result<()> {
                 println!("  Job run failed: {}", resp.message);
                 return Ok(());
             }
-            println!("  Run {}: {}",
+            println!(
+                "  Run {}: {}",
                 resp.data["run_id"].as_str().unwrap_or("-"),
                 resp.data["status"].as_str().unwrap_or("-")
             );
@@ -3574,7 +4036,8 @@ async fn cmd_job(config: &Config, cmd: cli::JobCommand) -> Result<()> {
                 println!("  No job runs found.");
             } else {
                 for r in &runs {
-                    println!("  {}  job:{}  {}  {}",
+                    println!(
+                        "  {}  job:{}  {}  {}",
                         r["id"].as_str().unwrap_or("-"),
                         r["job_id"].as_str().unwrap_or("-"),
                         r["status"].as_str().unwrap_or("-"),
@@ -3621,7 +4084,8 @@ async fn cmd_audit(
                 println!("  No audit entries.");
             } else {
                 for e in &entries {
-                    println!("  [{effect}] {actor} → {action} on {resource}: {}",
+                    println!(
+                        "  [{effect}] {actor} → {action} on {resource}: {}",
                         e["reason"].as_str().unwrap_or(""),
                         effect = e["effect"].as_str().unwrap_or(""),
                         actor = e["actor"].as_str().unwrap_or(""),
@@ -3650,7 +4114,8 @@ async fn cmd_audit(
 
             println!();
             for e in &entries {
-                println!("  [{effect}] {actor} → {action} on {resource}: {}",
+                println!(
+                    "  [{effect}] {actor} → {action} on {resource}: {}",
                     e["reason"].as_str().unwrap_or(""),
                     effect = e["effect"].as_str().unwrap_or(""),
                     actor = e["actor"].as_str().unwrap_or(""),
@@ -3677,9 +4142,12 @@ async fn cmd_audit(
                     println!("{}", serde_json::to_string_pretty(&entries)?);
                 }
                 "csv" => {
-                    println!("id,actor,action,resource,effect,reason,session_id,created_at,correlation_id");
+                    println!(
+                        "id,actor,action,resource,effect,reason,session_id,created_at,correlation_id"
+                    );
                     for e in &entries {
-                        println!("{},{},{},{},{},{},{},{},{}",
+                        println!(
+                            "{},{},{},{},{},{},{},{},{}",
                             csv_escape(e["id"].as_str().unwrap_or("")),
                             csv_escape(e["actor"].as_str().unwrap_or("")),
                             csv_escape(e["action"].as_str().unwrap_or("")),
@@ -3758,7 +4226,10 @@ async fn cmd_sync(config: &Config, cmd: cli::SyncCommand) -> Result<()> {
                 std::io::stdout().flush()?;
                 let peer_conn = match open_peer_db(&peer_path, &sync_tables) {
                     Ok(c) => c,
-                    Err(e) => { eprintln!("error opening peer: {e}"); continue; }
+                    Err(e) => {
+                        eprintln!("error opening peer: {e}");
+                        continue;
+                    }
                 };
                 match mp_core::sync::local_sync_bidirectional(&conn, &peer_conn, &sync_tables) {
                     Ok(r) => {
@@ -3785,10 +4256,15 @@ async fn cmd_sync(config: &Config, cmd: cli::SyncCommand) -> Result<()> {
 
             if config.sync.peers.is_empty() && config.sync.cloud_url.is_none() {
                 println!("  No peers or cloud URL configured.");
-                println!("  Add [sync] peers = [\"other-agent\"] or cloud_url = \"…\" to moneypenny.toml");
+                println!(
+                    "  Add [sync] peers = [\"other-agent\"] or cloud_url = \"…\" to moneypenny.toml"
+                );
             } else {
                 println!();
-                println!("  Sync complete. Sent {}B, received {}B.", total_sent, total_received);
+                println!(
+                    "  Sync complete. Sent {}B, received {}B.",
+                    total_sent, total_received
+                );
             }
         }
 
@@ -3858,10 +4334,7 @@ fn resolve_peer_path(config: &Config, peer: &str) -> std::path::PathBuf {
 }
 
 /// Open a peer DB file, register extensions, and ensure sync tables are initialized.
-fn open_peer_db(
-    db_path: &std::path::Path,
-    tables: &[&str],
-) -> Result<rusqlite::Connection> {
+fn open_peer_db(db_path: &std::path::Path, tables: &[&str]) -> Result<rusqlite::Connection> {
     let conn = rusqlite::Connection::open(db_path)?;
     mp_ext::init_all_extensions(&conn)?;
     mp_core::sync::init_sync_tables(&conn, tables)?;
@@ -3886,24 +4359,30 @@ async fn cmd_db(config: &Config, cmd: cli::DbCommand) -> Result<()> {
 
             println!();
             println!("  {}", col_names.join(" | "));
-            println!("  {}", col_names.iter().map(|n| "-".repeat(n.len())).collect::<Vec<_>>().join("-+-"));
+            println!(
+                "  {}",
+                col_names
+                    .iter()
+                    .map(|n| "-".repeat(n.len()))
+                    .collect::<Vec<_>>()
+                    .join("-+-")
+            );
 
             let mut rows = stmt.query([])?;
             while let Some(row) = rows.next()? {
-                let vals: Vec<String> = (0..col_count).map(|i| {
-                    row.get::<_, String>(i).unwrap_or_else(|_| "NULL".into())
-                }).collect();
+                let vals: Vec<String> = (0..col_count)
+                    .map(|i| row.get::<_, String>(i).unwrap_or_else(|_| "NULL".into()))
+                    .collect();
                 println!("  {}", vals.join(" | "));
             }
             println!();
         }
         cli::DbCommand::Schema { .. } => {
-            let mut stmt = conn.prepare(
-                "SELECT name, sql FROM sqlite_master WHERE type='table' ORDER BY name"
-            )?;
-            let tables: Vec<(String, Option<String>)> = stmt.query_map([], |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })?.collect::<Result<Vec<_>, _>>()?;
+            let mut stmt = conn
+                .prepare("SELECT name, sql FROM sqlite_master WHERE type='table' ORDER BY name")?;
+            let tables: Vec<(String, Option<String>)> = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<Result<Vec<_>, _>>()?;
 
             println!();
             for (name, sql) in &tables {
@@ -3967,7 +4446,10 @@ async fn cmd_session(config: &Config, cmd: cli::SessionCommand) -> Result<()> {
                 println!("    Started:      {}", fmt_ts(started_at));
                 println!("    Last activity: {}", fmt_ts(last_activity));
                 println!("    Messages:     {}", message_count);
-                println!("    Ended:        {}", ended_at.map(fmt_ts).unwrap_or_else(|| "active".into()));
+                println!(
+                    "    Ended:        {}",
+                    ended_at.map(fmt_ts).unwrap_or_else(|| "active".into())
+                );
                 println!();
             }
         }
@@ -3986,7 +4468,10 @@ async fn cmd_health(config: &Config) -> Result<()> {
 
     let meta_path = config.metadata_db_path();
     if meta_path.exists() {
-        println!("  Gateway:  data dir exists at {}", config.data_dir.display());
+        println!(
+            "  Gateway:  data dir exists at {}",
+            config.data_dir.display()
+        );
     } else {
         println!("  Gateway:  not initialized (run `mp init`)");
     }
@@ -3995,17 +4480,29 @@ async fn cmd_health(config: &Config) -> Result<()> {
         let db_path = config.agent_db_path(&agent.name);
         if db_path.exists() {
             let conn = mp_core::db::open(&db_path)?;
-            let fact_count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM facts WHERE superseded_at IS NULL", [], |r| r.get(0)
-            ).unwrap_or(0);
-            let session_count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM sessions", [], |r| r.get(0)
-            ).unwrap_or(0);
+            let fact_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM facts WHERE superseded_at IS NULL",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            let session_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+                .unwrap_or(0);
+            let embed_queue = mp_core::store::embedding::queue_stats(&conn).unwrap_or_default();
 
             let metadata = std::fs::metadata(&db_path)?;
             let size_kb = metadata.len() / 1024;
-            println!("  Agent \"{}\": {size_kb} KB, {fact_count} facts, {session_count} sessions",
-                agent.name);
+            println!(
+                "  Agent \"{}\": {size_kb} KB, {fact_count} facts, {session_count} sessions, embedding jobs total={} (pending={}, retry={}, processing={}, dead={})",
+                agent.name,
+                embed_queue.total,
+                embed_queue.pending,
+                embed_queue.retry,
+                embed_queue.processing,
+                embed_queue.dead,
+            );
         } else {
             println!("  Agent \"{}\": not initialized", agent.name);
         }

@@ -55,11 +55,19 @@ pub struct ToolResult {
 
 impl ToolResult {
     pub fn success(output: impl Into<String>) -> Self {
-        Self { output: output.into(), success: true, duration_ms: 0 }
+        Self {
+            output: output.into(),
+            success: true,
+            duration_ms: 0,
+        }
     }
 
     pub fn failure(output: impl Into<String>) -> Self {
-        Self { output: output.into(), success: false, duration_ms: 0 }
+        Self {
+            output: output.into(),
+            success: false,
+            duration_ms: 0,
+        }
     }
 }
 
@@ -120,25 +128,35 @@ pub fn lookup(conn: &Connection, name: &str) -> anyhow::Result<Option<ToolDef>> 
 
 /// List all registered tools.
 pub fn list_tools(conn: &Connection) -> anyhow::Result<Vec<ToolDef>> {
-    let mut stmt = conn.prepare(
-        "SELECT name, description, tool_id, content FROM skills ORDER BY name"
-    )?;
-    let tools = stmt.query_map([], |r| {
-        let name: String = r.get(0)?;
-        let description: String = r.get(1)?;
-        let tool_id: Option<String> = r.get(2)?;
-        let content: String = r.get(3)?;
-        Ok((name, description, tool_id, content))
-    })?.collect::<Result<Vec<_>, _>>()?;
+    let mut stmt =
+        conn.prepare("SELECT name, description, tool_id, content FROM skills ORDER BY name")?;
+    let tools = stmt
+        .query_map([], |r| {
+            let name: String = r.get(0)?;
+            let description: String = r.get(1)?;
+            let tool_id: Option<String> = r.get(2)?;
+            let content: String = r.get(3)?;
+            Ok((name, description, tool_id, content))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(tools.into_iter().map(|(name, description, tool_id, content)| {
-        let source = tool_id
-            .as_deref()
-            .and_then(|tid| tid.split(':').next())
-            .and_then(|s| s.parse::<ToolSource>().ok())
-            .unwrap_or(ToolSource::Builtin);
-        ToolDef { name, description, source, parameters_schema: Some(content), enabled: true }
-    }).collect())
+    Ok(tools
+        .into_iter()
+        .map(|(name, description, tool_id, content)| {
+            let source = tool_id
+                .as_deref()
+                .and_then(|tid| tid.split(':').next())
+                .and_then(|s| s.parse::<ToolSource>().ok())
+                .unwrap_or(ToolSource::Builtin);
+            ToolDef {
+                name,
+                description,
+                source,
+                parameters_schema: Some(content),
+                enabled: true,
+            }
+        })
+        .collect())
 }
 
 /// Search tools by intent description (delegates to knowledge search).
@@ -148,24 +166,35 @@ pub fn discover(conn: &Connection, intent: &str, limit: usize) -> anyhow::Result
         "SELECT name, description, tool_id, content FROM skills
          WHERE description LIKE ?1 OR name LIKE ?1
          ORDER BY usage_count DESC
-         LIMIT ?2"
+         LIMIT ?2",
     )?;
-    let tools = stmt.query_map(params![pattern, limit], |r| {
-        let name: String = r.get(0)?;
-        let description: String = r.get(1)?;
-        let tool_id: Option<String> = r.get(2)?;
-        let content: String = r.get(3)?;
-        Ok((name, description, tool_id, content))
-    })?.collect::<Result<Vec<_>, _>>()?;
+    let tools = stmt
+        .query_map(params![pattern, limit], |r| {
+            let name: String = r.get(0)?;
+            let description: String = r.get(1)?;
+            let tool_id: Option<String> = r.get(2)?;
+            let content: String = r.get(3)?;
+            Ok((name, description, tool_id, content))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(tools.into_iter().map(|(name, description, tool_id, content)| {
-        let source = tool_id
-            .as_deref()
-            .and_then(|tid| tid.split(':').next())
-            .and_then(|s| s.parse::<ToolSource>().ok())
-            .unwrap_or(ToolSource::Builtin);
-        ToolDef { name, description, source, parameters_schema: Some(content), enabled: true }
-    }).collect())
+    Ok(tools
+        .into_iter()
+        .map(|(name, description, tool_id, content)| {
+            let source = tool_id
+                .as_deref()
+                .and_then(|tid| tid.split(':').next())
+                .and_then(|s| s.parse::<ToolSource>().ok())
+                .unwrap_or(ToolSource::Builtin);
+            ToolDef {
+                name,
+                description,
+                source,
+                parameters_schema: Some(content),
+                enabled: true,
+            }
+        })
+        .collect())
 }
 
 /// Execute a tool with policy gating, hook callbacks, secret redaction, and audit logging.
@@ -205,15 +234,23 @@ pub fn execute(
     if matches!(decision.effect, crate::policy::Effect::Deny) {
         let duration_ms = start.elapsed().as_millis() as u64;
         let result = ToolResult {
-            output: format!("Tool call denied: {}", decision.reason.as_deref().unwrap_or("policy denied")),
+            output: format!(
+                "Tool call denied: {}",
+                decision.reason.as_deref().unwrap_or("policy denied")
+            ),
             success: false,
             duration_ms,
         };
 
         crate::store::log::record_tool_call(
-            conn, message_id, session_id, tool_name,
-            Some(arguments), Some(&result.output),
-            Some("denied"), Some("deny"),
+            conn,
+            message_id,
+            session_id,
+            tool_name,
+            Some(arguments),
+            Some(&result.output),
+            Some("denied"),
+            Some("deny"),
             Some(duration_ms as i64),
         )?;
 
@@ -238,9 +275,14 @@ pub fn execute(
                     duration_ms,
                 };
                 crate::store::log::record_tool_call(
-                    conn, message_id, session_id, tool_name,
-                    Some(arguments), Some(&abort_msg),
-                    Some("hook_aborted"), Some("deny"),
+                    conn,
+                    message_id,
+                    session_id,
+                    tool_name,
+                    Some(arguments),
+                    Some(&abort_msg),
+                    Some("hook_aborted"),
+                    Some("deny"),
                     Some(duration_ms as i64),
                 )?;
                 return Ok(result);
@@ -288,8 +330,12 @@ pub fn execute(
             // 6. Audit log
             let effect_str = format!("{:?}", decision.effect).to_lowercase();
             crate::store::log::record_tool_call(
-                conn, message_id, session_id, tool_name,
-                Some(arguments), Some(&result.output),
+                conn,
+                message_id,
+                session_id,
+                tool_name,
+                Some(arguments),
+                Some(&result.output),
                 Some(if result.success { "success" } else { "error" }),
                 Some(&effect_str),
                 Some(duration_ms as i64),
@@ -306,9 +352,14 @@ pub fn execute(
 
             let effect_str = format!("{:?}", decision.effect).to_lowercase();
             crate::store::log::record_tool_call(
-                conn, message_id, session_id, tool_name,
-                Some(arguments), Some(&result.output),
-                Some("error"), Some(&effect_str),
+                conn,
+                message_id,
+                session_id,
+                tool_name,
+                Some(arguments),
+                Some(&result.output),
+                Some("error"),
+                Some(&effect_str),
                 Some(duration_ms as i64),
             )?;
 
@@ -345,7 +396,10 @@ pub fn register_builtins(conn: &Connection) -> anyhow::Result<()> {
             name: "http_request".into(),
             description: "Make an HTTP request to a URL".into(),
             source: ToolSource::Builtin,
-            parameters_schema: Some(r#"{"method": "string", "url": "string", "headers": "object", "body": "string"}"#.into()),
+            parameters_schema: Some(
+                r#"{"method": "string", "url": "string", "headers": "object", "body": "string"}"#
+                    .into(),
+            ),
             enabled: true,
         },
         ToolDef {
@@ -875,7 +929,6 @@ pub fn register_runtime_skills(conn: &Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -980,7 +1033,12 @@ mod tests {
 
     #[test]
     fn tool_source_roundtrip() {
-        for src in [ToolSource::Builtin, ToolSource::Mcp, ToolSource::SqliteJs, ToolSource::Runtime] {
+        for src in [
+            ToolSource::Builtin,
+            ToolSource::Mcp,
+            ToolSource::SqliteJs,
+            ToolSource::Runtime,
+        ] {
             let s = src.to_string();
             let parsed: ToolSource = s.parse().unwrap();
             assert_eq!(parsed, src);
@@ -1013,10 +1071,22 @@ mod tests {
         let mid = store::log::append_message(&conn, &sid, "assistant", "calling tool").unwrap();
 
         let result = execute(
-            &conn, "a", &sid, &mid, "shell_exec", r#"{"command":"echo hi"}"#,
-            &|_name, _args| Ok(ToolResult { output: "hi\n".into(), success: true, duration_ms: 0 }),
+            &conn,
+            "a",
+            &sid,
+            &mid,
+            "shell_exec",
+            r#"{"command":"echo hi"}"#,
+            &|_name, _args| {
+                Ok(ToolResult {
+                    output: "hi\n".into(),
+                    success: true,
+                    duration_ms: 0,
+                })
+            },
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(result.success);
         assert_eq!(result.output, "hi\n");
@@ -1042,10 +1112,16 @@ mod tests {
         ).unwrap();
 
         let result = execute(
-            &conn, "a", &sid, &mid, "shell_exec", r#"{"command":"rm -rf /"}"#,
+            &conn,
+            "a",
+            &sid,
+            &mid,
+            "shell_exec",
+            r#"{"command":"rm -rf /"}"#,
             &|_name, _args| panic!("should not be called"),
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(!result.success);
         assert!(result.output.contains("denied"));
@@ -1063,17 +1139,29 @@ mod tests {
         let mid = store::log::append_message(&conn, &sid, "assistant", "calling tool").unwrap();
 
         let result = execute(
-            &conn, "a", &sid, &mid, "sql_query", "{}",
-            &|_name, _args| Ok(ToolResult {
-                output: "connection: postgres://user:password123@host/db".into(),
-                success: true,
-                duration_ms: 0,
-            }),
+            &conn,
+            "a",
+            &sid,
+            &mid,
+            "sql_query",
+            "{}",
+            &|_name, _args| {
+                Ok(ToolResult {
+                    output: "connection: postgres://user:password123@host/db".into(),
+                    success: true,
+                    duration_ms: 0,
+                })
+            },
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(result.success);
-        assert!(result.output.contains("[REDACTED]"), "secrets should be redacted: {}", result.output);
+        assert!(
+            result.output.contains("[REDACTED]"),
+            "secrets should be redacted: {}",
+            result.output
+        );
         assert!(!result.output.contains("password123"));
     }
 
@@ -1085,10 +1173,16 @@ mod tests {
         let mid = store::log::append_message(&conn, &sid, "assistant", "calling tool").unwrap();
 
         let result = execute(
-            &conn, "a", &sid, &mid, "file_read", "{}",
+            &conn,
+            "a",
+            &sid,
+            &mid,
+            "file_read",
+            "{}",
             &|_name, _args| anyhow::bail!("file not found"),
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(!result.success);
         assert!(result.output.contains("file not found"));
@@ -1105,10 +1199,22 @@ mod tests {
         let mid = store::log::append_message(&conn, &sid, "assistant", "tool call").unwrap();
 
         execute(
-            &conn, "a", &sid, &mid, "sql_query", r#"{"query":"SELECT 1"}"#,
-            &|_name, _args| Ok(ToolResult { output: "1".into(), success: true, duration_ms: 0 }),
+            &conn,
+            "a",
+            &sid,
+            &mid,
+            "sql_query",
+            r#"{"query":"SELECT 1"}"#,
+            &|_name, _args| {
+                Ok(ToolResult {
+                    output: "1".into(),
+                    success: true,
+                    duration_ms: 0,
+                })
+            },
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
         let calls = store::log::get_tool_calls(&conn, &sid).unwrap();
         assert_eq!(calls.len(), 1);
@@ -1195,11 +1301,16 @@ mod tests {
         let mid = store::log::append_message(&conn, &sid, "assistant", "adding fact").unwrap();
 
         let result = execute(
-            &conn, "agent-1", &sid, &mid, "fact_add",
+            &conn,
+            "agent-1",
+            &sid,
+            &mid,
+            "fact_add",
             r#"{"content": "Test fact via execute", "summary": "test", "pointer": "test"}"#,
             &|_name, _args| panic!("runtime tools should not use the builtin executor"),
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(result.success);
         assert!(result.output.contains("created"));
@@ -1225,11 +1336,16 @@ mod tests {
         ).unwrap();
 
         let result = execute(
-            &conn, "agent-1", &sid, &mid, "fact_add",
+            &conn,
+            "agent-1",
+            &sid,
+            &mid,
+            "fact_add",
             r#"{"content": "should not persist"}"#,
             &|_name, _args| panic!("should not reach executor"),
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(!result.success);
         assert!(result.output.contains("denied"));
@@ -1247,11 +1363,16 @@ mod tests {
         let mid = store::log::append_message(&conn, &sid, "assistant", "searching").unwrap();
 
         let result = execute(
-            &conn, "a", &sid, &mid, "memory_search",
+            &conn,
+            "a",
+            &sid,
+            &mid,
+            "memory_search",
             r#"{"query": "test"}"#,
             &|_name, _args| panic!("should not use builtin executor"),
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(result.success);
     }
@@ -1262,7 +1383,7 @@ mod tests {
 
     #[test]
     fn pre_hook_abort_blocks_execution_in_execute() {
-        use super::super::hooks::{ToolHooks, PreOutcome};
+        use super::super::hooks::{PreOutcome, ToolHooks};
 
         let conn = setup();
         insert_allow_all(&conn);
@@ -1275,10 +1396,16 @@ mod tests {
         });
 
         let result = execute(
-            &conn, "a", &sid, &mid, "shell_exec", "{}",
+            &conn,
+            "a",
+            &sid,
+            &mid,
+            "shell_exec",
+            "{}",
             &|_, _| panic!("should not reach executor"),
             Some(&hooks),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(!result.success);
         assert!(result.output.contains("pre-hook blocked"));
@@ -1289,7 +1416,7 @@ mod tests {
 
     #[test]
     fn post_hook_transforms_output_in_execute() {
-        use super::super::hooks::{ToolHooks, PostOutcome};
+        use super::super::hooks::{PostOutcome, ToolHooks};
 
         let conn = setup();
         insert_allow_all(&conn);
@@ -1302,10 +1429,22 @@ mod tests {
         });
 
         let result = execute(
-            &conn, "a", &sid, &mid, "shell_exec", "{}",
-            &|_, _| Ok(ToolResult { output: "hello".into(), success: true, duration_ms: 0 }),
+            &conn,
+            "a",
+            &sid,
+            &mid,
+            "shell_exec",
+            "{}",
+            &|_, _| {
+                Ok(ToolResult {
+                    output: "hello".into(),
+                    success: true,
+                    duration_ms: 0,
+                })
+            },
             Some(&hooks),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(result.success);
         assert_eq!(result.output, "HELLO");
@@ -1313,7 +1452,7 @@ mod tests {
 
     #[test]
     fn pre_hook_overrides_args_before_execution() {
-        use super::super::hooks::{ToolHooks, PreOutcome};
+        use super::super::hooks::{PreOutcome, ToolHooks};
         use std::sync::{Arc, Mutex};
 
         let conn = setup();
@@ -1322,24 +1461,37 @@ mod tests {
         let mid = store::log::append_message(&conn, &sid, "assistant", "tool").unwrap();
 
         let mut hooks = ToolHooks::new();
-        hooks.add_pre("override-args", "*", |_, _| {
-            PreOutcome::Continue { args: Some(r#"{"command":"echo overridden"}"#.into()) }
+        hooks.add_pre("override-args", "*", |_, _| PreOutcome::Continue {
+            args: Some(r#"{"command":"echo overridden"}"#.into()),
         });
 
         let received_args: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
         let captured = Arc::clone(&received_args);
 
         let result = execute(
-            &conn, "a", &sid, &mid, "shell_exec", r#"{"command":"original"}"#,
+            &conn,
+            "a",
+            &sid,
+            &mid,
+            "shell_exec",
+            r#"{"command":"original"}"#,
             &|_, args| {
                 *captured.lock().unwrap() = args.to_string();
-                Ok(ToolResult { output: "ok".into(), success: true, duration_ms: 0 })
+                Ok(ToolResult {
+                    output: "ok".into(),
+                    success: true,
+                    duration_ms: 0,
+                })
             },
             Some(&hooks),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(result.success);
         let seen = received_args.lock().unwrap().clone();
-        assert!(seen.contains("overridden"), "args should be overridden: {seen}");
+        assert!(
+            seen.contains("overridden"),
+            "args should be overridden: {seen}"
+        );
     }
 }

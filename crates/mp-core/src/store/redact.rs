@@ -10,48 +10,80 @@ struct Pattern {
 
 macro_rules! pat {
     ($label:expr, $re:expr) => {
-        Pattern { regex: Regex::new($re).unwrap(), _label: $label }
+        Pattern {
+            regex: Regex::new($re).unwrap(),
+            _label: $label,
+        }
     };
 }
 
-static PATTERNS: LazyLock<Vec<Pattern>> = LazyLock::new(|| vec![
-    // 1. OpenAI API keys
-    pat!("openai_key", r"sk-[A-Za-z0-9_-]{20,}"),
-    // 2. AWS access key IDs
-    pat!("aws_access_key", r"AKIA[0-9A-Z]{16}"),
-    // 3. AWS secret access keys (in assignments)
-    pat!("aws_secret_key", r"(?i)aws_secret_access_key\s*[=:]\s*[A-Za-z0-9/+=]{30,}"),
-    // 4. GCP API keys
-    pat!("gcp_api_key", r"AIza[0-9A-Za-z_-]{35}"),
-    // 5. GCP service account JSON private key
-    pat!("gcp_private_key", r"-----BEGIN (RSA |EC )?PRIVATE KEY-----[\s\S]*?-----END (RSA |EC )?PRIVATE KEY-----"),
-    // 6. Azure connection strings
-    pat!("azure_conn_str", r"(?i)DefaultEndpointsProtocol=https?;AccountName=[^;]+;AccountKey=[^;]+"),
-    // 7. Stripe API keys
-    pat!("stripe_key", r"(?:sk|pk|rk)_(test|live)_[0-9a-zA-Z]{10,}"),
-    // 8. Snowflake tokens
-    pat!("snowflake_token", r"(?i)snowflake[_\s]*token\s*[=:]\s*\S+"),
-    // 9. Snowflake connection strings
-    pat!("snowflake_conn", r"(?i)snowflake://[^\s]+"),
-    // 10. JWTs (three base64url dot-separated segments)
-    pat!("jwt", r"eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"),
-    // 11. Bearer tokens
-    pat!("bearer_token", r"(?i)bearer\s+[A-Za-z0-9_\-.~+/]+=*"),
-    // 12. PEM certificates / keys (catch-all for BEGIN...END blocks)
-    pat!("pem_block", r"-----BEGIN [A-Z ]+-----[\s\S]*?-----END [A-Z ]+-----"),
-    // 13. Generic password assignments
-    pat!("password_assign", r#"(?i)password\s*[=:]\s*["']?[^\s"']{8,}["']?"#),
-    // 14. Generic secret assignments
-    pat!("secret_assign", r#"(?i)secret\s*[=:]\s*["']?[^\s"']{8,}["']?"#),
-    // 15. Generic token assignments
-    pat!("token_assign", r#"(?i)token\s*[=:]\s*["']?[^\s"']{8,}["']?"#),
-    // 16. Database connection URIs (postgres, mysql, mongodb, redis)
-    pat!("db_uri", r"(?i)(postgres|postgresql|mysql|mongodb(\+srv)?|redis|rediss)://[^\s]+"),
-    // 17. GitHub personal access tokens
-    pat!("github_pat", r"ghp_[A-Za-z0-9]{36}"),
-    // 18. Anthropic API keys
-    pat!("anthropic_key", r"sk-ant-[A-Za-z0-9_-]{20,}"),
-]);
+static PATTERNS: LazyLock<Vec<Pattern>> = LazyLock::new(|| {
+    vec![
+        // 1. OpenAI API keys
+        pat!("openai_key", r"sk-[A-Za-z0-9_-]{20,}"),
+        // 2. AWS access key IDs
+        pat!("aws_access_key", r"AKIA[0-9A-Z]{16}"),
+        // 3. AWS secret access keys (in assignments)
+        pat!(
+            "aws_secret_key",
+            r"(?i)aws_secret_access_key\s*[=:]\s*[A-Za-z0-9/+=]{30,}"
+        ),
+        // 4. GCP API keys
+        pat!("gcp_api_key", r"AIza[0-9A-Za-z_-]{35}"),
+        // 5. GCP service account JSON private key
+        pat!(
+            "gcp_private_key",
+            r"-----BEGIN (RSA |EC )?PRIVATE KEY-----[\s\S]*?-----END (RSA |EC )?PRIVATE KEY-----"
+        ),
+        // 6. Azure connection strings
+        pat!(
+            "azure_conn_str",
+            r"(?i)DefaultEndpointsProtocol=https?;AccountName=[^;]+;AccountKey=[^;]+"
+        ),
+        // 7. Stripe API keys
+        pat!("stripe_key", r"(?:sk|pk|rk)_(test|live)_[0-9a-zA-Z]{10,}"),
+        // 8. Snowflake tokens
+        pat!("snowflake_token", r"(?i)snowflake[_\s]*token\s*[=:]\s*\S+"),
+        // 9. Snowflake connection strings
+        pat!("snowflake_conn", r"(?i)snowflake://[^\s]+"),
+        // 10. JWTs (three base64url dot-separated segments)
+        pat!(
+            "jwt",
+            r"eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
+        ),
+        // 11. Bearer tokens
+        pat!("bearer_token", r"(?i)bearer\s+[A-Za-z0-9_\-.~+/]+=*"),
+        // 12. PEM certificates / keys (catch-all for BEGIN...END blocks)
+        pat!(
+            "pem_block",
+            r"-----BEGIN [A-Z ]+-----[\s\S]*?-----END [A-Z ]+-----"
+        ),
+        // 13. Generic password assignments
+        pat!(
+            "password_assign",
+            r#"(?i)password\s*[=:]\s*["']?[^\s"']{8,}["']?"#
+        ),
+        // 14. Generic secret assignments
+        pat!(
+            "secret_assign",
+            r#"(?i)secret\s*[=:]\s*["']?[^\s"']{8,}["']?"#
+        ),
+        // 15. Generic token assignments
+        pat!(
+            "token_assign",
+            r#"(?i)token\s*[=:]\s*["']?[^\s"']{8,}["']?"#
+        ),
+        // 16. Database connection URIs (postgres, mysql, mongodb, redis)
+        pat!(
+            "db_uri",
+            r"(?i)(postgres|postgresql|mysql|mongodb(\+srv)?|redis|rediss)://[^\s]+"
+        ),
+        // 17. GitHub personal access tokens
+        pat!("github_pat", r"ghp_[A-Za-z0-9]{36}"),
+        // 18. Anthropic API keys
+        pat!("anthropic_key", r"sk-ant-[A-Za-z0-9_-]{20,}"),
+    ]
+});
 
 /// Redact secrets from text. Returns the redacted text.
 /// This is always-on, non-configurable, and runs before any data is written.
@@ -106,7 +138,8 @@ mod tests {
 
     #[test]
     fn redacts_pem_private_key() {
-        let input = "-----BEGIN RSA PRIVATE KEY-----\nMIIBogIBAAJBALRi...\n-----END RSA PRIVATE KEY-----";
+        let input =
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIBogIBAAJBALRi...\n-----END RSA PRIVATE KEY-----";
         let out = redact(input);
         assert!(!out.contains("MIIBogIBAAJBALRi"));
         assert!(out.contains(REDACTED));
@@ -233,7 +266,13 @@ mod tests {
     fn multiple_secrets_in_one_string() {
         let input = "key sk-abc123longkeyvalue456 and postgres://user:pass@host:5432/db";
         let out = redact(input);
-        assert!(!out.contains("sk-abc123"), "OpenAI key should be redacted: {out}");
-        assert!(!out.contains("user:pass@host"), "DB URI should be redacted: {out}");
+        assert!(
+            !out.contains("sk-abc123"),
+            "OpenAI key should be redacted: {out}"
+        );
+        assert!(
+            !out.contains("user:pass@host"),
+            "DB URI should be redacted: {out}"
+        );
     }
 }

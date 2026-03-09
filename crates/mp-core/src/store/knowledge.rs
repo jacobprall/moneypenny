@@ -72,20 +72,24 @@ pub fn ingest(
 
 /// Get a document by ID.
 pub fn get_document(conn: &Connection, doc_id: &str) -> anyhow::Result<Option<Document>> {
-    let doc = conn.query_row(
-        "SELECT id, path, title, content_hash, metadata, created_at, updated_at
+    let doc = conn
+        .query_row(
+            "SELECT id, path, title, content_hash, metadata, created_at, updated_at
          FROM documents WHERE id = ?1",
-        [doc_id],
-        |r| Ok(Document {
-            id: r.get(0)?,
-            path: r.get(1)?,
-            title: r.get(2)?,
-            content_hash: r.get(3)?,
-            metadata: r.get(4)?,
-            created_at: r.get(5)?,
-            updated_at: r.get(6)?,
-        }),
-    ).ok();
+            [doc_id],
+            |r| {
+                Ok(Document {
+                    id: r.get(0)?,
+                    path: r.get(1)?,
+                    title: r.get(2)?,
+                    content_hash: r.get(3)?,
+                    metadata: r.get(4)?,
+                    created_at: r.get(5)?,
+                    updated_at: r.get(6)?,
+                })
+            },
+        )
+        .ok();
     Ok(doc)
 }
 
@@ -93,19 +97,21 @@ pub fn get_document(conn: &Connection, doc_id: &str) -> anyhow::Result<Option<Do
 pub fn list_documents(conn: &Connection) -> anyhow::Result<Vec<Document>> {
     let mut stmt = conn.prepare(
         "SELECT id, path, title, content_hash, metadata, created_at, updated_at
-         FROM documents ORDER BY created_at DESC"
+         FROM documents ORDER BY created_at DESC",
     )?;
-    let docs = stmt.query_map([], |r| {
-        Ok(Document {
-            id: r.get(0)?,
-            path: r.get(1)?,
-            title: r.get(2)?,
-            content_hash: r.get(3)?,
-            metadata: r.get(4)?,
-            created_at: r.get(5)?,
-            updated_at: r.get(6)?,
-        })
-    })?.collect::<Result<Vec<_>, _>>()?;
+    let docs = stmt
+        .query_map([], |r| {
+            Ok(Document {
+                id: r.get(0)?,
+                path: r.get(1)?,
+                title: r.get(2)?,
+                content_hash: r.get(3)?,
+                metadata: r.get(4)?,
+                created_at: r.get(5)?,
+                updated_at: r.get(6)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(docs)
 }
 
@@ -113,23 +119,30 @@ pub fn list_documents(conn: &Connection) -> anyhow::Result<Vec<Document>> {
 pub fn get_chunks(conn: &Connection, doc_id: &str) -> anyhow::Result<Vec<Chunk>> {
     let mut stmt = conn.prepare(
         "SELECT id, document_id, content, summary, position, created_at
-         FROM chunks WHERE document_id = ?1 ORDER BY position ASC"
+         FROM chunks WHERE document_id = ?1 ORDER BY position ASC",
     )?;
-    let chunks = stmt.query_map([doc_id], |r| {
-        Ok(Chunk {
-            id: r.get(0)?,
-            document_id: r.get(1)?,
-            content: r.get(2)?,
-            summary: r.get(3)?,
-            position: r.get(4)?,
-            created_at: r.get(5)?,
-        })
-    })?.collect::<Result<Vec<_>, _>>()?;
+    let chunks = stmt
+        .query_map([doc_id], |r| {
+            Ok(Chunk {
+                id: r.get(0)?,
+                document_id: r.get(1)?,
+                content: r.get(2)?,
+                summary: r.get(3)?,
+                position: r.get(4)?,
+                created_at: r.get(5)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(chunks)
 }
 
 /// Add a knowledge graph edge.
-pub fn add_edge(conn: &Connection, source: &str, target: &str, relation: &str) -> anyhow::Result<()> {
+pub fn add_edge(
+    conn: &Connection,
+    source: &str,
+    target: &str,
+    relation: &str,
+) -> anyhow::Result<()> {
     conn.execute(
         "INSERT OR IGNORE INTO edges (source_id, target_id, relation) VALUES (?1, ?2, ?3)",
         params![source, target, relation],
@@ -209,18 +222,33 @@ pub fn promote_skill(conn: &Connection, skill_id: &str) -> anyhow::Result<()> {
 
 /// Write or overwrite the FLOAT32 content embedding for a knowledge chunk.
 pub fn set_chunk_embedding(conn: &Connection, chunk_id: &str, blob: &[u8]) -> anyhow::Result<()> {
+    set_chunk_embedding_with_meta(conn, chunk_id, blob, None, None)
+}
+
+/// Write or overwrite the FLOAT32 content embedding for a knowledge chunk and
+/// persist embedding provenance metadata.
+pub fn set_chunk_embedding_with_meta(
+    conn: &Connection,
+    chunk_id: &str,
+    blob: &[u8],
+    embedding_model: Option<&str>,
+    embedding_content_hash: Option<&str>,
+) -> anyhow::Result<()> {
     conn.execute(
-        "UPDATE chunks SET content_embedding = ?1 WHERE id = ?2",
-        rusqlite::params![blob, chunk_id],
+        "UPDATE chunks
+         SET content_embedding = ?1,
+             embedding_model = ?2,
+             embedding_content_hash = ?3
+         WHERE id = ?4",
+        rusqlite::params![blob, embedding_model, embedding_content_hash, chunk_id],
     )?;
     Ok(())
 }
 
 /// Return (id, content) for all chunks that have no content_embedding yet.
 pub fn chunks_without_embedding(conn: &Connection) -> anyhow::Result<Vec<(String, String)>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, content FROM chunks WHERE content_embedding IS NULL",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT id, content FROM chunks WHERE content_embedding IS NULL")?;
     let rows = stmt
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<Result<Vec<_>, _>>()?;
@@ -277,7 +305,14 @@ mod tests {
     fn ingest_creates_document_and_chunks() {
         let conn = setup();
         let content = "# Title\n\nSome content here.\n\n# Section 2\n\nMore content.";
-        let (doc_id, count) = ingest(&conn, Some("/docs/test.md"), Some("Test Doc"), content, None).unwrap();
+        let (doc_id, count) = ingest(
+            &conn,
+            Some("/docs/test.md"),
+            Some("Test Doc"),
+            content,
+            None,
+        )
+        .unwrap();
 
         let doc = get_document(&conn, &doc_id).unwrap().unwrap();
         assert_eq!(doc.title.as_deref(), Some("Test Doc"));
@@ -336,7 +371,14 @@ mod tests {
     #[test]
     fn add_and_get_skill() {
         let conn = setup();
-        let id = add_skill(&conn, "sql-query", "Run SQL queries", "# SQL Skill\n...", None).unwrap();
+        let id = add_skill(
+            &conn,
+            "sql-query",
+            "Run SQL queries",
+            "# SQL Skill\n...",
+            None,
+        )
+        .unwrap();
         let skill = get_skill(&conn, &id).unwrap().unwrap();
         assert_eq!(skill.name, "sql-query");
         assert_eq!(skill.usage_count, 0);

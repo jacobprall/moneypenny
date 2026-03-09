@@ -12,14 +12,21 @@ pub struct ScratchEntry {
 }
 
 /// Set a scratch entry (insert or update by session_id + key).
-pub fn set(conn: &Connection, session_id: &str, key: &str, content: &str) -> anyhow::Result<String> {
+pub fn set(
+    conn: &Connection,
+    session_id: &str,
+    key: &str,
+    content: &str,
+) -> anyhow::Result<String> {
     let now = chrono::Utc::now().timestamp();
 
-    let existing_id: Option<String> = conn.query_row(
-        "SELECT id FROM scratch WHERE session_id = ?1 AND key = ?2",
-        params![session_id, key],
-        |r| r.get(0),
-    ).ok();
+    let existing_id: Option<String> = conn
+        .query_row(
+            "SELECT id FROM scratch WHERE session_id = ?1 AND key = ?2",
+            params![session_id, key],
+            |r| r.get(0),
+        )
+        .ok();
 
     match existing_id {
         Some(id) => {
@@ -43,19 +50,23 @@ pub fn set(conn: &Connection, session_id: &str, key: &str, content: &str) -> any
 
 /// Get a scratch entry by session and key.
 pub fn get(conn: &Connection, session_id: &str, key: &str) -> anyhow::Result<Option<ScratchEntry>> {
-    let entry = conn.query_row(
-        "SELECT id, session_id, key, content, created_at, updated_at
+    let entry = conn
+        .query_row(
+            "SELECT id, session_id, key, content, created_at, updated_at
          FROM scratch WHERE session_id = ?1 AND key = ?2",
-        params![session_id, key],
-        |r| Ok(ScratchEntry {
-            id: r.get(0)?,
-            session_id: r.get(1)?,
-            key: r.get(2)?,
-            content: r.get(3)?,
-            created_at: r.get(4)?,
-            updated_at: r.get(5)?,
-        }),
-    ).ok();
+            params![session_id, key],
+            |r| {
+                Ok(ScratchEntry {
+                    id: r.get(0)?,
+                    session_id: r.get(1)?,
+                    key: r.get(2)?,
+                    content: r.get(3)?,
+                    created_at: r.get(4)?,
+                    updated_at: r.get(5)?,
+                })
+            },
+        )
+        .ok();
     Ok(entry)
 }
 
@@ -63,18 +74,20 @@ pub fn get(conn: &Connection, session_id: &str, key: &str) -> anyhow::Result<Opt
 pub fn list(conn: &Connection, session_id: &str) -> anyhow::Result<Vec<ScratchEntry>> {
     let mut stmt = conn.prepare(
         "SELECT id, session_id, key, content, created_at, updated_at
-         FROM scratch WHERE session_id = ?1 ORDER BY created_at ASC"
+         FROM scratch WHERE session_id = ?1 ORDER BY created_at ASC",
     )?;
-    let entries = stmt.query_map([session_id], |r| {
-        Ok(ScratchEntry {
-            id: r.get(0)?,
-            session_id: r.get(1)?,
-            key: r.get(2)?,
-            content: r.get(3)?,
-            created_at: r.get(4)?,
-            updated_at: r.get(5)?,
-        })
-    })?.collect::<Result<Vec<_>, _>>()?;
+    let entries = stmt
+        .query_map([session_id], |r| {
+            Ok(ScratchEntry {
+                id: r.get(0)?,
+                session_id: r.get(1)?,
+                key: r.get(2)?,
+                content: r.get(3)?,
+                created_at: r.get(4)?,
+                updated_at: r.get(5)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(entries)
 }
 

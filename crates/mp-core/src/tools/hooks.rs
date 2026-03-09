@@ -42,7 +42,6 @@
 ///     }
 /// });
 /// ```
-
 use super::registry::ToolResult;
 
 // =========================================================================
@@ -82,11 +81,19 @@ pub enum PostOutcome {
 // Hook storage
 // =========================================================================
 
-type PreFn  = Box<dyn Fn(&HookContext, &str)          -> PreOutcome  + Send + Sync>;
-type PostFn = Box<dyn Fn(&HookContext, &ToolResult)   -> PostOutcome + Send + Sync>;
+type PreFn = Box<dyn Fn(&HookContext, &str) -> PreOutcome + Send + Sync>;
+type PostFn = Box<dyn Fn(&HookContext, &ToolResult) -> PostOutcome + Send + Sync>;
 
-struct PreEntry  { name: String, pattern: String, f: PreFn  }
-struct PostEntry { name: String, pattern: String, f: PostFn }
+struct PreEntry {
+    name: String,
+    pattern: String,
+    f: PreFn,
+}
+struct PostEntry {
+    name: String,
+    pattern: String,
+    f: PostFn,
+}
 
 // =========================================================================
 // Registry
@@ -97,17 +104,22 @@ struct PostEntry { name: String, pattern: String, f: PostFn }
 /// Build one instance per gateway/session and pass it to
 /// [`super::registry::execute`] as `Option<&ToolHooks>`.
 pub struct ToolHooks {
-    pre:  Vec<PreEntry>,
+    pre: Vec<PreEntry>,
     post: Vec<PostEntry>,
 }
 
 impl Default for ToolHooks {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ToolHooks {
     pub fn new() -> Self {
-        Self { pre: Vec::new(), post: Vec::new() }
+        Self {
+            pre: Vec::new(),
+            post: Vec::new(),
+        }
     }
 
     /// Register a pre-execution hook for tools whose name matches `pattern`.
@@ -118,7 +130,11 @@ impl ToolHooks {
     where
         F: Fn(&HookContext, &str) -> PreOutcome + Send + Sync + 'static,
     {
-        self.pre.push(PreEntry { name: name.into(), pattern: pattern.into(), f: Box::new(f) });
+        self.pre.push(PreEntry {
+            name: name.into(),
+            pattern: pattern.into(),
+            f: Box::new(f),
+        });
     }
 
     /// Register a post-execution hook for tools whose name matches `pattern`.
@@ -129,7 +145,11 @@ impl ToolHooks {
     where
         F: Fn(&HookContext, &ToolResult) -> PostOutcome + Send + Sync + 'static,
     {
-        self.post.push(PostEntry { name: name.into(), pattern: pattern.into(), f: Box::new(f) });
+        self.post.push(PostEntry {
+            name: name.into(),
+            pattern: pattern.into(),
+            f: Box::new(f),
+        });
     }
 
     /// Run all matching pre-hooks in order.
@@ -153,7 +173,9 @@ impl ToolHooks {
                     tracing::debug!(hook = %entry.name, tool = %ctx.tool_name, "pre-hook aborted");
                     return Err(msg);
                 }
-                PreOutcome::Continue { args: Some(new_args) } => {
+                PreOutcome::Continue {
+                    args: Some(new_args),
+                } => {
                     tracing::trace!(hook = %entry.name, tool = %ctx.tool_name, "pre-hook overrode args");
                     current = Some(new_args);
                 }
@@ -168,11 +190,7 @@ impl ToolHooks {
     ///
     /// Returns the (possibly modified) output string, or `None` if no hook
     /// changed anything.
-    pub(super) fn run_post(
-        &self,
-        ctx: &HookContext,
-        result: &ToolResult,
-    ) -> Option<String> {
+    pub(super) fn run_post(&self, ctx: &HookContext, result: &ToolResult) -> Option<String> {
         let mut current: Option<String> = None;
 
         for entry in &self.post {
@@ -181,7 +199,10 @@ impl ToolHooks {
             }
 
             let effective = if let Some(ref s) = current {
-                ToolResult { output: s.clone(), ..*result }
+                ToolResult {
+                    output: s.clone(),
+                    ..*result
+                }
             } else {
                 result.clone()
             };
@@ -234,7 +255,11 @@ mod tests {
     }
 
     fn ok_result(output: &str) -> ToolResult {
-        ToolResult { output: output.into(), success: true, duration_ms: 0 }
+        ToolResult {
+            output: output.into(),
+            success: true,
+            duration_ms: 0,
+        }
     }
 
     // =========================================================================
@@ -300,11 +325,13 @@ mod tests {
     #[test]
     fn pre_hook_override_args_replaces_arguments() {
         let mut hooks = ToolHooks::new();
-        hooks.add_pre("sanitize", "shell_exec", |_, _args| {
-            PreOutcome::Continue { args: Some(r#"{"command":"echo safe"}"#.into()) }
+        hooks.add_pre("sanitize", "shell_exec", |_, _args| PreOutcome::Continue {
+            args: Some(r#"{"command":"echo safe"}"#.into()),
         });
 
-        let result = hooks.run_pre(&ctx("shell_exec"), r#"{"command":"original"}"#).unwrap();
+        let result = hooks
+            .run_pre(&ctx("shell_exec"), r#"{"command":"original"}"#)
+            .unwrap();
         assert_eq!(result.as_deref(), Some(r#"{"command":"echo safe"}"#));
     }
 
@@ -312,12 +339,12 @@ mod tests {
     fn pre_hooks_chain_args() {
         let mut hooks = ToolHooks::new();
         // First hook appends " STEP1"
-        hooks.add_pre("h1", "*", |_, args| {
-            PreOutcome::Continue { args: Some(format!("{args} STEP1")) }
+        hooks.add_pre("h1", "*", |_, args| PreOutcome::Continue {
+            args: Some(format!("{args} STEP1")),
         });
         // Second hook sees modified args and appends " STEP2"
-        hooks.add_pre("h2", "*", |_, args| {
-            PreOutcome::Continue { args: Some(format!("{args} STEP2")) }
+        hooks.add_pre("h2", "*", |_, args| PreOutcome::Continue {
+            args: Some(format!("{args} STEP2")),
         });
 
         let result = hooks.run_pre(&ctx("any_tool"), "BASE").unwrap();
@@ -327,8 +354,12 @@ mod tests {
     #[test]
     fn pre_hook_first_abort_wins() {
         let mut hooks = ToolHooks::new();
-        hooks.add_pre("abort-first", "*", |_, _| PreOutcome::Abort("first abort".into()));
-        hooks.add_pre("abort-second", "*", |_, _| PreOutcome::Abort("second abort".into()));
+        hooks.add_pre("abort-first", "*", |_, _| {
+            PreOutcome::Abort("first abort".into())
+        });
+        hooks.add_pre("abort-second", "*", |_, _| {
+            PreOutcome::Abort("second abort".into())
+        });
 
         let err = hooks.run_pre(&ctx("any_tool"), "args").unwrap_err();
         assert_eq!(err, "first abort");
@@ -337,7 +368,9 @@ mod tests {
     #[test]
     fn pre_hook_pattern_filters_by_tool() {
         let mut hooks = ToolHooks::new();
-        hooks.add_pre("shell-only", "shell_exec", |_, _| PreOutcome::Abort("blocked".into()));
+        hooks.add_pre("shell-only", "shell_exec", |_, _| {
+            PreOutcome::Abort("blocked".into())
+        });
 
         // Matches shell_exec
         assert!(hooks.run_pre(&ctx("shell_exec"), "{}").is_err());
@@ -371,7 +404,9 @@ mod tests {
             PostOutcome::OverrideOutput("TRUNCATED".into())
         });
 
-        let out = hooks.run_post(&ctx("http_request"), &ok_result("long output")).unwrap();
+        let out = hooks
+            .run_post(&ctx("http_request"), &ok_result("long output"))
+            .unwrap();
         assert_eq!(out, "TRUNCATED");
     }
 
@@ -385,7 +420,9 @@ mod tests {
             PostOutcome::OverrideOutput(format!("{} B", r.output))
         });
 
-        let out = hooks.run_post(&ctx("any_tool"), &ok_result("base")).unwrap();
+        let out = hooks
+            .run_post(&ctx("any_tool"), &ok_result("base"))
+            .unwrap();
         assert_eq!(out, "base A B");
     }
 
@@ -396,8 +433,16 @@ mod tests {
             PostOutcome::OverrideOutput("transformed".into())
         });
 
-        assert!(hooks.run_post(&ctx("http_request"), &ok_result("out")).is_some());
-        assert!(hooks.run_post(&ctx("file_read"), &ok_result("out")).is_none());
+        assert!(
+            hooks
+                .run_post(&ctx("http_request"), &ok_result("out"))
+                .is_some()
+        );
+        assert!(
+            hooks
+                .run_post(&ctx("file_read"), &ok_result("out"))
+                .is_none()
+        );
     }
 
     #[test]
@@ -411,7 +456,11 @@ mod tests {
             }
         });
 
-        let failed = ToolResult { output: "timeout".into(), success: false, duration_ms: 100 };
+        let failed = ToolResult {
+            output: "timeout".into(),
+            success: false,
+            duration_ms: 100,
+        };
         let out = hooks.run_post(&ctx("shell_exec"), &failed).unwrap();
         assert_eq!(out, "[ERROR] timeout");
     }

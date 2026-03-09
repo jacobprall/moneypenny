@@ -37,5 +37,8 @@ fn vector_version_exists() {
     let v: String = conn
         .query_row("SELECT vector_version()", [], |r| r.get(0))
         .unwrap_or_else(|_| "unavailable".into());
-    assert!(!v.is_empty(), "vector_version should return a non-empty string");
+    assert!(
+        !v.is_empty(),
+        "vector_version should return a non-empty string"
+    );
 }

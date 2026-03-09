@@ -1,3 +1,4 @@
+use rusqlite::{Connection, params};
 /// Pure-Rust MCP (Model Context Protocol) stdio client.
 ///
 /// Implements the 2024-11-05 protocol version over a subprocess stdin/stdout
@@ -12,10 +13,8 @@
 /// `mcp:{server_name}:{mcp_tool_name}`.  The full server configuration is
 /// serialised into the `content` column so that dispatch can re-connect to
 /// the correct server without any global state.
-
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Stdio};
-use rusqlite::{Connection, params};
 
 use crate::config::McpServerConfig;
 use crate::tools::registry::ToolResult;
@@ -68,16 +67,27 @@ impl McpClient {
             cmd.env(k, v);
         }
 
-        let mut child = cmd.spawn()
+        let mut child = cmd
+            .spawn()
             .map_err(|e| anyhow::anyhow!("failed to spawn MCP server '{}': {e}", cfg.command))?;
 
-        let stdin = child.stdin.take()
+        let stdin = child
+            .stdin
+            .take()
             .ok_or_else(|| anyhow::anyhow!("MCP server has no stdin pipe"))?;
         let stdout = BufReader::new(
-            child.stdout.take().ok_or_else(|| anyhow::anyhow!("MCP server has no stdout pipe"))?
+            child
+                .stdout
+                .take()
+                .ok_or_else(|| anyhow::anyhow!("MCP server has no stdout pipe"))?,
         );
 
-        let mut client = McpClient { child, stdin, stdout, next_id: 1 };
+        let mut client = McpClient {
+            child,
+            stdin,
+            stdout,
+            next_id: 1,
+        };
         client.initialize()?;
         Ok(client)
     }
@@ -147,14 +157,17 @@ impl McpClient {
     }
 
     fn initialize(&mut self) -> anyhow::Result<()> {
-        self.send_request("initialize", serde_json::json!({
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": {
-                "name": "moneypenny",
-                "version": env!("CARGO_PKG_VERSION"),
-            },
-        }))?;
+        self.send_request(
+            "initialize",
+            serde_json::json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "moneypenny",
+                    "version": env!("CARGO_PKG_VERSION"),
+                },
+            }),
+        )?;
         self.send_notification("notifications/initialized", serde_json::json!({}))?;
         Ok(())
     }
@@ -166,17 +179,25 @@ impl McpClient {
     /// List all tools advertised by this MCP server.
     pub fn list_tools(&mut self) -> anyhow::Result<Vec<McpTool>> {
         let result = self.send_request("tools/list", serde_json::json!({}))?;
-        let tools = result["tools"].as_array()
+        let tools = result["tools"]
+            .as_array()
             .ok_or_else(|| anyhow::anyhow!("MCP tools/list: 'tools' array missing"))?;
 
         let mut out = Vec::new();
         for t in tools {
             let name = t["name"].as_str().unwrap_or("").to_string();
             let description = t["description"].as_str().unwrap_or("").to_string();
-            let schema = serde_json::to_string(&t.get("inputSchema")
-                .cloned().unwrap_or_else(|| serde_json::json!({"type":"object","properties":{}})))?;
+            let schema = serde_json::to_string(
+                &t.get("inputSchema")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({"type":"object","properties":{}})),
+            )?;
             if !name.is_empty() {
-                out.push(McpTool { name, description, input_schema: schema });
+                out.push(McpTool {
+                    name,
+                    description,
+                    input_schema: schema,
+                });
             }
         }
         Ok(out)
@@ -188,13 +209,17 @@ impl McpClient {
         tool_name: &str,
         arguments: serde_json::Value,
     ) -> anyhow::Result<String> {
-        let result = self.send_request("tools/call", serde_json::json!({
-            "name": tool_name,
-            "arguments": arguments,
-        }))?;
+        let result = self.send_request(
+            "tools/call",
+            serde_json::json!({
+                "name": tool_name,
+                "arguments": arguments,
+            }),
+        )?;
 
         // MCP content is an array of {type, text} items
-        let content = result["content"].as_array()
+        let content = result["content"]
+            .as_array()
             .map(|arr| {
                 arr.iter()
                     .filter_map(|item| item["text"].as_str())
@@ -286,8 +311,7 @@ fn register_tool(
         server_args: server.args.clone(),
         server_env: server.env.clone(),
         mcp_tool_name: tool.name.clone(),
-        input_schema: serde_json::from_str(&tool.input_schema)
-            .unwrap_or(serde_json::json!({})),
+        input_schema: serde_json::from_str(&tool.input_schema).unwrap_or(serde_json::json!({})),
     };
     let content = serde_json::to_string(&def)?;
     let name = registered_name(&server.name, &tool.name);
@@ -304,7 +328,8 @@ fn register_tool(
             tool.description,
             content,
             tid,
-            now, now,
+            now,
+            now,
         ],
     )?;
     Ok(())
@@ -329,18 +354,16 @@ pub fn is_mcp_tool(conn: &Connection, tool_name: &str) -> bool {
 
 /// Call a registered MCP tool.  Looks up the stored `StoredMcpDef`, spawns
 /// a fresh server process, calls the tool, and returns the result.
-pub fn dispatch(
-    conn: &Connection,
-    tool_name: &str,
-    arguments: &str,
-) -> anyhow::Result<ToolResult> {
+pub fn dispatch(conn: &Connection, tool_name: &str, arguments: &str) -> anyhow::Result<ToolResult> {
     let start = std::time::Instant::now();
 
-    let content: String = conn.query_row(
-        "SELECT content FROM skills WHERE name = ?1",
-        [tool_name],
-        |r| r.get(0),
-    ).map_err(|_| anyhow::anyhow!("MCP tool '{tool_name}' not found in skills"))?;
+    let content: String = conn
+        .query_row(
+            "SELECT content FROM skills WHERE name = ?1",
+            [tool_name],
+            |r| r.get(0),
+        )
+        .map_err(|_| anyhow::anyhow!("MCP tool '{tool_name}' not found in skills"))?;
 
     let def: StoredMcpDef = serde_json::from_str(&content)
         .map_err(|e| anyhow::anyhow!("corrupt MCP tool definition for '{tool_name}': {e}"))?;
@@ -357,15 +380,19 @@ pub fn dispatch(
     let output = client.call_tool(&def.mcp_tool_name, args)?;
     let duration_ms = start.elapsed().as_millis() as u64;
 
-    Ok(ToolResult { output, success: true, duration_ms })
+    Ok(ToolResult {
+        output,
+        success: true,
+        duration_ms,
+    })
 }
 
 /// Load all registered MCP tools as `mp_llm::types::ToolDef` for passing to
 /// the LLM.  Called during `agent_turn` to expose dynamically-discovered tools.
 pub fn load_tool_defs(conn: &Connection) -> Vec<(String, String, serde_json::Value)> {
-    let mut stmt = match conn.prepare(
-        "SELECT name, description, content FROM skills WHERE tool_id LIKE 'mcp:%'"
-    ) {
+    let mut stmt = match conn
+        .prepare("SELECT name, description, content FROM skills WHERE tool_id LIKE 'mcp:%'")
+    {
         Ok(s) => s,
         Err(_) => return vec![],
     };
@@ -406,12 +433,18 @@ mod tests {
 
     #[test]
     fn registered_name_format() {
-        assert_eq!(registered_name("filesystem", "read_file"), "filesystem__read_file");
+        assert_eq!(
+            registered_name("filesystem", "read_file"),
+            "filesystem__read_file"
+        );
     }
 
     #[test]
     fn tool_id_format() {
-        assert_eq!(tool_id("filesystem", "read_file"), "mcp:filesystem:read_file");
+        assert_eq!(
+            tool_id("filesystem", "read_file"),
+            "mcp:filesystem:read_file"
+        );
     }
 
     #[test]

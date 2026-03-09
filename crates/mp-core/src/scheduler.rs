@@ -120,65 +120,82 @@ pub fn create_job(conn: &Connection, job: &NewJob) -> anyhow::Result<String> {
          created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
-            id, job.agent_id, job.name, job.description, job.schedule, job.next_run_at,
-            job.job_type, job.payload,
+            id,
+            job.agent_id,
+            job.name,
+            job.description,
+            job.schedule,
+            job.next_run_at,
+            job.job_type,
+            job.payload,
             job.max_retries.unwrap_or(0),
             job.retry_delay_ms.unwrap_or(5000),
             job.timeout_ms.unwrap_or(30000),
             job.overlap_policy.as_deref().unwrap_or("skip"),
-            now, now,
+            now,
+            now,
         ],
     )?;
     Ok(id)
 }
 
 pub fn get_job(conn: &Connection, job_id: &str) -> anyhow::Result<Option<Job>> {
-    let job = conn.query_row(
-        "SELECT id, agent_id, name, description, schedule, next_run_at, last_run_at,
+    let job = conn
+        .query_row(
+            "SELECT id, agent_id, name, description, schedule, next_run_at, last_run_at,
                 job_type, payload, max_retries, retry_delay_ms, timeout_ms, overlap_policy,
                 status, enabled, created_at, updated_at
          FROM jobs WHERE id = ?1",
-        [job_id],
-        |r| Ok(Job {
-            id: r.get(0)?,
-            agent_id: r.get(1)?,
-            name: r.get(2)?,
-            description: r.get(3)?,
-            schedule: r.get(4)?,
-            next_run_at: r.get(5)?,
-            last_run_at: r.get(6)?,
-            job_type: r.get(7)?,
-            payload: r.get(8)?,
-            max_retries: r.get(9)?,
-            retry_delay_ms: r.get(10)?,
-            timeout_ms: r.get(11)?,
-            overlap_policy: r.get(12)?,
-            status: r.get(13)?,
-            enabled: r.get::<_, i64>(14)? != 0,
-            created_at: r.get(15)?,
-            updated_at: r.get(16)?,
-        }),
-    ).ok();
+            [job_id],
+            |r| {
+                Ok(Job {
+                    id: r.get(0)?,
+                    agent_id: r.get(1)?,
+                    name: r.get(2)?,
+                    description: r.get(3)?,
+                    schedule: r.get(4)?,
+                    next_run_at: r.get(5)?,
+                    last_run_at: r.get(6)?,
+                    job_type: r.get(7)?,
+                    payload: r.get(8)?,
+                    max_retries: r.get(9)?,
+                    retry_delay_ms: r.get(10)?,
+                    timeout_ms: r.get(11)?,
+                    overlap_policy: r.get(12)?,
+                    status: r.get(13)?,
+                    enabled: r.get::<_, i64>(14)? != 0,
+                    created_at: r.get(15)?,
+                    updated_at: r.get(16)?,
+                })
+            },
+        )
+        .ok();
     Ok(job)
 }
 
 pub fn list_jobs(conn: &Connection, agent_id: Option<&str>) -> anyhow::Result<Vec<Job>> {
     let query = match agent_id {
-        Some(_) => "SELECT id, agent_id, name, description, schedule, next_run_at, last_run_at,
+        Some(_) => {
+            "SELECT id, agent_id, name, description, schedule, next_run_at, last_run_at,
                 job_type, payload, max_retries, retry_delay_ms, timeout_ms, overlap_policy,
                 status, enabled, created_at, updated_at
-         FROM jobs WHERE agent_id = ?1 ORDER BY next_run_at ASC",
-        None => "SELECT id, agent_id, name, description, schedule, next_run_at, last_run_at,
+         FROM jobs WHERE agent_id = ?1 ORDER BY next_run_at ASC"
+        }
+        None => {
+            "SELECT id, agent_id, name, description, schedule, next_run_at, last_run_at,
                 job_type, payload, max_retries, retry_delay_ms, timeout_ms, overlap_policy,
                 status, enabled, created_at, updated_at
-         FROM jobs ORDER BY next_run_at ASC",
+         FROM jobs ORDER BY next_run_at ASC"
+        }
     };
 
     let mut stmt = conn.prepare(query)?;
     let jobs = if let Some(aid) = agent_id {
-        stmt.query_map([aid], row_to_job)?.collect::<Result<Vec<_>, _>>()?
+        stmt.query_map([aid], row_to_job)?
+            .collect::<Result<Vec<_>, _>>()?
     } else {
-        stmt.query_map([], row_to_job)?.collect::<Result<Vec<_>, _>>()?
+        stmt.query_map([], row_to_job)?
+            .collect::<Result<Vec<_>, _>>()?
     };
     Ok(jobs)
 }
@@ -263,22 +280,24 @@ pub fn get_runs(conn: &Connection, job_id: &str, limit: usize) -> anyhow::Result
     let mut stmt = conn.prepare(
         "SELECT id, job_id, agent_id, started_at, ended_at, status, result,
                 policy_decision, retry_count, created_at
-         FROM job_runs WHERE job_id = ?1 ORDER BY rowid DESC LIMIT ?2"
+         FROM job_runs WHERE job_id = ?1 ORDER BY rowid DESC LIMIT ?2",
     )?;
-    let runs = stmt.query_map(params![job_id, limit], |r| {
-        Ok(JobRun {
-            id: r.get(0)?,
-            job_id: r.get(1)?,
-            agent_id: r.get(2)?,
-            started_at: r.get(3)?,
-            ended_at: r.get(4)?,
-            status: r.get(5)?,
-            result: r.get(6)?,
-            policy_decision: r.get(7)?,
-            retry_count: r.get(8)?,
-            created_at: r.get(9)?,
-        })
-    })?.collect::<Result<Vec<_>, _>>()?;
+    let runs = stmt
+        .query_map(params![job_id, limit], |r| {
+            Ok(JobRun {
+                id: r.get(0)?,
+                job_id: r.get(1)?,
+                agent_id: r.get(2)?,
+                started_at: r.get(3)?,
+                ended_at: r.get(4)?,
+                status: r.get(5)?,
+                result: r.get(6)?,
+                policy_decision: r.get(7)?,
+                retry_count: r.get(8)?,
+                created_at: r.get(9)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(runs)
 }
 
@@ -303,9 +322,11 @@ pub fn poll_due_jobs(conn: &Connection, now: i64) -> anyhow::Result<Vec<Job>> {
                 status, enabled, created_at, updated_at
          FROM jobs
          WHERE enabled = 1 AND status = 'active' AND next_run_at <= ?1
-         ORDER BY next_run_at ASC"
+         ORDER BY next_run_at ASC",
     )?;
-    let jobs = stmt.query_map([now], row_to_job)?.collect::<Result<Vec<_>, _>>()?;
+    let jobs = stmt
+        .query_map([now], row_to_job)?
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(jobs)
 }
 
@@ -320,7 +341,10 @@ pub fn dispatch_job(
         let run_id = start_run(conn, &job.id, &job.agent_id)?;
         finish_run(conn, &run_id, "skipped", Some("overlap policy: skip"), None)?;
         let runs = get_runs(conn, &job.id, 1)?;
-        return runs.into_iter().next().ok_or_else(|| anyhow::anyhow!("run disappeared after finish (overlap skip)"));
+        return runs
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("run disappeared after finish (overlap skip)"));
     }
 
     // Policy check
@@ -338,13 +362,18 @@ pub fn dispatch_job(
 
     if matches!(policy_decision.effect, crate::policy::Effect::Deny) {
         finish_run(
-            conn, &run_id, "denied",
+            conn,
+            &run_id,
+            "denied",
             Some(policy_decision.reason.as_deref().unwrap_or("policy denied")),
             Some("denied"),
         )?;
         update_schedule(conn, &job.id)?;
         let runs = get_runs(conn, &job.id, 1)?;
-        return runs.into_iter().next().ok_or_else(|| anyhow::anyhow!("run disappeared after finish (policy denied)"));
+        return runs
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("run disappeared after finish (policy denied)"));
     }
 
     // Execute with retry
@@ -358,7 +387,10 @@ pub fn dispatch_job(
                 finish_run(conn, &run_id, "success", Some(&output), Some("allowed"))?;
                 update_schedule(conn, &job.id)?;
                 let runs = get_runs(conn, &job.id, 1)?;
-                return runs.into_iter().next().ok_or_else(|| anyhow::anyhow!("run disappeared after finish (success)"));
+                return runs
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("run disappeared after finish (success)"));
             }
             Err(e) => {
                 last_error = e.to_string();
@@ -371,13 +403,17 @@ pub fn dispatch_job(
     }
 
     finish_run(
-        conn, &run_id, "error",
+        conn,
+        &run_id,
+        "error",
         Some(&format!("Failed after {attempt} attempts: {last_error}")),
         Some("allowed"),
     )?;
     update_schedule(conn, &job.id)?;
     let runs = get_runs(conn, &job.id, 1)?;
-    runs.into_iter().next().ok_or_else(|| anyhow::anyhow!("run disappeared after finish (error)"))
+    runs.into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("run disappeared after finish (error)"))
 }
 
 fn update_schedule(conn: &Connection, job_id: &str) -> anyhow::Result<()> {
@@ -402,41 +438,42 @@ pub fn execute_job_payload(conn: &Connection, job: &Job) -> anyhow::Result<Strin
         "js" => {
             let payload: serde_json::Value = serde_json::from_str(&job.payload)
                 .unwrap_or_else(|_| serde_json::json!({ "script": &job.payload }));
-            let script = payload["script"]
-                .as_str()
-                .unwrap_or(&job.payload);
-            let wrapper = format!(
-                "(function() {{ {} }})()",
-                script,
-            );
+            let script = payload["script"].as_str().unwrap_or(&job.payload);
+            let wrapper = format!("(function() {{ {} }})()", script,);
             crate::tools::runtime::eval_js(conn, &wrapper)
         }
         "prompt" => {
             let payload: serde_json::Value = serde_json::from_str(&job.payload)
                 .unwrap_or_else(|_| serde_json::json!({ "message": &job.payload }));
-            let message = payload["message"]
-                .as_str()
-                .unwrap_or(&job.payload);
+            let message = payload["message"].as_str().unwrap_or(&job.payload);
             Ok(format!("prompt:{message}"))
         }
         "tool" => {
-            let payload: serde_json::Value = serde_json::from_str(&job.payload)
-                .unwrap_or_else(|_| serde_json::json!({}));
+            let payload: serde_json::Value =
+                serde_json::from_str(&job.payload).unwrap_or_else(|_| serde_json::json!({}));
             let tool_name = payload["tool"]
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("tool job payload missing 'tool' field"))?;
-            let arguments = payload.get("arguments")
+            let arguments = payload
+                .get("arguments")
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "{}".to_string());
             let result = crate::tools::runtime::dispatch_js(conn, tool_name, &arguments)?;
             Ok(result.output)
         }
-        _ => Ok(format!("executed job '{}' (type={})", job.name, job.job_type)),
+        _ => Ok(format!(
+            "executed job '{}' (type={})",
+            job.name, job.job_type
+        )),
     }
 }
 
 /// List recent job runs, optionally filtered by job ID.
-pub fn list_runs(conn: &Connection, job_id: Option<&str>, limit: usize) -> anyhow::Result<Vec<JobRun>> {
+pub fn list_runs(
+    conn: &Connection,
+    job_id: Option<&str>,
+    limit: usize,
+) -> anyhow::Result<Vec<JobRun>> {
     let lim = i64::try_from(limit).unwrap_or(20);
     let mut stmt = conn.prepare(
         "SELECT id, job_id, agent_id, started_at, ended_at, status, result, policy_decision, retry_count, created_at
@@ -445,23 +482,24 @@ pub fn list_runs(conn: &Connection, job_id: Option<&str>, limit: usize) -> anyho
          ORDER BY created_at DESC
          LIMIT ?2",
     )?;
-    let rows = stmt.query_map(params![job_id, lim], |r| {
-        Ok(JobRun {
-            id: r.get(0)?,
-            job_id: r.get(1)?,
-            agent_id: r.get(2)?,
-            started_at: r.get(3)?,
-            ended_at: r.get(4)?,
-            status: r.get(5)?,
-            result: r.get(6)?,
-            policy_decision: r.get(7)?,
-            retry_count: r.get(8)?,
-            created_at: r.get(9)?,
-        })
-    })?.collect::<Result<Vec<_>, _>>()?;
+    let rows = stmt
+        .query_map(params![job_id, lim], |r| {
+            Ok(JobRun {
+                id: r.get(0)?,
+                job_id: r.get(1)?,
+                agent_id: r.get(2)?,
+                started_at: r.get(3)?,
+                ended_at: r.get(4)?,
+                status: r.get(5)?,
+                result: r.get(6)?,
+                policy_decision: r.get(7)?,
+                retry_count: r.get(8)?,
+                created_at: r.get(9)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -521,11 +559,15 @@ mod tests {
     fn list_jobs_by_agent() {
         let conn = setup();
         create_job(&conn, &sample_job()).unwrap();
-        create_job(&conn, &NewJob {
-            agent_id: "b".into(),
-            name: "other".into(),
-            ..sample_job()
-        }).unwrap();
+        create_job(
+            &conn,
+            &NewJob {
+                agent_id: "b".into(),
+                name: "other".into(),
+                ..sample_job()
+            },
+        )
+        .unwrap();
 
         let all = list_jobs(&conn, None).unwrap();
         assert_eq!(all.len(), 2);
@@ -601,15 +643,23 @@ mod tests {
     #[test]
     fn poll_finds_due_jobs() {
         let conn = setup();
-        create_job(&conn, &NewJob {
-            next_run_at: 500,
-            ..sample_job()
-        }).unwrap();
-        create_job(&conn, &NewJob {
-            name: "future".into(),
-            next_run_at: 9999,
-            ..sample_job()
-        }).unwrap();
+        create_job(
+            &conn,
+            &NewJob {
+                next_run_at: 500,
+                ..sample_job()
+            },
+        )
+        .unwrap();
+        create_job(
+            &conn,
+            &NewJob {
+                name: "future".into(),
+                next_run_at: 9999,
+                ..sample_job()
+            },
+        )
+        .unwrap();
 
         let due = poll_due_jobs(&conn, 1000).unwrap();
         assert_eq!(due.len(), 1);
@@ -619,7 +669,14 @@ mod tests {
     #[test]
     fn poll_excludes_paused_jobs() {
         let conn = setup();
-        let id = create_job(&conn, &NewJob { next_run_at: 500, ..sample_job() }).unwrap();
+        let id = create_job(
+            &conn,
+            &NewJob {
+                next_run_at: 500,
+                ..sample_job()
+            },
+        )
+        .unwrap();
         pause_job(&conn, &id).unwrap();
 
         let due = poll_due_jobs(&conn, 1000).unwrap();
@@ -629,8 +686,16 @@ mod tests {
     #[test]
     fn poll_excludes_disabled_jobs() {
         let conn = setup();
-        let id = create_job(&conn, &NewJob { next_run_at: 500, ..sample_job() }).unwrap();
-        conn.execute("UPDATE jobs SET enabled = 0 WHERE id = ?1", [&id]).unwrap();
+        let id = create_job(
+            &conn,
+            &NewJob {
+                next_run_at: 500,
+                ..sample_job()
+            },
+        )
+        .unwrap();
+        conn.execute("UPDATE jobs SET enabled = 0 WHERE id = ?1", [&id])
+            .unwrap();
 
         let due = poll_due_jobs(&conn, 1000).unwrap();
         assert!(due.is_empty());
@@ -644,7 +709,14 @@ mod tests {
     fn dispatch_successful_job() {
         let conn = setup();
         allow_all(&conn);
-        let id = create_job(&conn, &NewJob { next_run_at: 500, ..sample_job() }).unwrap();
+        let id = create_job(
+            &conn,
+            &NewJob {
+                next_run_at: 500,
+                ..sample_job()
+            },
+        )
+        .unwrap();
         let job = get_job(&conn, &id).unwrap().unwrap();
 
         let run = dispatch_job(&conn, &job, &|_| Ok("digest complete".into())).unwrap();
@@ -663,7 +735,14 @@ mod tests {
              VALUES ('deny-all', 'deny-all', 100, 'deny', '*', '*', '*', 'blocked', 1)",
             [],
         ).unwrap();
-        let id = create_job(&conn, &NewJob { next_run_at: 500, ..sample_job() }).unwrap();
+        let id = create_job(
+            &conn,
+            &NewJob {
+                next_run_at: 500,
+                ..sample_job()
+            },
+        )
+        .unwrap();
         let job = get_job(&conn, &id).unwrap().unwrap();
 
         let run = dispatch_job(&conn, &job, &|_| panic!("should not execute")).unwrap();
@@ -675,11 +754,15 @@ mod tests {
     fn dispatch_retries_on_failure() {
         let conn = setup();
         allow_all(&conn);
-        let id = create_job(&conn, &NewJob {
-            next_run_at: 500,
-            max_retries: Some(2),
-            ..sample_job()
-        }).unwrap();
+        let id = create_job(
+            &conn,
+            &NewJob {
+                next_run_at: 500,
+                max_retries: Some(2),
+                ..sample_job()
+            },
+        )
+        .unwrap();
         let job = get_job(&conn, &id).unwrap().unwrap();
 
         let call_count = std::cell::Cell::new(0);
@@ -691,7 +774,8 @@ mod tests {
             } else {
                 Ok("ok".into())
             }
-        }).unwrap();
+        })
+        .unwrap();
 
         assert_eq!(run.status, "success");
         assert_eq!(call_count.get(), 3); // 1 initial + 2 retries
@@ -701,11 +785,15 @@ mod tests {
     fn dispatch_exhausts_retries() {
         let conn = setup();
         allow_all(&conn);
-        let id = create_job(&conn, &NewJob {
-            next_run_at: 500,
-            max_retries: Some(1),
-            ..sample_job()
-        }).unwrap();
+        let id = create_job(
+            &conn,
+            &NewJob {
+                next_run_at: 500,
+                max_retries: Some(1),
+                ..sample_job()
+            },
+        )
+        .unwrap();
         let job = get_job(&conn, &id).unwrap().unwrap();
 
         let run = dispatch_job(&conn, &job, &|_| anyhow::bail!("always fails")).unwrap();
@@ -717,7 +805,14 @@ mod tests {
     fn dispatch_skips_overlapping() {
         let conn = setup();
         allow_all(&conn);
-        let id = create_job(&conn, &NewJob { next_run_at: 500, ..sample_job() }).unwrap();
+        let id = create_job(
+            &conn,
+            &NewJob {
+                next_run_at: 500,
+                ..sample_job()
+            },
+        )
+        .unwrap();
 
         // Simulate a running job
         start_run(&conn, &id, "a").unwrap();
@@ -733,7 +828,12 @@ mod tests {
 
     #[test]
     fn job_type_roundtrip() {
-        for jt in [JobType::Prompt, JobType::Tool, JobType::Js, JobType::Pipeline] {
+        for jt in [
+            JobType::Prompt,
+            JobType::Tool,
+            JobType::Js,
+            JobType::Pipeline,
+        ] {
             let s = jt.to_string();
             let parsed: JobType = s.parse().unwrap();
             assert_eq!(parsed, jt);

@@ -52,18 +52,10 @@ impl Default for EncryptionConfig {
 pub fn get_key(source: &KeySource) -> anyhow::Result<Option<Vec<u8>>> {
     match source {
         KeySource::None => Ok(None),
-        KeySource::Keychain { service, account } => {
-            get_key_from_keychain(service, account)
-        }
-        KeySource::KeyFile { path } => {
-            get_key_from_file(path)
-        }
-        KeySource::CredentialManager { target } => {
-            get_key_from_credential_manager(target)
-        }
-        KeySource::Passphrase { salt } => {
-            get_key_from_passphrase(salt)
-        }
+        KeySource::Keychain { service, account } => get_key_from_keychain(service, account),
+        KeySource::KeyFile { path } => get_key_from_file(path),
+        KeySource::CredentialManager { target } => get_key_from_credential_manager(target),
+        KeySource::Passphrase { salt } => get_key_from_passphrase(salt),
     }
 }
 
@@ -106,7 +98,9 @@ pub fn generate_key() -> Vec<u8> {
 
 fn get_key_from_keychain(_service: &str, _account: &str) -> anyhow::Result<Option<Vec<u8>>> {
     // Platform-specific: requires Security.framework on macOS
-    anyhow::bail!("Keychain integration requires platform-specific implementation (macOS Security.framework)")
+    anyhow::bail!(
+        "Keychain integration requires platform-specific implementation (macOS Security.framework)"
+    )
 }
 
 fn get_key_from_file(path: &str) -> anyhow::Result<Option<Vec<u8>>> {
@@ -118,7 +112,9 @@ fn get_key_from_file(path: &str) -> anyhow::Result<Option<Vec<u8>>> {
 }
 
 fn get_key_from_credential_manager(_target: &str) -> anyhow::Result<Option<Vec<u8>>> {
-    anyhow::bail!("Windows Credential Manager integration requires platform-specific implementation")
+    anyhow::bail!(
+        "Windows Credential Manager integration requires platform-specific implementation"
+    )
 }
 
 fn get_key_from_passphrase(salt: &str) -> anyhow::Result<Option<Vec<u8>>> {
@@ -161,7 +157,6 @@ pub fn apply_encryption(conn: &rusqlite::Connection, key: &[u8]) -> anyhow::Resu
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,28 +173,50 @@ mod tests {
 
     #[test]
     fn key_source_passphrase_returns_key() {
-        let key = get_key(&KeySource::Passphrase { salt: "test-salt".into() }).unwrap();
+        let key = get_key(&KeySource::Passphrase {
+            salt: "test-salt".into(),
+        })
+        .unwrap();
         assert!(key.is_some());
         assert_eq!(key.unwrap().len(), 32);
     }
 
     #[test]
     fn key_source_passphrase_deterministic() {
-        let k1 = get_key(&KeySource::Passphrase { salt: "same".into() }).unwrap().unwrap();
-        let k2 = get_key(&KeySource::Passphrase { salt: "same".into() }).unwrap().unwrap();
+        let k1 = get_key(&KeySource::Passphrase {
+            salt: "same".into(),
+        })
+        .unwrap()
+        .unwrap();
+        let k2 = get_key(&KeySource::Passphrase {
+            salt: "same".into(),
+        })
+        .unwrap()
+        .unwrap();
         assert_eq!(k1, k2);
     }
 
     #[test]
     fn key_source_different_salts_different_keys() {
-        let k1 = get_key(&KeySource::Passphrase { salt: "salt1".into() }).unwrap().unwrap();
-        let k2 = get_key(&KeySource::Passphrase { salt: "salt2".into() }).unwrap().unwrap();
+        let k1 = get_key(&KeySource::Passphrase {
+            salt: "salt1".into(),
+        })
+        .unwrap()
+        .unwrap();
+        let k2 = get_key(&KeySource::Passphrase {
+            salt: "salt2".into(),
+        })
+        .unwrap()
+        .unwrap();
         assert_ne!(k1, k2);
     }
 
     #[test]
     fn key_source_file_not_found() {
-        let key = get_key(&KeySource::KeyFile { path: "/tmp/mp_nonexistent_key_12345".into() }).unwrap();
+        let key = get_key(&KeySource::KeyFile {
+            path: "/tmp/mp_nonexistent_key_12345".into(),
+        })
+        .unwrap();
         assert!(key.is_none());
     }
 
@@ -207,9 +224,19 @@ mod tests {
     fn key_source_file_roundtrip() {
         let path = std::env::temp_dir().join("mp_test_key_roundtrip");
         let original = generate_key();
-        store_key(&KeySource::KeyFile { path: path.to_string_lossy().into() }, &original).unwrap();
+        store_key(
+            &KeySource::KeyFile {
+                path: path.to_string_lossy().into(),
+            },
+            &original,
+        )
+        .unwrap();
 
-        let loaded = get_key(&KeySource::KeyFile { path: path.to_string_lossy().into() }).unwrap().unwrap();
+        let loaded = get_key(&KeySource::KeyFile {
+            path: path.to_string_lossy().into(),
+        })
+        .unwrap()
+        .unwrap();
         assert_eq!(original, loaded);
 
         let _ = std::fs::remove_file(&path);
@@ -250,7 +277,9 @@ mod tests {
     fn encryption_config_serializes() {
         let config = EncryptionConfig {
             enabled: true,
-            key_source: KeySource::Passphrase { salt: "mysalt".into() },
+            key_source: KeySource::Passphrase {
+                salt: "mysalt".into(),
+            },
             cipher: "aes-256-cbc".into(),
         };
         let json = serde_json::to_string(&config).unwrap();
@@ -269,7 +298,9 @@ mod tests {
 
     #[test]
     fn key_source_credential_manager_not_implemented() {
-        let result = get_key(&KeySource::CredentialManager { target: "test".into() });
+        let result = get_key(&KeySource::CredentialManager {
+            target: "test".into(),
+        });
         assert!(result.is_err());
     }
 

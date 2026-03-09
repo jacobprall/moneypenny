@@ -153,7 +153,6 @@ pub struct HttpChannelConfig {
     /// Bearer token required in `Authorization` header. If unset, no auth is enforced.
     #[serde(default)]
     pub api_key: Option<String>,
-
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

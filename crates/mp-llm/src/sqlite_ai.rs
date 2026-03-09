@@ -14,7 +14,10 @@ pub struct SqliteAiProvider {
 
 impl SqliteAiProvider {
     pub fn new(model_path: PathBuf, embedding_model_path: Option<PathBuf>) -> Self {
-        Self { model_path, embedding_model_path }
+        Self {
+            model_path,
+            embedding_model_path,
+        }
     }
 }
 

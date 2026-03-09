@@ -1,11 +1,11 @@
-pub mod types;
-pub mod provider;
 pub mod anthropic;
 pub mod http;
 pub mod local_embed;
+pub mod provider;
 pub mod sqlite_ai;
+pub mod types;
 
-use provider::{LlmProvider, EmbeddingProvider};
+use provider::{EmbeddingProvider, LlmProvider};
 
 pub use local_embed::{f32_slice_to_blob, parse_f32_blob};
 
@@ -29,7 +29,9 @@ pub fn build_provider(
                 .unwrap_or_else(|| std::path::PathBuf::from("models/default.gguf"));
             Ok(Box::new(sqlite_ai::SqliteAiProvider::new(model_path, None)))
         }
-        other => anyhow::bail!("Unknown LLM provider: {other}. Use 'anthropic', 'http', or 'local'."),
+        other => {
+            anyhow::bail!("Unknown LLM provider: {other}. Use 'anthropic', 'http', or 'local'.")
+        }
     }
 }
 
@@ -57,9 +59,7 @@ pub fn build_embedding_provider(
             model_name,
             dimensions,
         ))),
-        other => anyhow::bail!(
-            "Unknown embedding provider: {other}. Use 'local' or 'http'."
-        ),
+        other => anyhow::bail!("Unknown embedding provider: {other}. Use 'local' or 'http'."),
     }
 }
 
@@ -203,7 +203,8 @@ mod tests {
             Some("https://api.anthropic.com"),
             Some("sk-ant-test"),
             Some("claude-sonnet-4-20250514"),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(p.name(), "anthropic");
     }
 
@@ -237,7 +238,8 @@ mod tests {
             Some("http://localhost:11434/v1"),
             Some("sk-test"),
             Some("llama3"),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(p.name(), "http");
     }
 
@@ -253,10 +255,14 @@ mod tests {
     #[test]
     fn build_local_embedding_provider() {
         let p = build_embedding_provider(
-            "local", "nomic-embed-text-v1.5",
+            "local",
+            "nomic-embed-text-v1.5",
             std::path::Path::new("/tmp/models/nomic.gguf"),
-            768, None, None,
-        ).unwrap();
+            768,
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(p.name(), "local");
         assert_eq!(p.dimensions(), 768);
     }
@@ -264,19 +270,22 @@ mod tests {
     #[test]
     fn build_http_embedding_provider() {
         let p = build_embedding_provider(
-            "http", "text-embedding-3-small",
+            "http",
+            "text-embedding-3-small",
             std::path::Path::new(""),
-            1536, Some("https://api.openai.com/v1"), Some("sk-test"),
-        ).unwrap();
+            1536,
+            Some("https://api.openai.com/v1"),
+            Some("sk-test"),
+        )
+        .unwrap();
         assert_eq!(p.name(), "http");
         assert_eq!(p.dimensions(), 1536);
     }
 
     #[test]
     fn build_unknown_embedding_provider_fails() {
-        let result = build_embedding_provider(
-            "magic", "model", std::path::Path::new(""), 768, None, None,
-        );
+        let result =
+            build_embedding_provider("magic", "model", std::path::Path::new(""), 768, None, None);
         match result {
             Ok(_) => panic!("expected error for unknown embedding provider"),
             Err(e) => assert!(e.to_string().contains("Unknown embedding provider")),
@@ -286,8 +295,11 @@ mod tests {
     #[tokio::test]
     async fn local_embedding_returns_model_not_found_error() {
         let p = local_embed::LocalEmbeddingProvider::new(
-            "/tmp/nonexistent-model.gguf".into(), "nomic-embed-text-v1.5".into(), 768,
-        ).expect("provider construction should succeed even without model file");
+            "/tmp/nonexistent-model.gguf".into(),
+            "nomic-embed-text-v1.5".into(),
+            768,
+        )
+        .expect("provider construction should succeed even without model file");
         let result: anyhow::Result<Vec<f32>> = p.embed("hello").await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
@@ -300,13 +312,16 @@ mod tests {
     #[tokio::test]
     async fn sqlite_ai_generate_returns_error() {
         let p = sqlite_ai::SqliteAiProvider::new("/tmp/model.gguf".into(), None);
-        let result = p.generate(
-            &[Message::user("hello")],
-            &[],
-            &GenerateConfig::default(),
-        ).await;
+        let result = p
+            .generate(&[Message::user("hello")], &[], &GenerateConfig::default())
+            .await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not yet implemented"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not yet implemented")
+        );
     }
 
     #[tokio::test]
@@ -314,7 +329,12 @@ mod tests {
         let p = sqlite_ai::SqliteAiProvider::new("/tmp/model.gguf".into(), None);
         let result = p.embed("hello").await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not yet implemented"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not yet implemented")
+        );
     }
 
     // ========================================================================
@@ -327,7 +347,11 @@ mod tests {
             "gpt-4o",
             &[Message::system("You are helpful"), Message::user("Hi")],
             &[],
-            &GenerateConfig { max_tokens: Some(100), temperature: Some(0.5), stop: vec![] },
+            &GenerateConfig {
+                max_tokens: Some(100),
+                temperature: Some(0.5),
+                stop: vec![],
+            },
             false,
         );
         assert_eq!(body["model"], "gpt-4o");
@@ -454,7 +478,11 @@ mod tests {
             "claude-sonnet-4-20250514",
             &[Message::system("You are helpful"), Message::user("Hi")],
             &[],
-            &GenerateConfig { max_tokens: Some(1024), temperature: Some(0.5), stop: vec![] },
+            &GenerateConfig {
+                max_tokens: Some(1024),
+                temperature: Some(0.5),
+                stop: vec![],
+            },
             false,
         );
         assert_eq!(body["model"], "claude-sonnet-4-20250514");
@@ -473,7 +501,11 @@ mod tests {
     fn anthropic_request_system_not_in_messages() {
         let body = anthropic::tests::build_request_test(
             "claude-sonnet-4-20250514",
-            &[Message::system("Be concise"), Message::system("No emojis"), Message::user("Hello")],
+            &[
+                Message::system("Be concise"),
+                Message::system("No emojis"),
+                Message::user("Hello"),
+            ],
             &[],
             &GenerateConfig::default(),
             false,
@@ -535,11 +567,14 @@ mod tests {
             "claude-sonnet-4-20250514",
             &[
                 Message::user("What's the weather?"),
-                Message::assistant_with_tool_calls(None, vec![ToolCall {
-                    id: "toolu_1".into(),
-                    name: "get_weather".into(),
-                    arguments: r#"{"city":"SF"}"#.into(),
-                }]),
+                Message::assistant_with_tool_calls(
+                    None,
+                    vec![ToolCall {
+                        id: "toolu_1".into(),
+                        name: "get_weather".into(),
+                        arguments: r#"{"city":"SF"}"#.into(),
+                    }],
+                ),
                 Message::tool("72F and sunny", "toolu_1"),
             ],
             &[],
@@ -572,10 +607,21 @@ mod tests {
             "claude-sonnet-4-20250514",
             &[
                 Message::user("weather in SF and NYC?"),
-                Message::assistant_with_tool_calls(None, vec![
-                    ToolCall { id: "t1".into(), name: "get_weather".into(), arguments: r#"{"city":"SF"}"#.into() },
-                    ToolCall { id: "t2".into(), name: "get_weather".into(), arguments: r#"{"city":"NYC"}"#.into() },
-                ]),
+                Message::assistant_with_tool_calls(
+                    None,
+                    vec![
+                        ToolCall {
+                            id: "t1".into(),
+                            name: "get_weather".into(),
+                            arguments: r#"{"city":"SF"}"#.into(),
+                        },
+                        ToolCall {
+                            id: "t2".into(),
+                            name: "get_weather".into(),
+                            arguments: r#"{"city":"NYC"}"#.into(),
+                        },
+                    ],
+                ),
                 Message::tool("72F", "t1"),
                 Message::tool("55F", "t2"),
             ],
@@ -675,6 +721,11 @@ mod tests {
         let p = anthropic::AnthropicProvider::from_config(None, None, None);
         let result = p.embed("hello").await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("does not provide an embeddings API"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("does not provide an embeddings API")
+        );
     }
 }

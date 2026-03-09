@@ -37,7 +37,8 @@ impl LlmProvider for HttpProvider {
     ) -> anyhow::Result<GenerateResponse> {
         let body = build_chat_request(&self.model, messages, tools, config, false);
 
-        let mut req = self.client
+        let mut req = self
+            .client
             .post(format!("{}/chat/completions", self.api_base))
             .json(&body);
 
@@ -64,7 +65,8 @@ impl LlmProvider for HttpProvider {
     ) -> anyhow::Result<StreamResult> {
         let body = build_chat_request(&self.model, messages, tools, config, true);
 
-        let mut req = self.client
+        let mut req = self
+            .client
             .post(format!("{}/chat/completions", self.api_base))
             .json(&body);
 
@@ -123,14 +125,17 @@ fn build_chat_request(
             }
             if !m.tool_calls.is_empty() {
                 msg["tool_calls"] = serde_json::json!(
-                    m.tool_calls.iter().map(|tc| serde_json::json!({
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            "arguments": tc.arguments,
-                        }
-                    })).collect::<Vec<_>>()
+                    m.tool_calls
+                        .iter()
+                        .map(|tc| serde_json::json!({
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.name,
+                                "arguments": tc.arguments,
+                            }
+                        }))
+                        .collect::<Vec<_>>()
                 );
             }
             msg
@@ -232,11 +237,14 @@ fn parse_chat_response(resp: ChatCompletionResponse) -> anyhow::Result<GenerateR
         })
         .collect();
 
-    let usage = resp.usage.map(|u| Usage {
-        prompt_tokens: u.prompt_tokens,
-        completion_tokens: u.completion_tokens,
-        total_tokens: u.total_tokens,
-    }).unwrap_or_default();
+    let usage = resp
+        .usage
+        .map(|u| Usage {
+            prompt_tokens: u.prompt_tokens,
+            completion_tokens: u.completion_tokens,
+            total_tokens: u.total_tokens,
+        })
+        .unwrap_or_default();
 
     Ok(GenerateResponse {
         content: choice.message.content,
@@ -379,11 +387,7 @@ fn parse_sse_stream(
 // ---------------------------------------------------------------------------
 
 impl HttpProvider {
-    pub fn from_config(
-        api_base: Option<&str>,
-        api_key: Option<&str>,
-        model: Option<&str>,
-    ) -> Self {
+    pub fn from_config(api_base: Option<&str>, api_key: Option<&str>, model: Option<&str>) -> Self {
         Self::new(
             api_base.unwrap_or("https://api.openai.com/v1"),
             api_key.map(String::from),

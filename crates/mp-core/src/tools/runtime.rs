@@ -1,30 +1,36 @@
-use rusqlite::{Connection, params};
 use super::registry::ToolResult;
+use rusqlite::{Connection, params};
 
 /// Dispatch a runtime tool call by name.
 /// Runtime tools operate on the agent's own database — memory, knowledge,
 /// scheduling, policy, and audit — giving the agent self-awareness.
-pub fn dispatch(conn: &Connection, agent_id: &str, session_id: &str, tool_name: &str, arguments: &str) -> anyhow::Result<ToolResult> {
+pub fn dispatch(
+    conn: &Connection,
+    agent_id: &str,
+    session_id: &str,
+    tool_name: &str,
+    arguments: &str,
+) -> anyhow::Result<ToolResult> {
     match tool_name {
-        "web_search"        => web_search(arguments),
-        "memory_search"     => memory_search(conn, agent_id, arguments),
-        "fact_add"          => fact_add(conn, agent_id, arguments),
-        "fact_update"       => fact_update(conn, arguments),
-        "fact_list"         => fact_list(conn, agent_id),
-        "scratch_set"       => scratch_set(conn, session_id, arguments),
-        "scratch_get"       => scratch_get(conn, session_id, arguments),
-        "knowledge_ingest"  => knowledge_ingest(conn, arguments),
-        "knowledge_list"    => knowledge_list(conn),
-        "job_create"        => job_create(conn, agent_id, session_id, arguments),
-        "job_list"          => job_list(conn, agent_id, session_id),
-        "job_pause"         => job_pause(conn, agent_id, session_id, arguments),
-        "job_resume"        => job_resume(conn, agent_id, session_id, arguments),
-        "policy_list"       => policy_list(conn),
-        "policy_add"        => policy_add(conn, agent_id, session_id, arguments),
-        "audit_query"       => audit_query(conn, session_id, arguments),
-        "js_tool_add"       => js_tool_add(conn, agent_id, session_id, arguments),
-        "js_tool_list"      => js_tool_list(conn, agent_id, session_id),
-        "js_tool_delete"    => js_tool_delete(conn, agent_id, session_id, arguments),
+        "web_search" => web_search(arguments),
+        "memory_search" => memory_search(conn, agent_id, arguments),
+        "fact_add" => fact_add(conn, agent_id, arguments),
+        "fact_update" => fact_update(conn, arguments),
+        "fact_list" => fact_list(conn, agent_id),
+        "scratch_set" => scratch_set(conn, session_id, arguments),
+        "scratch_get" => scratch_get(conn, session_id, arguments),
+        "knowledge_ingest" => knowledge_ingest(conn, arguments),
+        "knowledge_list" => knowledge_list(conn),
+        "job_create" => job_create(conn, agent_id, session_id, arguments),
+        "job_list" => job_list(conn, agent_id, session_id),
+        "job_pause" => job_pause(conn, agent_id, session_id, arguments),
+        "job_resume" => job_resume(conn, agent_id, session_id, arguments),
+        "policy_list" => policy_list(conn),
+        "policy_add" => policy_add(conn, agent_id, session_id, arguments),
+        "audit_query" => audit_query(conn, session_id, arguments),
+        "js_tool_add" => js_tool_add(conn, agent_id, session_id, arguments),
+        "js_tool_list" => js_tool_list(conn, agent_id, session_id),
+        "js_tool_delete" => js_tool_delete(conn, agent_id, session_id, arguments),
         _ => anyhow::bail!("unknown runtime tool: {tool_name}"),
     }
 }
@@ -84,35 +90,45 @@ fn op_response_to_tool_result(resp: &crate::operations::OperationResponse) -> To
 /// Returns the stringified result. The JS code has access to `db.exec(sql)`
 /// for querying the same SQLite database.
 pub fn eval_js(conn: &Connection, script: &str) -> anyhow::Result<String> {
-    let result: String = conn.query_row(
-        "SELECT js_eval(?1)",
-        [script],
-        |r| r.get(0),
-    ).map_err(|e| anyhow::anyhow!("js_eval failed: {e}"))?;
+    let result: String = conn
+        .query_row("SELECT js_eval(?1)", [script], |r| r.get(0))
+        .map_err(|e| anyhow::anyhow!("js_eval failed: {e}"))?;
     Ok(result)
 }
 
 /// Returns true if the given tool name is a built-in runtime tool (handled by
 /// this module, NOT a user-defined JS tool stored in the DB).
 pub fn is_runtime_tool(name: &str) -> bool {
-    matches!(name,
-        "web_search" | "memory_search" | "fact_add" | "fact_update" | "fact_list"
-        | "scratch_set" | "scratch_get"
-        | "knowledge_ingest" | "knowledge_list"
-        | "job_create" | "job_list" | "job_pause" | "job_resume"
-        | "policy_list" | "policy_add" | "audit_query"
-        | "js_tool_add" | "js_tool_list" | "js_tool_delete"
+    matches!(
+        name,
+        "web_search"
+            | "memory_search"
+            | "fact_add"
+            | "fact_update"
+            | "fact_list"
+            | "scratch_set"
+            | "scratch_get"
+            | "knowledge_ingest"
+            | "knowledge_list"
+            | "job_create"
+            | "job_list"
+            | "job_pause"
+            | "job_resume"
+            | "policy_list"
+            | "policy_add"
+            | "audit_query"
+            | "js_tool_add"
+            | "js_tool_list"
+            | "js_tool_delete"
     )
 }
 
 /// Returns true if `tool_name` refers to a user-defined JS tool stored in
 /// the `skills` table (`tool_id` starting with `sqlite_js:`).
 pub fn is_js_tool(conn: &Connection, name: &str) -> bool {
-    conn.query_row(
-        "SELECT tool_id FROM skills WHERE name = ?1",
-        [name],
-        |r| r.get::<_, Option<String>>(0),
-    )
+    conn.query_row("SELECT tool_id FROM skills WHERE name = ?1", [name], |r| {
+        r.get::<_, Option<String>>(0)
+    })
     .ok()
     .flatten()
     .map(|tid| tid.starts_with("sqlite_js:"))
@@ -138,14 +154,20 @@ pub fn is_js_tool(conn: &Connection, name: &str) -> bool {
 /// The tool's script is loaded from the `skills` table, injected with the
 /// call arguments, and evaluated via `js_eval`. The JS code has access to
 /// `db.exec(sql)` for querying the same SQLite database.
-pub fn dispatch_js(conn: &Connection, tool_name: &str, arguments: &str) -> anyhow::Result<ToolResult> {
+pub fn dispatch_js(
+    conn: &Connection,
+    tool_name: &str,
+    arguments: &str,
+) -> anyhow::Result<ToolResult> {
     let start = std::time::Instant::now();
 
-    let script: String = conn.query_row(
-        "SELECT content FROM skills WHERE name = ?1",
-        [tool_name],
-        |r| r.get(0),
-    ).map_err(|_| anyhow::anyhow!("JS tool '{tool_name}' not found in skills"))?;
+    let script: String = conn
+        .query_row(
+            "SELECT content FROM skills WHERE name = ?1",
+            [tool_name],
+            |r| r.get(0),
+        )
+        .map_err(|_| anyhow::anyhow!("JS tool '{tool_name}' not found in skills"))?;
 
     let runner = format!(
         "(function() {{ const args = {};\n{}\nreturn JSON.stringify(run(args)); }})()",
@@ -157,7 +179,11 @@ pub fn dispatch_js(conn: &Connection, tool_name: &str, arguments: &str) -> anyho
         Ok(out) => {
             duration_ms = start.elapsed().as_millis() as u64;
             let output = if out.is_empty() { "null".into() } else { out };
-            Ok(ToolResult { output, success: true, duration_ms })
+            Ok(ToolResult {
+                output,
+                success: true,
+                duration_ms,
+            })
         }
         Err(e) => {
             duration_ms = start.elapsed().as_millis() as u64;
@@ -199,7 +225,7 @@ fn web_search(arguments: &str) -> anyhow::Result<ToolResult> {
                 output: format!("Web search request failed: {e}"),
                 success: false,
                 duration_ms: 0,
-            })
+            });
         }
     };
 
@@ -210,7 +236,7 @@ fn web_search(arguments: &str) -> anyhow::Result<ToolResult> {
                 output: format!("Web search response parse failed: {e}"),
                 success: false,
                 duration_ms: 0,
-            })
+            });
         }
     };
 
@@ -286,7 +312,8 @@ fn web_search(arguments: &str) -> anyhow::Result<ToolResult> {
 
 fn memory_search(conn: &Connection, agent_id: &str, arguments: &str) -> anyhow::Result<ToolResult> {
     let args: serde_json::Value = serde_json::from_str(arguments)?;
-    let query = args["query"].as_str()
+    let query = args["query"]
+        .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'query'"))?;
     let limit = args["limit"].as_u64().unwrap_or(10) as usize;
     let query_embedding = parse_query_embedding_blob(&args);
@@ -300,14 +327,17 @@ fn memory_search(conn: &Connection, agent_id: &str, arguments: &str) -> anyhow::
         query_embedding.as_deref(),
     )?;
 
-    let output: Vec<serde_json::Value> = results.iter().map(|r| {
-        serde_json::json!({
-            "id": r.id,
-            "store": format!("{:?}", r.store),
-            "content": r.content,
-            "score": r.score,
+    let output: Vec<serde_json::Value> = results
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "id": r.id,
+                "store": format!("{:?}", r.store),
+                "content": r.content,
+                "score": r.score,
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(ToolResult {
         output: serde_json::to_string_pretty(&output)?,
@@ -337,7 +367,8 @@ fn parse_query_embedding_blob(args: &serde_json::Value) -> Option<Vec<u8>> {
 
 fn fact_add(conn: &Connection, agent_id: &str, arguments: &str) -> anyhow::Result<ToolResult> {
     let args: serde_json::Value = serde_json::from_str(arguments)?;
-    let content = args["content"].as_str()
+    let content = args["content"]
+        .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'content'"))?;
     let summary = args["summary"].as_str().unwrap_or(content);
     let pointer = args["pointer"].as_str().unwrap_or(content);
@@ -365,16 +396,23 @@ fn fact_add(conn: &Connection, agent_id: &str, arguments: &str) -> anyhow::Resul
 
 fn fact_update(conn: &Connection, arguments: &str) -> anyhow::Result<ToolResult> {
     let args: serde_json::Value = serde_json::from_str(arguments)?;
-    let fact_id = args["id"].as_str()
+    let fact_id = args["id"]
+        .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'id'"))?;
-    let content = args["content"].as_str()
+    let content = args["content"]
+        .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'content'"))?;
     let summary = args["summary"].as_str().unwrap_or(content);
     let pointer = args["pointer"].as_str().unwrap_or(content);
 
     crate::store::facts::update(
-        conn, fact_id, content, summary, pointer,
-        Some("updated via agent tool"), None,
+        conn,
+        fact_id,
+        content,
+        summary,
+        pointer,
+        Some("updated via agent tool"),
+        None,
     )?;
 
     Ok(ToolResult {
@@ -387,15 +425,18 @@ fn fact_update(conn: &Connection, arguments: &str) -> anyhow::Result<ToolResult>
 fn fact_list(conn: &Connection, agent_id: &str) -> anyhow::Result<ToolResult> {
     let facts = crate::store::facts::list_active(conn, agent_id)?;
 
-    let output: Vec<serde_json::Value> = facts.iter().map(|f| {
-        serde_json::json!({
-            "id": f.id,
-            "content": f.content,
-            "summary": f.summary,
-            "confidence": f.confidence,
-            "version": f.version,
+    let output: Vec<serde_json::Value> = facts
+        .iter()
+        .map(|f| {
+            serde_json::json!({
+                "id": f.id,
+                "content": f.content,
+                "summary": f.summary,
+                "confidence": f.confidence,
+                "version": f.version,
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(ToolResult {
         output: serde_json::to_string_pretty(&output)?,
@@ -410,9 +451,11 @@ fn fact_list(conn: &Connection, agent_id: &str) -> anyhow::Result<ToolResult> {
 
 fn scratch_set(conn: &Connection, session_id: &str, arguments: &str) -> anyhow::Result<ToolResult> {
     let args: serde_json::Value = serde_json::from_str(arguments)?;
-    let key = args["key"].as_str()
+    let key = args["key"]
+        .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'key'"))?;
-    let content = args["content"].as_str()
+    let content = args["content"]
+        .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'content'"))?;
 
     let id = crate::store::scratch::set(conn, session_id, key, content)?;
@@ -426,7 +469,8 @@ fn scratch_set(conn: &Connection, session_id: &str, arguments: &str) -> anyhow::
 
 fn scratch_get(conn: &Connection, session_id: &str, arguments: &str) -> anyhow::Result<ToolResult> {
     let args: serde_json::Value = serde_json::from_str(arguments)?;
-    let key = args["key"].as_str()
+    let key = args["key"]
+        .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'key'"))?;
 
     match crate::store::scratch::get(conn, session_id, key)? {
@@ -434,7 +478,8 @@ fn scratch_get(conn: &Connection, session_id: &str, arguments: &str) -> anyhow::
             output: serde_json::json!({
                 "key": entry.key,
                 "content": entry.content,
-            }).to_string(),
+            })
+            .to_string(),
             success: true,
             duration_ms: 0,
         }),
@@ -452,21 +497,21 @@ fn scratch_get(conn: &Connection, session_id: &str, arguments: &str) -> anyhow::
 
 fn knowledge_ingest(conn: &Connection, arguments: &str) -> anyhow::Result<ToolResult> {
     let args: serde_json::Value = serde_json::from_str(arguments)?;
-    let content = args["content"].as_str()
+    let content = args["content"]
+        .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'content'"))?;
     let title = args["title"].as_str();
     let path = args["path"].as_str();
 
-    let (doc_id, chunk_count) = crate::store::knowledge::ingest(
-        conn, path, title, content, None,
-    )?;
+    let (doc_id, chunk_count) = crate::store::knowledge::ingest(conn, path, title, content, None)?;
 
     Ok(ToolResult {
         output: serde_json::json!({
             "document_id": doc_id,
             "chunks_created": chunk_count,
             "status": "ingested",
-        }).to_string(),
+        })
+        .to_string(),
         success: true,
         duration_ms: 0,
     })
@@ -475,13 +520,16 @@ fn knowledge_ingest(conn: &Connection, arguments: &str) -> anyhow::Result<ToolRe
 fn knowledge_list(conn: &Connection) -> anyhow::Result<ToolResult> {
     let docs = crate::store::knowledge::list_documents(conn)?;
 
-    let output: Vec<serde_json::Value> = docs.iter().map(|d| {
-        serde_json::json!({
-            "id": d.id,
-            "title": d.title,
-            "path": d.path,
+    let output: Vec<serde_json::Value> = docs
+        .iter()
+        .map(|d| {
+            serde_json::json!({
+                "id": d.id,
+                "title": d.title,
+                "path": d.path,
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(ToolResult {
         output: serde_json::to_string_pretty(&output)?,
@@ -494,7 +542,12 @@ fn knowledge_list(conn: &Connection) -> anyhow::Result<ToolResult> {
 // Scheduling
 // =========================================================================
 
-fn job_create(conn: &Connection, agent_id: &str, session_id: &str, arguments: &str) -> anyhow::Result<ToolResult> {
+fn job_create(
+    conn: &Connection,
+    agent_id: &str,
+    session_id: &str,
+    arguments: &str,
+) -> anyhow::Result<ToolResult> {
     let args: serde_json::Value = serde_json::from_str(arguments)?;
     let resp = exec_canonical_op(conn, agent_id, session_id, "job.create", args)?;
     Ok(op_response_to_tool_result(&resp))
@@ -502,23 +555,37 @@ fn job_create(conn: &Connection, agent_id: &str, session_id: &str, arguments: &s
 
 fn job_list(conn: &Connection, agent_id: &str, session_id: &str) -> anyhow::Result<ToolResult> {
     let resp = exec_canonical_op(
-        conn, agent_id, session_id, "job.list",
+        conn,
+        agent_id,
+        session_id,
+        "job.list",
         serde_json::json!({ "agent_id": agent_id }),
     )?;
     Ok(op_response_to_tool_result(&resp))
 }
 
-fn job_pause(conn: &Connection, agent_id: &str, session_id: &str, arguments: &str) -> anyhow::Result<ToolResult> {
+fn job_pause(
+    conn: &Connection,
+    agent_id: &str,
+    session_id: &str,
+    arguments: &str,
+) -> anyhow::Result<ToolResult> {
     let args: serde_json::Value = serde_json::from_str(arguments)?;
     let resp = exec_canonical_op(conn, agent_id, session_id, "job.pause", args)?;
     Ok(op_response_to_tool_result(&resp))
 }
 
-fn job_resume(conn: &Connection, _agent_id: &str, _session_id: &str, arguments: &str) -> anyhow::Result<ToolResult> {
+fn job_resume(
+    conn: &Connection,
+    _agent_id: &str,
+    _session_id: &str,
+    arguments: &str,
+) -> anyhow::Result<ToolResult> {
     // TODO: add a canonical job.resume operation; for now pause toggle reuses job.pause
     // with a "resume" hint in args so the same policy path applies.
     let args: serde_json::Value = serde_json::from_str(arguments)?;
-    let job_id = args["id"].as_str()
+    let job_id = args["id"]
+        .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'id'"))?;
     crate::scheduler::resume_job(conn, job_id)?;
     Ok(ToolResult {
@@ -537,19 +604,21 @@ fn policy_list(conn: &Connection) -> anyhow::Result<ToolResult> {
         "SELECT id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, message, enabled
          FROM policies ORDER BY priority DESC"
     )?;
-    let policies = stmt.query_map([], |r| {
-        Ok(serde_json::json!({
-            "id": r.get::<_, String>(0)?,
-            "name": r.get::<_, String>(1)?,
-            "priority": r.get::<_, i64>(2)?,
-            "effect": r.get::<_, String>(3)?,
-            "actor_pattern": r.get::<_, Option<String>>(4)?,
-            "action_pattern": r.get::<_, Option<String>>(5)?,
-            "resource_pattern": r.get::<_, Option<String>>(6)?,
-            "message": r.get::<_, Option<String>>(7)?,
-            "enabled": r.get::<_, i64>(8)? != 0,
-        }))
-    })?.collect::<Result<Vec<_>, _>>()?;
+    let policies = stmt
+        .query_map([], |r| {
+            Ok(serde_json::json!({
+                "id": r.get::<_, String>(0)?,
+                "name": r.get::<_, String>(1)?,
+                "priority": r.get::<_, i64>(2)?,
+                "effect": r.get::<_, String>(3)?,
+                "actor_pattern": r.get::<_, Option<String>>(4)?,
+                "action_pattern": r.get::<_, Option<String>>(5)?,
+                "resource_pattern": r.get::<_, Option<String>>(6)?,
+                "message": r.get::<_, Option<String>>(7)?,
+                "enabled": r.get::<_, i64>(8)? != 0,
+            }))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(ToolResult {
         output: serde_json::to_string_pretty(&policies)?,
@@ -558,7 +627,12 @@ fn policy_list(conn: &Connection) -> anyhow::Result<ToolResult> {
     })
 }
 
-fn policy_add(conn: &Connection, agent_id: &str, session_id: &str, arguments: &str) -> anyhow::Result<ToolResult> {
+fn policy_add(
+    conn: &Connection,
+    agent_id: &str,
+    session_id: &str,
+    arguments: &str,
+) -> anyhow::Result<ToolResult> {
     let args: serde_json::Value = serde_json::from_str(arguments)?;
 
     let req = crate::operations::OperationRequest {
@@ -628,7 +702,7 @@ fn audit_query(conn: &Connection, session_id: &str, arguments: &str) -> anyhow::
         let mut stmt = conn.prepare(
             "SELECT id, policy_id, actor, action, resource, effect, reason, created_at
              FROM policy_audit WHERE session_id = ?1
-             ORDER BY created_at DESC LIMIT ?2"
+             ORDER BY created_at DESC LIMIT ?2",
         )?;
         stmt.query_map(params![session_id, limit], audit_row_to_json)?
             .collect::<Result<Vec<_>, _>>()?
@@ -636,7 +710,7 @@ fn audit_query(conn: &Connection, session_id: &str, arguments: &str) -> anyhow::
         let mut stmt = conn.prepare(
             "SELECT id, policy_id, actor, action, resource, effect, reason, created_at
              FROM policy_audit
-             ORDER BY created_at DESC LIMIT ?1"
+             ORDER BY created_at DESC LIMIT ?1",
         )?;
         stmt.query_map(params![limit], audit_row_to_json)?
             .collect::<Result<Vec<_>, _>>()?
@@ -680,23 +754,38 @@ fn audit_row_to_json(r: &rusqlite::Row) -> rusqlite::Result<serde_json::Value> {
 ///   "script": "function run(args) { return { result: args.a + args.b }; }"
 /// }
 /// ```
-fn js_tool_add(conn: &Connection, agent_id: &str, session_id: &str, arguments: &str) -> anyhow::Result<ToolResult> {
+fn js_tool_add(
+    conn: &Connection,
+    agent_id: &str,
+    session_id: &str,
+    arguments: &str,
+) -> anyhow::Result<ToolResult> {
     let args: serde_json::Value = serde_json::from_str(arguments)?;
     let resp = exec_canonical_op(conn, agent_id, session_id, "js.tool.add", args)?;
     Ok(op_response_to_tool_result(&resp))
 }
 
 fn js_tool_list(conn: &Connection, agent_id: &str, session_id: &str) -> anyhow::Result<ToolResult> {
-    let resp = exec_canonical_op(conn, agent_id, session_id, "js.tool.list", serde_json::json!({}))?;
+    let resp = exec_canonical_op(
+        conn,
+        agent_id,
+        session_id,
+        "js.tool.list",
+        serde_json::json!({}),
+    )?;
     Ok(op_response_to_tool_result(&resp))
 }
 
-fn js_tool_delete(conn: &Connection, agent_id: &str, session_id: &str, arguments: &str) -> anyhow::Result<ToolResult> {
+fn js_tool_delete(
+    conn: &Connection,
+    agent_id: &str,
+    session_id: &str,
+    arguments: &str,
+) -> anyhow::Result<ToolResult> {
     let args: serde_json::Value = serde_json::from_str(arguments)?;
     let resp = exec_canonical_op(conn, agent_id, session_id, "js.tool.delete", args)?;
     Ok(op_response_to_tool_result(&resp))
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -735,9 +824,13 @@ mod tests {
     fn fact_add_and_list() {
         let conn = setup();
         let result = dispatch(
-            &conn, "agent-1", "s1", "fact_add",
+            &conn,
+            "agent-1",
+            "s1",
+            "fact_add",
             r#"{"content": "The sky is blue", "summary": "sky color", "pointer": "sky: blue"}"#,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(result.success);
         assert!(result.output.contains("created"));
 
@@ -750,14 +843,20 @@ mod tests {
     fn fact_update_changes_content() {
         let conn = setup();
         let add_result = dispatch(
-            &conn, "agent-1", "s1", "fact_add",
+            &conn,
+            "agent-1",
+            "s1",
+            "fact_add",
             r#"{"content": "original", "summary": "orig", "pointer": "orig"}"#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let parsed: serde_json::Value = serde_json::from_str(&add_result.output).unwrap();
         let fact_id = parsed["id"].as_str().unwrap();
 
-        let args = format!(r#"{{"id": "{fact_id}", "content": "updated", "summary": "upd", "pointer": "upd"}}"#);
+        let args = format!(
+            r#"{{"id": "{fact_id}", "content": "updated", "summary": "upd", "pointer": "upd"}}"#
+        );
         let update_result = dispatch(&conn, "agent-1", "s1", "fact_update", &args).unwrap();
         assert!(update_result.success);
         assert!(update_result.output.contains("updated"));
@@ -767,15 +866,17 @@ mod tests {
     fn scratch_set_and_get() {
         let conn = setup();
         let set_result = dispatch(
-            &conn, "a", "session-1", "scratch_set",
+            &conn,
+            "a",
+            "session-1",
+            "scratch_set",
             r#"{"key": "plan", "content": "Step 1: do the thing"}"#,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(set_result.success);
 
-        let get_result = dispatch(
-            &conn, "a", "session-1", "scratch_get",
-            r#"{"key": "plan"}"#,
-        ).unwrap();
+        let get_result =
+            dispatch(&conn, "a", "session-1", "scratch_get", r#"{"key": "plan"}"#).unwrap();
         assert!(get_result.success);
         assert!(get_result.output.contains("Step 1: do the thing"));
     }
@@ -792,9 +893,13 @@ mod tests {
     fn knowledge_ingest_and_list() {
         let conn = setup();
         let result = dispatch(
-            &conn, "a", "s1", "knowledge_ingest",
+            &conn,
+            "a",
+            "s1",
+            "knowledge_ingest",
             r##"{"title": "Runbook", "content": "# Deploy\nStep 1\n# Rollback\nStep 2"}"##,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(result.success);
         assert!(result.output.contains("ingested"));
 
@@ -822,9 +927,13 @@ mod tests {
     fn job_pause_and_resume() {
         let conn = setup();
         let create_result = dispatch(
-            &conn, "a", "s1", "job_create",
+            &conn,
+            "a",
+            "s1",
+            "job_create",
             r#"{"name": "test", "schedule": "* * * * *"}"#,
-        ).unwrap();
+        )
+        .unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&create_result.output).unwrap();
         let job_id = parsed["id"].as_str().unwrap();
 
@@ -868,9 +977,13 @@ mod tests {
         crate::store::facts::add(&conn, &fact, None).unwrap();
 
         let result = dispatch(
-            &conn, "agent-1", "s1", "memory_search",
+            &conn,
+            "agent-1",
+            "s1",
+            "memory_search",
             r#"{"query": "billing"}"#,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(result.success);
         assert!(result.output.contains("billing") || result.output.contains("Stripe"));
     }
@@ -882,7 +995,8 @@ mod tests {
         crate::schema::init_vector_indexes(&conn, 3).unwrap();
 
         let sid = crate::store::log::create_session(&conn, "agent-1", None).unwrap();
-        let mid = crate::store::log::append_message(&conn, &sid, "assistant", "executing checks").unwrap();
+        let mid = crate::store::log::append_message(&conn, &sid, "assistant", "executing checks")
+            .unwrap();
 
         conn.execute(
             "INSERT INTO tool_calls
@@ -931,18 +1045,24 @@ mod tests {
         conn.execute(
             "UPDATE tool_calls SET content_embedding = ?1 WHERE id = 'tc-runtime-sem'",
             rusqlite::params![f32_blob(&[1.0, 0.0, 0.0])],
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             "UPDATE policy_audit SET content_embedding = ?1 WHERE id = 'pa-runtime-sem'",
             rusqlite::params![f32_blob(&[1.0, 0.0, 0.0])],
-        ).unwrap();
+        )
+        .unwrap();
 
-        for (table, col) in &[("tool_calls", "content_embedding"), ("policy_audit", "content_embedding")] {
+        for (table, col) in &[
+            ("tool_calls", "content_embedding"),
+            ("policy_audit", "content_embedding"),
+        ] {
             conn.query_row(
                 "SELECT vector_quantize(?1, ?2)",
                 rusqlite::params![table, col],
                 |_| Ok::<_, rusqlite::Error>(()),
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         let result = dispatch(
@@ -951,7 +1071,8 @@ mod tests {
             &sid,
             "memory_search",
             r#"{"query":"qzv no lexical overlap","limit":10,"__query_embedding":[1.0,0.0,0.0]}"#,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(result.success);
         assert!(result.output.contains("[tool_call]"));
         assert!(result.output.contains("[policy_audit]"));
@@ -975,7 +1096,11 @@ mod tests {
             &conn, "a", "s1", "js_tool_add",
             r#"{"name":"greet","description":"Say hello","script":"function run(args){return{msg:'hello '+args.name};}"}"#,
         ).unwrap();
-        assert!(result.success, "js_tool_add should succeed: {}", result.output);
+        assert!(
+            result.success,
+            "js_tool_add should succeed: {}",
+            result.output
+        );
         assert!(result.output.contains("created"));
 
         let list = dispatch(&conn, "a", "s1", "js_tool_list", "{}").unwrap();
@@ -987,9 +1112,13 @@ mod tests {
     fn js_tool_is_detectable() {
         let conn = setup();
         dispatch(
-            &conn, "a", "s1", "js_tool_add",
+            &conn,
+            "a",
+            "s1",
+            "js_tool_add",
             r#"{"name":"my_js_tool","script":"function run(args){return{}}"}"#,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(is_js_tool(&conn, "my_js_tool"));
         assert!(!is_js_tool(&conn, "memory_search")); // runtime tool, not JS
     }
@@ -998,12 +1127,23 @@ mod tests {
     fn js_tool_delete_removes_tool() {
         let conn = setup();
         dispatch(
-            &conn, "a", "s1", "js_tool_add",
+            &conn,
+            "a",
+            "s1",
+            "js_tool_add",
             r#"{"name":"temp_tool","script":"function run(a){return{}}"}"#,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(is_js_tool(&conn, "temp_tool"));
 
-        let del = dispatch(&conn, "a", "s1", "js_tool_delete", r#"{"name":"temp_tool"}"#).unwrap();
+        let del = dispatch(
+            &conn,
+            "a",
+            "s1",
+            "js_tool_delete",
+            r#"{"name":"temp_tool"}"#,
+        )
+        .unwrap();
         assert!(del.success);
         assert!(!is_js_tool(&conn, "temp_tool"));
     }
@@ -1020,11 +1160,19 @@ mod tests {
     fn js_tool_add_rejects_bad_name() {
         let conn = setup();
         let result = dispatch(
-            &conn, "a", "s1", "js_tool_add",
+            &conn,
+            "a",
+            "s1",
+            "js_tool_add",
             r#"{"name":"bad name!","script":"function run(a){return{}}"}"#,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(!result.success);
-        assert!(result.output.contains("denied") || result.output.contains("invalid") || result.output.contains("must contain"));
+        assert!(
+            result.output.contains("denied")
+                || result.output.contains("invalid")
+                || result.output.contains("must contain")
+        );
     }
 
     #[test]

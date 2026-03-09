@@ -16,10 +16,9 @@
 /// | `cloudsync_network_init(url)` | Connect to a cloud sync server |
 /// | `cloudsync_network_sync(ms, n)` | Bidirectional cloud sync |
 /// | `cloudsync_terminate()` | Close cloud network connection |
-
 use std::path::PathBuf;
 
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use tracing::{debug, info, warn};
 
 // ---------------------------------------------------------------------------
@@ -86,11 +85,14 @@ pub fn init_sync_tables(conn: &Connection, tables: &[&str]) -> anyhow::Result<us
     let mut count = 0;
     for &table in tables {
         // Check if the table actually exists before asking cloudsync about it
-        let exists: bool = conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
-            params![table],
-            |r| r.get::<_, i64>(0),
-        ).map(|n| n > 0).unwrap_or(false);
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                params![table],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .unwrap_or(false);
 
         if !exists {
             debug!("sync: skipping unknown table '{table}'");
@@ -98,11 +100,9 @@ pub fn init_sync_tables(conn: &Connection, tables: &[&str]) -> anyhow::Result<us
         }
 
         let enabled: i64 = conn
-            .query_row(
-                "SELECT cloudsync_is_enabled(?1)",
-                params![table],
-                |r| r.get(0),
-            )
+            .query_row("SELECT cloudsync_is_enabled(?1)", params![table], |r| {
+                r.get(0)
+            })
             .unwrap_or(0);
 
         if enabled == 0 {
@@ -132,18 +132,21 @@ pub fn status(conn: &Connection, tables: &[&str]) -> anyhow::Result<SyncStatus> 
 
     let mut table_states = Vec::new();
     for &table in tables {
-        let exists: bool = conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
-            params![table],
-            |r| r.get::<_, i64>(0),
-        ).map(|n| n > 0).unwrap_or(false);
-
-        let enabled = if exists {
-            conn.query_row(
-                "SELECT cloudsync_is_enabled(?1)",
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
                 params![table],
                 |r| r.get::<_, i64>(0),
-            ).unwrap_or(0) == 1
+            )
+            .map(|n| n > 0)
+            .unwrap_or(false);
+
+        let enabled = if exists {
+            conn.query_row("SELECT cloudsync_is_enabled(?1)", params![table], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap_or(0)
+                == 1
         } else {
             false
         };
@@ -243,11 +246,7 @@ pub fn cloud_sync(conn: &Connection, cloud_url: &str) -> anyhow::Result<SyncResu
 
     // Run bidirectional sync (500ms timeout, up to 20 retries)
     let changes: i64 = conn
-        .query_row(
-            "SELECT cloudsync_network_sync(500, 20)",
-            [],
-            |r| r.get(0),
-        )
+        .query_row("SELECT cloudsync_network_sync(500, 20)", [], |r| r.get(0))
         .map_err(|e| anyhow::anyhow!("cloudsync_network_sync failed: {e}"))?;
 
     // Terminate the network session
@@ -281,11 +280,9 @@ fn exchange_payload(
 
     // Save the payload from source to a temp file
     let _rc: i64 = source
-        .query_row(
-            "SELECT cloudsync_payload_save(?1)",
-            params![tmp_str],
-            |r| r.get(0),
-        )
+        .query_row("SELECT cloudsync_payload_save(?1)", params![tmp_str], |r| {
+            r.get(0)
+        })
         .map_err(|e| anyhow::anyhow!("cloudsync_payload_save failed: {e}"))?;
 
     if !tmp_file.exists() {
@@ -364,8 +361,9 @@ mod tests {
                 enabled INTEGER NOT NULL DEFAULT 1,
                 rule_type TEXT NOT NULL DEFAULT 'static',
                 rule_config TEXT
-            );"
-        ).unwrap();
+            );",
+        )
+        .unwrap();
         conn
     }
 
@@ -382,13 +380,19 @@ mod tests {
             return;
         }
         let n = init_sync_tables(&conn, DEFAULT_SYNC_TABLES).unwrap();
-        assert_eq!(n, DEFAULT_SYNC_TABLES.len(), "all tables should be newly initialized");
+        assert_eq!(
+            n,
+            DEFAULT_SYNC_TABLES.len(),
+            "all tables should be newly initialized"
+        );
     }
 
     #[test]
     fn init_tables_is_idempotent() {
         let conn = make_test_db();
-        if !has_cloudsync(&conn) { return; }
+        if !has_cloudsync(&conn) {
+            return;
+        }
         init_sync_tables(&conn, DEFAULT_SYNC_TABLES).unwrap();
         let n = init_sync_tables(&conn, DEFAULT_SYNC_TABLES).unwrap();
         assert_eq!(n, 0, "second call should find all tables already enabled");
@@ -397,7 +401,9 @@ mod tests {
     #[test]
     fn status_returns_correct_data() {
         let conn = make_test_db();
-        if !has_cloudsync(&conn) { return; }
+        if !has_cloudsync(&conn) {
+            return;
+        }
         init_sync_tables(&conn, DEFAULT_SYNC_TABLES).unwrap();
         let st = status(&conn, DEFAULT_SYNC_TABLES).unwrap();
         assert!(!st.site_id.is_empty());
@@ -417,20 +423,31 @@ mod tests {
     fn local_sync_pushes_facts_between_dbs() {
         let source = make_test_db();
         let target = make_test_db();
-        if !has_cloudsync(&source) { return; }
+        if !has_cloudsync(&source) {
+            return;
+        }
 
         init_sync_tables(&source, DEFAULT_SYNC_TABLES).unwrap();
         init_sync_tables(&target, DEFAULT_SYNC_TABLES).unwrap();
 
-        source.execute_batch(
-            "INSERT INTO facts (id, agent_id, pointer, summary, scope)
-             VALUES ('fact-1', 'agent-a', 'ptr', 'test fact', 'shared');"
-        ).unwrap();
+        source
+            .execute_batch(
+                "INSERT INTO facts (id, agent_id, pointer, summary, scope)
+             VALUES ('fact-1', 'agent-a', 'ptr', 'test fact', 'shared');",
+            )
+            .unwrap();
 
         let result = local_sync_push(&source, &target, DEFAULT_SYNC_TABLES).unwrap();
         let count: i64 = target
-            .query_row("SELECT COUNT(*) FROM facts WHERE id='fact-1'", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM facts WHERE id='fact-1'", [], |r| {
+                r.get(0)
+            })
             .unwrap_or(0);
-        assert!(result.sent > 0 || count == 1, "fact should be synced: sent={}, count={}", result.sent, count);
+        assert!(
+            result.sent > 0 || count == 1,
+            "fact should be synced: sent={}, count={}",
+            result.sent,
+            count
+        );
     }
 }

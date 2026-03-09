@@ -50,9 +50,13 @@ pub fn turn(
     // 2. Assemble context
     let budget = crate::context::TokenBudget::new(config.token_budget);
     let segments = crate::context::assemble(
-        conn, &config.agent_id, session_id,
-        config.persona.as_deref(), user_message,
-        &budget, None,
+        conn,
+        &config.agent_id,
+        session_id,
+        config.persona.as_deref(),
+        user_message,
+        &budget,
+        None,
     )?;
 
     // 3. Build message list for LLM
@@ -80,9 +84,13 @@ pub fn turn(
     if matches!(msg_decision.effect, crate::policy::Effect::Deny) {
         let denial_msg = format!(
             "I'm unable to respond to that: {}",
-            msg_decision.reason.as_deref().unwrap_or("blocked by policy")
+            msg_decision
+                .reason
+                .as_deref()
+                .unwrap_or("blocked by policy")
         );
-        let resp_id = crate::store::log::append_message(conn, session_id, "assistant", &denial_msg)?;
+        let resp_id =
+            crate::store::log::append_message(conn, session_id, "assistant", &denial_msg)?;
         return Ok(TurnResult {
             response: denial_msg,
             tool_calls_made: 0,
@@ -103,13 +111,19 @@ pub fn turn(
     for (tool_name, tool_args) in &tool_calls {
         tool_calls_made += 1;
         let resp_id = crate::store::log::append_message(
-            conn, session_id, "assistant",
+            conn,
+            session_id,
+            "assistant",
             &format!("Calling tool: {tool_name}"),
         )?;
 
         let result = crate::tools::registry::execute(
-            conn, &config.agent_id, session_id, &resp_id,
-            tool_name, tool_args,
+            conn,
+            &config.agent_id,
+            session_id,
+            &resp_id,
+            tool_name,
+            tool_args,
             &|name, args| crate::tools::builtins::dispatch(name, args),
             None,
         )?;
@@ -122,10 +136,7 @@ pub fn turn(
         let mut augmented_messages = llm_messages.clone();
         augmented_messages.push(("assistant".into(), llm_response.clone()));
         for (name, result) in &tool_results {
-            augmented_messages.push((
-                "tool".into(),
-                format!("[{name}]: {}", result.output),
-            ));
+            augmented_messages.push(("tool".into(), format!("[{name}]: {}", result.output)));
         }
         llm.generate(&augmented_messages)?
     } else {
@@ -163,7 +174,6 @@ fn parse_tool_calls(response: &str) -> (String, Vec<(String, String)>) {
     clean = tool_re.replace_all(&clean, "").to_string();
     (clean.trim().to_string(), calls)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -219,8 +229,13 @@ mod tests {
         allow_all(&conn);
         let sid = store::log::create_session(&conn, "a", None).unwrap();
 
-        let llm = MockLlm { response: "Hello! How can I help?".into() };
-        let config = AgentConfig { agent_id: "a".into(), ..Default::default() };
+        let llm = MockLlm {
+            response: "Hello! How can I help?".into(),
+        };
+        let config = AgentConfig {
+            agent_id: "a".into(),
+            ..Default::default()
+        };
 
         let result = turn(&conn, &config, &sid, "Hello", &llm).unwrap();
         assert_eq!(result.response, "Hello! How can I help?");
@@ -256,7 +271,8 @@ mod tests {
 
         turn(&conn, &config, &sid, "Help me", &llm).unwrap();
         let captured = llm.0.borrow();
-        let system_msgs: Vec<&String> = captured.iter()
+        let system_msgs: Vec<&String> = captured
+            .iter()
             .filter(|(role, _)| role == "system")
             .map(|(_, content)| content)
             .collect();
@@ -277,8 +293,13 @@ mod tests {
         ).unwrap();
         let sid = store::log::create_session(&conn, "a", None).unwrap();
 
-        let llm = MockLlm { response: "shouldn't see this".into() };
-        let config = AgentConfig { agent_id: "a".into(), ..Default::default() };
+        let llm = MockLlm {
+            response: "shouldn't see this".into(),
+        };
+        let config = AgentConfig {
+            agent_id: "a".into(),
+            ..Default::default()
+        };
 
         let result = turn(&conn, &config, &sid, "do something bad", &llm).unwrap();
         assert!(result.response.contains("unable to respond"));
@@ -302,7 +323,10 @@ mod tests {
                 "The command returned: hello".into(),
             ]),
         };
-        let config = AgentConfig { agent_id: "a".into(), ..Default::default() };
+        let config = AgentConfig {
+            agent_id: "a".into(),
+            ..Default::default()
+        };
 
         let result = turn(&conn, &config, &sid, "run echo hello", &llm).unwrap();
         assert_eq!(result.tool_calls_made, 1);
@@ -318,7 +342,10 @@ mod tests {
         let llm = MockLlm {
             response: "Here's the key: sk-abc123longapikey456789012345678901234567890".into(),
         };
-        let config = AgentConfig { agent_id: "a".into(), ..Default::default() };
+        let config = AgentConfig {
+            agent_id: "a".into(),
+            ..Default::default()
+        };
 
         let result = turn(&conn, &config, &sid, "what's the api key?", &llm).unwrap();
         assert!(result.response.contains("[REDACTED]"));
@@ -331,9 +358,8 @@ mod tests {
 
     #[test]
     fn parse_tool_calls_extracts_calls() {
-        let (text, calls) = parse_tool_calls(
-            r#"Let me check. [TOOL:shell_exec]({"command":"ls"}) Done."#,
-        );
+        let (text, calls) =
+            parse_tool_calls(r#"Let me check. [TOOL:shell_exec]({"command":"ls"}) Done."#);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].0, "shell_exec");
         assert!(calls[0].1.contains("ls"));
@@ -365,12 +391,19 @@ mod tests {
         let conn = setup();
         allow_all(&conn);
         let sid = store::log::create_session(&conn, "a", None).unwrap();
-        let config = AgentConfig { agent_id: "a".into(), ..Default::default() };
+        let config = AgentConfig {
+            agent_id: "a".into(),
+            ..Default::default()
+        };
 
-        let llm = MockLlm { response: "response 1".into() };
+        let llm = MockLlm {
+            response: "response 1".into(),
+        };
         turn(&conn, &config, &sid, "msg 1", &llm).unwrap();
 
-        let llm = MockLlm { response: "response 2".into() };
+        let llm = MockLlm {
+            response: "response 2".into(),
+        };
         turn(&conn, &config, &sid, "msg 2", &llm).unwrap();
 
         let msgs = store::log::get_messages(&conn, &sid).unwrap();

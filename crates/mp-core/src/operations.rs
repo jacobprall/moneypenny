@@ -66,16 +66,28 @@ pub fn execute(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Oper
                         "idempotency key was already used with different arguments".to_string(),
                     );
                     idempotency_state = "conflict";
-                    record_idempotency_audit_event(conn, req, idempotency_state, Some(conflict.message.as_str()))?;
+                    record_idempotency_audit_event(
+                        conn,
+                        req,
+                        idempotency_state,
+                        Some(conflict.message.as_str()),
+                    )?;
                     annotate_response_metadata(req, &mut conflict, idempotency_state);
                     return Ok(conflict);
                 }
 
                 let mut replayed: OperationResponse = serde_json::from_str(&stored.response_json)
-                    .map_err(|e| anyhow::anyhow!("failed to decode stored idempotent response: {e}"))?;
+                    .map_err(|e| {
+                    anyhow::anyhow!("failed to decode stored idempotent response: {e}")
+                })?;
                 bump_idempotency_replay(conn, stored.id.as_str())?;
                 idempotency_state = "replayed";
-                record_idempotency_audit_event(conn, req, idempotency_state, Some("replayed stored response"))?;
+                record_idempotency_audit_event(
+                    conn,
+                    req,
+                    idempotency_state,
+                    Some("replayed stored response"),
+                )?;
                 annotate_response_metadata(req, &mut replayed, idempotency_state);
                 return Ok(replayed);
             }
@@ -112,7 +124,10 @@ pub fn execute(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Oper
     Ok(resp)
 }
 
-fn dispatch_operation(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+fn dispatch_operation(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
     match req.op.as_str() {
         "job.create" => op_job_create(conn, req),
         "job.list" => op_job_list(conn, req),
@@ -150,7 +165,10 @@ fn dispatch_operation(conn: &Connection, req: &OperationRequest) -> anyhow::Resu
         "ingest.events" => op_ingest_events(conn, req),
         "ingest.status" => op_ingest_status(conn, req),
         "ingest.replay" => op_ingest_replay(conn, req),
-        _ => Ok(fail_response("invalid_args", format!("unknown operation '{}'", req.op))),
+        _ => Ok(fail_response(
+            "invalid_args",
+            format!("unknown operation '{}'", req.op),
+        )),
     }
 }
 
@@ -302,7 +320,7 @@ fn op_job_run(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Opera
                 data: serde_json::json!({}),
                 policy: Some(policy_meta(&decision)),
                 audit: AuditMeta { recorded: true },
-            })
+            });
         }
     };
 
@@ -346,17 +364,20 @@ fn op_job_history(conn: &Connection, req: &OperationRequest) -> anyhow::Result<O
     }
 
     let runs = crate::scheduler::list_runs(conn, job_id, limit)?;
-    let data: Vec<serde_json::Value> = runs.iter().map(|r| {
-        serde_json::json!({
-            "id": r.id,
-            "job_id": r.job_id,
-            "agent_id": r.agent_id,
-            "status": r.status,
-            "result": r.result,
-            "started_at": r.started_at,
-            "ended_at": r.ended_at,
+    let data: Vec<serde_json::Value> = runs
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "id": r.id,
+                "job_id": r.job_id,
+                "agent_id": r.agent_id,
+                "status": r.status,
+                "result": r.result,
+                "started_at": r.started_at,
+                "ended_at": r.ended_at,
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(OperationResponse {
         ok: true,
@@ -443,7 +464,10 @@ fn load_job_spec(conn: &Connection, spec_id: &str) -> anyhow::Result<Option<JobS
     Ok(row)
 }
 
-fn op_job_spec_plan(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+fn op_job_spec_plan(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
     let intent = req.args["intent"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'intent'"))?;
@@ -533,7 +557,10 @@ fn op_job_spec_plan(conn: &Connection, req: &OperationRequest) -> anyhow::Result
     })
 }
 
-fn op_job_spec_confirm(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+fn op_job_spec_confirm(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
     let spec_id = req.args["spec_id"]
         .as_str()
         .or(req.args["id"].as_str())
@@ -593,7 +620,10 @@ fn op_job_spec_confirm(conn: &Connection, req: &OperationRequest) -> anyhow::Res
         return Ok(OperationResponse {
             ok: false,
             code: "invalid_state".into(),
-            message: format!("job spec '{spec_id}' cannot be confirmed from status '{}'", spec.status),
+            message: format!(
+                "job spec '{spec_id}' cannot be confirmed from status '{}'",
+                spec.status
+            ),
             data: serde_json::json!({
                 "spec_id": spec.id,
                 "status": spec.status
@@ -628,7 +658,10 @@ fn op_job_spec_confirm(conn: &Connection, req: &OperationRequest) -> anyhow::Res
     })
 }
 
-fn op_job_spec_apply(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+fn op_job_spec_apply(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
     let spec_id = req.args["spec_id"]
         .as_str()
         .or(req.args["id"].as_str())
@@ -852,7 +885,10 @@ fn load_policy_spec(conn: &Connection, spec_id: &str) -> anyhow::Result<Option<P
     Ok(row)
 }
 
-fn op_policy_spec_plan(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+fn op_policy_spec_plan(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
     let intent = req.args["intent"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'intent'"))?;
@@ -881,7 +917,9 @@ fn op_policy_spec_plan(conn: &Connection, req: &OperationRequest) -> anyhow::Res
         None => "{}".to_string(),
     };
     let proposed_by = req.args["proposed_by"].as_str().unwrap_or("agent");
-    let source_session_id = req.args.get("source_session_id")
+    let source_session_id = req
+        .args
+        .get("source_session_id")
         .and_then(|v| v.as_str())
         .or(req.context.session_id.as_deref());
     let source_message_id = req.args["source_message_id"].as_str();
@@ -913,10 +951,27 @@ fn op_policy_spec_plan(conn: &Connection, req: &OperationRequest) -> anyhow::Res
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
                  'planned', ?17, ?18, ?19, ?20, ?21)",
         rusqlite::params![
-            id, agent_id, intent, plan_json, policy_name, effect, priority,
-            actor_pattern, action_pattern, resource_pattern, argument_pattern,
-            channel_pattern, sql_pattern, rule_type, rule_config, message,
-            proposed_by, source_session_id, source_message_id, now, now
+            id,
+            agent_id,
+            intent,
+            plan_json,
+            policy_name,
+            effect,
+            priority,
+            actor_pattern,
+            action_pattern,
+            resource_pattern,
+            argument_pattern,
+            channel_pattern,
+            sql_pattern,
+            rule_type,
+            rule_config,
+            message,
+            proposed_by,
+            source_session_id,
+            source_message_id,
+            now,
+            now
         ],
     )?;
 
@@ -939,7 +994,10 @@ fn op_policy_spec_plan(conn: &Connection, req: &OperationRequest) -> anyhow::Res
     })
 }
 
-fn op_policy_spec_confirm(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+fn op_policy_spec_confirm(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
     let spec_id = req.args["spec_id"]
         .as_str()
         .or(req.args["id"].as_str())
@@ -999,7 +1057,10 @@ fn op_policy_spec_confirm(conn: &Connection, req: &OperationRequest) -> anyhow::
         return Ok(OperationResponse {
             ok: false,
             code: "invalid_state".into(),
-            message: format!("policy spec '{spec_id}' cannot be confirmed from status '{}'", spec.status),
+            message: format!(
+                "policy spec '{spec_id}' cannot be confirmed from status '{}'",
+                spec.status
+            ),
             data: serde_json::json!({ "spec_id": spec.id, "status": spec.status }),
             policy: Some(policy_meta(&decision)),
             audit: AuditMeta { recorded: true },
@@ -1029,7 +1090,10 @@ fn op_policy_spec_confirm(conn: &Connection, req: &OperationRequest) -> anyhow::
     })
 }
 
-fn op_policy_spec_apply(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+fn op_policy_spec_apply(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
     let spec_id = req.args["spec_id"]
         .as_str()
         .or(req.args["id"].as_str())
@@ -1124,7 +1188,10 @@ fn op_policy_spec_apply(conn: &Connection, req: &OperationRequest) -> anyhow::Re
     })
 }
 
-fn op_policy_evaluate(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+fn op_policy_evaluate(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
     let action = req.args["action"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'action'"))?;
@@ -1187,7 +1254,10 @@ fn op_policy_evaluate(conn: &Connection, req: &OperationRequest) -> anyhow::Resu
     })
 }
 
-fn op_policy_explain(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+fn op_policy_explain(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
     let mut resp = op_policy_evaluate(conn, req)?;
     resp.message = "policy explanation generated".into();
     Ok(resp)
@@ -1275,8 +1345,7 @@ fn op_audit_append(conn: &Connection, req: &OperationRequest) -> anyhow::Result<
     let effect = req.args["effect"].as_str().unwrap_or("audited");
     let actor = req.args["actor"].as_str().unwrap_or(&req.actor.agent_id);
     let reason = req.args["reason"].as_str();
-    let now = req
-        .args["created_at"]
+    let now = req.args["created_at"]
         .as_i64()
         .unwrap_or_else(|| chrono::Utc::now().timestamp());
 
@@ -1335,9 +1404,14 @@ fn op_audit_append(conn: &Connection, req: &OperationRequest) -> anyhow::Result<
     })
 }
 
-fn op_session_resolve(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+fn op_session_resolve(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
     let requested = req.args["session_id"].as_str().map(|s| s.to_string());
-    let channel = req.args["channel"].as_str().or(req.actor.channel.as_deref());
+    let channel = req.args["channel"]
+        .as_str()
+        .or(req.actor.channel.as_deref());
     let target_agent = req.args["agent_id"].as_str().unwrap_or(&req.actor.agent_id);
     let create_if_missing = req.args["create_if_missing"].as_bool().unwrap_or(true);
 
@@ -1378,13 +1452,20 @@ fn op_session_resolve(conn: &Connection, req: &OperationRequest) -> anyhow::Resu
             });
         }
     } else {
-        (crate::store::log::create_session(conn, target_agent, channel)?, true)
+        (
+            crate::store::log::create_session(conn, target_agent, channel)?,
+            true,
+        )
     };
 
     Ok(OperationResponse {
         ok: true,
         code: "ok".into(),
-        message: if created { "session created".into() } else { "session resolved".into() },
+        message: if created {
+            "session created".into()
+        } else {
+            "session resolved".into()
+        },
         data: serde_json::json!({
             "session_id": session_id,
             "agent_id": target_agent,
@@ -1454,7 +1535,9 @@ fn op_js_tool_add(conn: &Connection, req: &OperationRequest) -> anyhow::Result<O
     let name = req.args["name"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'name'"))?;
-    let description = req.args["description"].as_str().unwrap_or("User-defined JS tool");
+    let description = req.args["description"]
+        .as_str()
+        .unwrap_or("User-defined JS tool");
     let script = req.args["script"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'script'"))?;
@@ -1475,7 +1558,10 @@ fn op_js_tool_add(conn: &Connection, req: &OperationRequest) -> anyhow::Result<O
         return Ok(denied_response(&decision));
     }
 
-    if name.chars().any(|c| !c.is_alphanumeric() && c != '_' && c != '-') {
+    if name
+        .chars()
+        .any(|c| !c.is_alphanumeric() && c != '_' && c != '-')
+    {
         return Ok(fail_response(
             "invalid_args",
             "tool name must contain only letters, digits, underscores, or hyphens".into(),
@@ -1548,7 +1634,10 @@ fn op_js_tool_list(conn: &Connection, req: &OperationRequest) -> anyhow::Result<
     })
 }
 
-fn op_js_tool_delete(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+fn op_js_tool_delete(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
     let name = req.args["name"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'name'"))?;
@@ -1596,7 +1685,10 @@ fn op_js_tool_delete(conn: &Connection, req: &OperationRequest) -> anyhow::Resul
     })
 }
 
-fn op_knowledge_ingest(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+fn op_knowledge_ingest(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
     let content = req.args["content"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'content'"))?;
@@ -1604,7 +1696,9 @@ fn op_knowledge_ingest(conn: &Connection, req: &OperationRequest) -> anyhow::Res
     let title = req.args["title"].as_str();
     let metadata = req.args["metadata"].as_str();
 
-    let is_url = path.map_or(false, |p| p.starts_with("http://") || p.starts_with("https://"));
+    let is_url = path.map_or(false, |p| {
+        p.starts_with("http://") || p.starts_with("https://")
+    });
     let resource = if is_url { "knowledge:url" } else { "knowledge" };
 
     let decision = evaluate_policy_with_request_context(
@@ -1639,13 +1733,14 @@ fn op_knowledge_ingest(conn: &Connection, req: &OperationRequest) -> anyhow::Res
     })
 }
 
-fn op_memory_search(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+fn op_memory_search(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
     let query = req.args["query"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'query'"))?;
-    let agent_id = req.args["agent_id"]
-        .as_str()
-        .unwrap_or(&req.actor.agent_id);
+    let agent_id = req.args["agent_id"].as_str().unwrap_or(&req.actor.agent_id);
     let limit = req.args["limit"].as_u64().unwrap_or(20) as usize;
 
     let decision = evaluate_policy_with_request_context(
@@ -1687,17 +1782,20 @@ fn op_memory_search(conn: &Connection, req: &OperationRequest) -> anyhow::Result
     })
 }
 
-fn op_memory_fact_add(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+fn op_memory_fact_add(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
     let content = req.args["content"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'content'"))?;
     let summary = req.args["summary"].as_str().unwrap_or(content);
     let pointer = req.args["pointer"].as_str().unwrap_or(content);
     let confidence = req.args["confidence"].as_f64().unwrap_or(1.0);
-    let agent_id = req.args["agent_id"]
+    let agent_id = req.args["agent_id"].as_str().unwrap_or(&req.actor.agent_id);
+    let reason = req.args["reason"]
         .as_str()
-        .unwrap_or(&req.actor.agent_id);
-    let reason = req.args["reason"].as_str().or(Some("added via canonical operation"));
+        .or(Some("added via canonical operation"));
     let keywords = req.args["keywords"].as_str().map(|s| s.to_string());
 
     let decision = evaluate_policy_with_request_context(
@@ -1724,7 +1822,9 @@ fn op_memory_fact_add(conn: &Connection, req: &OperationRequest) -> anyhow::Resu
             summary: summary.to_string(),
             pointer: pointer.to_string(),
             keywords,
-            source_message_id: req.args["source_message_id"].as_str().map(|s| s.to_string()),
+            source_message_id: req.args["source_message_id"]
+                .as_str()
+                .map(|s| s.to_string()),
             confidence,
         },
         reason,
@@ -1746,7 +1846,10 @@ fn op_memory_fact_add(conn: &Connection, req: &OperationRequest) -> anyhow::Resu
     })
 }
 
-fn op_memory_fact_update(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+fn op_memory_fact_update(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
     let fact_id = req.args["id"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'id'"))?;
@@ -1755,7 +1858,9 @@ fn op_memory_fact_update(conn: &Connection, req: &OperationRequest) -> anyhow::R
         .ok_or_else(|| anyhow::anyhow!("missing 'content'"))?;
     let summary = req.args["summary"].as_str().unwrap_or(content);
     let pointer = req.args["pointer"].as_str().unwrap_or(content);
-    let reason = req.args["reason"].as_str().or(Some("updated via canonical operation"));
+    let reason = req.args["reason"]
+        .as_str()
+        .or(Some("updated via canonical operation"));
     let source_message_id = req.args["source_message_id"].as_str();
 
     let decision = evaluate_policy_with_request_context(
@@ -1809,7 +1914,10 @@ fn op_memory_fact_update(conn: &Connection, req: &OperationRequest) -> anyhow::R
     })
 }
 
-fn op_memory_fact_get(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+fn op_memory_fact_get(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
     let fact_id = req.args["id"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'id'"))?;
@@ -1840,7 +1948,7 @@ fn op_memory_fact_get(conn: &Connection, req: &OperationRequest) -> anyhow::Resu
                 data: serde_json::json!({}),
                 policy: Some(policy_meta(&decision)),
                 audit: AuditMeta { recorded: true },
-            })
+            });
         }
     };
 
@@ -1866,11 +1974,16 @@ fn op_memory_fact_get(conn: &Connection, req: &OperationRequest) -> anyhow::Resu
     })
 }
 
-fn op_memory_fact_compaction_reset(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+fn op_memory_fact_compaction_reset(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
     let fact_id = req.args["id"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'id'"))?;
-    let reason = req.args["reason"].as_str().or(Some("compaction reset via canonical operation"));
+    let reason = req.args["reason"]
+        .as_str()
+        .or(Some("compaction reset via canonical operation"));
 
     let decision = evaluate_policy_with_request_context(
         conn,
@@ -1898,7 +2011,7 @@ fn op_memory_fact_compaction_reset(conn: &Connection, req: &OperationRequest) ->
                 data: serde_json::json!({}),
                 policy: Some(policy_meta(&decision)),
                 audit: AuditMeta { recorded: true },
-            })
+            });
         }
     };
 
@@ -1970,7 +2083,10 @@ fn op_skill_add(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Ope
     })
 }
 
-fn op_skill_promote(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+fn op_skill_promote(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
     let skill_id = req.args["id"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'id'"))?;
@@ -2239,20 +2355,39 @@ fn op_agent_config(conn: &Connection, req: &OperationRequest) -> anyhow::Result<
 
     match key {
         "persona" => {
-            meta_conn.execute("UPDATE agents SET persona = ?1 WHERE name = ?2", rusqlite::params![value, name])?;
+            meta_conn.execute(
+                "UPDATE agents SET persona = ?1 WHERE name = ?2",
+                rusqlite::params![value, name],
+            )?;
         }
         "trust_level" => {
-            meta_conn.execute("UPDATE agents SET trust_level = ?1 WHERE name = ?2", rusqlite::params![value, name])?;
+            meta_conn.execute(
+                "UPDATE agents SET trust_level = ?1 WHERE name = ?2",
+                rusqlite::params![value, name],
+            )?;
         }
         "llm_provider" => {
-            meta_conn.execute("UPDATE agents SET llm_provider = ?1 WHERE name = ?2", rusqlite::params![value, name])?;
+            meta_conn.execute(
+                "UPDATE agents SET llm_provider = ?1 WHERE name = ?2",
+                rusqlite::params![value, name],
+            )?;
         }
         "llm_model" => {
-            meta_conn.execute("UPDATE agents SET llm_model = ?1 WHERE name = ?2", rusqlite::params![value, name])?;
+            meta_conn.execute(
+                "UPDATE agents SET llm_model = ?1 WHERE name = ?2",
+                rusqlite::params![value, name],
+            )?;
         }
         "sync_enabled" => {
-            let as_int = if value.eq_ignore_ascii_case("true") || value == "1" { 1 } else { 0 };
-            meta_conn.execute("UPDATE agents SET sync_enabled = ?1 WHERE name = ?2", rusqlite::params![as_int, name])?;
+            let as_int = if value.eq_ignore_ascii_case("true") || value == "1" {
+                1
+            } else {
+                0
+            };
+            meta_conn.execute(
+                "UPDATE agents SET sync_enabled = ?1 WHERE name = ?2",
+                rusqlite::params![as_int, name],
+            )?;
         }
         _ => {
             return Ok(fail_response(
@@ -2276,7 +2411,10 @@ fn op_agent_config(conn: &Connection, req: &OperationRequest) -> anyhow::Result<
     })
 }
 
-fn op_ingest_events(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+fn op_ingest_events(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
     let source = req.args["source"].as_str().unwrap_or("openclaw");
     let file_path = req.args["file_path"]
         .as_str()
@@ -2327,7 +2465,10 @@ fn op_ingest_events(conn: &Connection, req: &OperationRequest) -> anyhow::Result
     })
 }
 
-fn op_ingest_status(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+fn op_ingest_status(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
     let source = req.args["source"].as_str();
     let status = req.args["status"].as_str();
     let file_path_like = req.args["file_path_like"].as_str();
@@ -2363,7 +2504,10 @@ fn op_ingest_status(conn: &Connection, req: &OperationRequest) -> anyhow::Result
     })
 }
 
-fn op_ingest_replay(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+fn op_ingest_replay(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
     let run_id = req.args["run_id"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing 'run_id'"))?;
@@ -2720,7 +2864,10 @@ fn op_pattern_matches(pattern: &str, op: &str) -> bool {
     true
 }
 
-fn run_pre_hooks(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Option<OperationResponse>> {
+fn run_pre_hooks(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<Option<OperationResponse>> {
     // Hard guardrail: avoid oversized operation envelopes overwhelming runtime.
     let args_size = req.args.to_string().len();
     if args_size > 2_000_000 {
@@ -2736,7 +2883,8 @@ fn run_pre_hooks(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Op
         if !op_pattern_matches(&hook.op_pattern, &req.op) {
             continue;
         }
-        let cfg: serde_json::Value = serde_json::from_str(&hook.config_json).unwrap_or_else(|_| serde_json::json!({}));
+        let cfg: serde_json::Value =
+            serde_json::from_str(&hook.config_json).unwrap_or_else(|_| serde_json::json!({}));
         match hook.hook_type.as_str() {
             "deny_if_args_contains" => {
                 let needle = cfg["needle"].as_str().unwrap_or("");
@@ -2755,7 +2903,12 @@ fn run_pre_hooks(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Op
                     let msg = cfg["message"]
                         .as_str()
                         .map(|s| s.to_string())
-                        .unwrap_or_else(|| format!("operation args exceeded hook limit: {} > {}", args_size, max));
+                        .unwrap_or_else(|| {
+                            format!(
+                                "operation args exceeded hook limit: {} > {}",
+                                args_size, max
+                            )
+                        });
                     tracing::debug!(hook_id = %hook.id, op = %req.op, "operation pre-hook rejected oversized args");
                     return Ok(Some(fail_response("hook_denied", msg)));
                 }
@@ -2767,7 +2920,11 @@ fn run_pre_hooks(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Op
     Ok(None)
 }
 
-fn run_post_hooks(conn: &Connection, req: &OperationRequest, resp: &mut OperationResponse) -> anyhow::Result<()> {
+fn run_post_hooks(
+    conn: &Connection,
+    req: &OperationRequest,
+    resp: &mut OperationResponse,
+) -> anyhow::Result<()> {
     // Standardized post-hook: redact accidental secret-like output text.
     resp.message = crate::store::redact::redact(&resp.message);
 
@@ -2776,7 +2933,8 @@ fn run_post_hooks(conn: &Connection, req: &OperationRequest, resp: &mut Operatio
         if !op_pattern_matches(&hook.op_pattern, &req.op) {
             continue;
         }
-        let cfg: serde_json::Value = serde_json::from_str(&hook.config_json).unwrap_or_else(|_| serde_json::json!({}));
+        let cfg: serde_json::Value =
+            serde_json::from_str(&hook.config_json).unwrap_or_else(|_| serde_json::json!({}));
         match hook.hook_type.as_str() {
             "append_message_suffix" => {
                 if let Some(suffix) = cfg["suffix"].as_str() {
@@ -2807,7 +2965,11 @@ fn run_post_hooks(conn: &Connection, req: &OperationRequest, resp: &mut Operatio
     Ok(())
 }
 
-fn annotate_response_metadata(req: &OperationRequest, resp: &mut OperationResponse, idempotency_state: &str) {
+fn annotate_response_metadata(
+    req: &OperationRequest,
+    resp: &mut OperationResponse,
+    idempotency_state: &str,
+) {
     let correlation_id = req
         .request_id
         .as_deref()
@@ -2844,7 +3006,10 @@ fn evaluate_policy_with_request_context(
     };
     let audit = crate::policy::PolicyAuditContext {
         session_id: req.context.session_id.as_deref(),
-        correlation_id: req.request_id.as_deref().or(req.context.trace_id.as_deref()),
+        correlation_id: req
+            .request_id
+            .as_deref()
+            .or(req.context.trace_id.as_deref()),
         idempotency_key: req.idempotency_key.as_deref(),
         idempotency_state: Some(idempotency_state),
     };
@@ -3558,7 +3723,11 @@ mod tests {
         let resp = execute(&conn, &req).unwrap();
         assert!(resp.ok);
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM policies WHERE name = 'deny-shell'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM policies WHERE name = 'deny-shell'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(count, 1);
     }
@@ -3572,30 +3741,42 @@ mod tests {
             [],
         ).unwrap();
 
-        let resp = execute(&conn, &OperationRequest {
-            op: "policy.add".into(),
-            op_version: Some("v1".into()),
-            request_id: None,
-            idempotency_key: None,
-            actor: ActorContext { agent_id: "main".into(), tenant_id: None, user_id: None, channel: Some("cli".into()) },
-            context: OperationContext::default(),
-            args: serde_json::json!({
-                "name": "whitelist-docs",
-                "effect": "allow",
-                "priority": 100,
-                "action_pattern": "ingest",
-                "resource_pattern": "knowledge:url",
-                "argument_pattern": "https://docs.example.com/*",
-                "message": "Whitelisted domain"
-            }),
-        }).unwrap();
+        let resp = execute(
+            &conn,
+            &OperationRequest {
+                op: "policy.add".into(),
+                op_version: Some("v1".into()),
+                request_id: None,
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "name": "whitelist-docs",
+                    "effect": "allow",
+                    "priority": 100,
+                    "action_pattern": "ingest",
+                    "resource_pattern": "knowledge:url",
+                    "argument_pattern": "https://docs.example.com/*",
+                    "message": "Whitelisted domain"
+                }),
+            },
+        )
+        .unwrap();
         assert!(resp.ok);
         assert_eq!(resp.data["priority"].as_i64(), Some(100));
 
-        let (pri, arg_pat): (i64, Option<String>) = conn.query_row(
-            "SELECT priority, argument_pattern FROM policies WHERE name = 'whitelist-docs'",
-            [], |r| Ok((r.get(0)?, r.get(1)?)),
-        ).unwrap();
+        let (pri, arg_pat): (i64, Option<String>) = conn
+            .query_row(
+                "SELECT priority, argument_pattern FROM policies WHERE name = 'whitelist-docs'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
         assert_eq!(pri, 100);
         assert_eq!(arg_pat.as_deref(), Some("https://docs.example.com/*"));
     }
@@ -3609,61 +3790,88 @@ mod tests {
             [],
         ).unwrap();
 
-        let actor = ActorContext { agent_id: "main".into(), tenant_id: None, user_id: None, channel: Some("agent".into()) };
+        let actor = ActorContext {
+            agent_id: "main".into(),
+            tenant_id: None,
+            user_id: None,
+            channel: Some("agent".into()),
+        };
 
-        let plan_resp = execute(&conn, &OperationRequest {
-            op: "policy.spec.plan".into(),
-            op_version: Some("v1".into()),
-            request_id: None, idempotency_key: None,
-            actor: actor.clone(),
-            context: OperationContext::default(),
-            args: serde_json::json!({
-                "intent": "only allow docs.example.com URLs",
-                "policy_name": "whitelist-docs",
-                "effect": "allow",
-                "priority": 100,
-                "action_pattern": "ingest",
-                "resource_pattern": "knowledge:url",
-                "argument_pattern": "https://docs.example.com/*",
-                "message": "Whitelisted"
-            }),
-        }).unwrap();
+        let plan_resp = execute(
+            &conn,
+            &OperationRequest {
+                op: "policy.spec.plan".into(),
+                op_version: Some("v1".into()),
+                request_id: None,
+                idempotency_key: None,
+                actor: actor.clone(),
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "intent": "only allow docs.example.com URLs",
+                    "policy_name": "whitelist-docs",
+                    "effect": "allow",
+                    "priority": 100,
+                    "action_pattern": "ingest",
+                    "resource_pattern": "knowledge:url",
+                    "argument_pattern": "https://docs.example.com/*",
+                    "message": "Whitelisted"
+                }),
+            },
+        )
+        .unwrap();
         assert!(plan_resp.ok);
         assert_eq!(plan_resp.data["status"].as_str(), Some("planned"));
         let spec_id = plan_resp.data["spec_id"].as_str().unwrap().to_string();
 
-        let status: String = conn.query_row(
-            "SELECT status FROM policy_specs WHERE id = ?1", [&spec_id], |r| r.get(0),
-        ).unwrap();
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM policy_specs WHERE id = ?1",
+                [&spec_id],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(status, "planned");
 
-        let confirm_resp = execute(&conn, &OperationRequest {
-            op: "policy.spec.confirm".into(),
-            op_version: Some("v1".into()),
-            request_id: None, idempotency_key: None,
-            actor: actor.clone(),
-            context: OperationContext::default(),
-            args: serde_json::json!({ "spec_id": spec_id }),
-        }).unwrap();
+        let confirm_resp = execute(
+            &conn,
+            &OperationRequest {
+                op: "policy.spec.confirm".into(),
+                op_version: Some("v1".into()),
+                request_id: None,
+                idempotency_key: None,
+                actor: actor.clone(),
+                context: OperationContext::default(),
+                args: serde_json::json!({ "spec_id": spec_id }),
+            },
+        )
+        .unwrap();
         assert!(confirm_resp.ok);
         assert_eq!(confirm_resp.data["status"].as_str(), Some("confirmed"));
 
-        let apply_resp = execute(&conn, &OperationRequest {
-            op: "policy.spec.apply".into(),
-            op_version: Some("v1".into()),
-            request_id: None, idempotency_key: None,
-            actor: actor.clone(),
-            context: OperationContext::default(),
-            args: serde_json::json!({ "spec_id": spec_id }),
-        }).unwrap();
+        let apply_resp = execute(
+            &conn,
+            &OperationRequest {
+                op: "policy.spec.apply".into(),
+                op_version: Some("v1".into()),
+                request_id: None,
+                idempotency_key: None,
+                actor: actor.clone(),
+                context: OperationContext::default(),
+                args: serde_json::json!({ "spec_id": spec_id }),
+            },
+        )
+        .unwrap();
         assert!(apply_resp.ok);
         assert_eq!(apply_resp.data["status"].as_str(), Some("applied"));
 
         let policy_id = apply_resp.data["policy_id"].as_str().unwrap();
-        let (name, effect, pri, arg_pat): (String, String, i64, Option<String>) = conn.query_row(
-            "SELECT name, effect, priority, argument_pattern FROM policies WHERE id = ?1",
-            [policy_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-        ).unwrap();
+        let (name, effect, pri, arg_pat): (String, String, i64, Option<String>) = conn
+            .query_row(
+                "SELECT name, effect, priority, argument_pattern FROM policies WHERE id = ?1",
+                [policy_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
         assert_eq!(name, "whitelist-docs");
         assert_eq!(effect, "allow");
         assert_eq!(pri, 100);
@@ -3679,31 +3887,46 @@ mod tests {
             [],
         ).unwrap();
 
-        let actor = ActorContext { agent_id: "main".into(), tenant_id: None, user_id: None, channel: Some("agent".into()) };
+        let actor = ActorContext {
+            agent_id: "main".into(),
+            tenant_id: None,
+            user_id: None,
+            channel: Some("agent".into()),
+        };
 
-        let plan_resp = execute(&conn, &OperationRequest {
-            op: "policy.spec.plan".into(),
-            op_version: Some("v1".into()),
-            request_id: None, idempotency_key: None,
-            actor: actor.clone(),
-            context: OperationContext::default(),
-            args: serde_json::json!({
-                "intent": "test",
-                "policy_name": "test-policy",
-                "effect": "deny",
-            }),
-        }).unwrap();
+        let plan_resp = execute(
+            &conn,
+            &OperationRequest {
+                op: "policy.spec.plan".into(),
+                op_version: Some("v1".into()),
+                request_id: None,
+                idempotency_key: None,
+                actor: actor.clone(),
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "intent": "test",
+                    "policy_name": "test-policy",
+                    "effect": "deny",
+                }),
+            },
+        )
+        .unwrap();
         assert!(plan_resp.ok);
         let spec_id = plan_resp.data["spec_id"].as_str().unwrap().to_string();
 
-        let apply_resp = execute(&conn, &OperationRequest {
-            op: "policy.spec.apply".into(),
-            op_version: Some("v1".into()),
-            request_id: None, idempotency_key: None,
-            actor: actor.clone(),
-            context: OperationContext::default(),
-            args: serde_json::json!({ "spec_id": spec_id }),
-        }).unwrap();
+        let apply_resp = execute(
+            &conn,
+            &OperationRequest {
+                op: "policy.spec.apply".into(),
+                op_version: Some("v1".into()),
+                request_id: None,
+                idempotency_key: None,
+                actor: actor.clone(),
+                context: OperationContext::default(),
+                args: serde_json::json!({ "spec_id": spec_id }),
+            },
+        )
+        .unwrap();
         assert!(!apply_resp.ok, "apply should fail on unconfirmed spec");
         assert_eq!(apply_resp.code, "invalid_state");
     }
@@ -4546,11 +4769,15 @@ mod tests {
         .unwrap();
         let file_a = temp_jsonl_file(
             "ingest-status-filter-a",
-            &[r#"{"event_id":"sfa1","type":"session.state","session_id":"sfa-s1","timestamp":100}"#],
+            &[
+                r#"{"event_id":"sfa1","type":"session.state","session_id":"sfa-s1","timestamp":100}"#,
+            ],
         );
         let file_b = temp_jsonl_file(
             "ingest-status-filter-b",
-            &[r#"{"event_id":"sfb1","type":"session.state","session_id":"sfb-s1","timestamp":100}"#],
+            &[
+                r#"{"event_id":"sfb1","type":"session.state","session_id":"sfb-s1","timestamp":100}"#,
+            ],
         );
 
         for (source, file) in [("openclaw", &file_a), ("custom", &file_b)] {
@@ -4753,7 +4980,9 @@ mod tests {
         .unwrap();
         let file = temp_jsonl_file(
             "ingest-message-facts",
-            &[r#"{"event_id":"mf1","type":"message.processed","session_id":"mf-s1","role":"assistant","content":"Payments retries use exponential backoff and cap at three attempts before raising an operator alert.","timestamp":1710000000}"#],
+            &[
+                r#"{"event_id":"mf1","type":"message.processed","session_id":"mf-s1","role":"assistant","content":"Payments retries use exponential backoff and cap at three attempts before raising an operator alert.","timestamp":1710000000}"#,
+            ],
         );
 
         let resp = execute(
@@ -4781,7 +5010,11 @@ mod tests {
         assert!(resp.ok);
 
         let fact_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM facts WHERE agent_id = 'main'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM facts WHERE agent_id = 'main'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!(fact_count >= 1);
         let source_msg_count: i64 = conn
@@ -5149,7 +5382,9 @@ mod tests {
         };
         let ingest_file = temp_jsonl_file(
             "ingest-correlation",
-            &[r#"{"event_id":"corr-e1","type":"session.state","session_id":"corr-s1","timestamp":100}"#],
+            &[
+                r#"{"event_id":"corr-e1","type":"session.state","session_id":"corr-s1","timestamp":100}"#,
+            ],
         );
         let ingest_req = OperationRequest {
             op: "ingest.events".into(),
@@ -5184,7 +5419,12 @@ mod tests {
             assert_eq!(count, 1, "expected one policy audit row for correlation id");
         }
 
-        for req in [create_agent_req, config_agent_req, ingest_req, delete_agent_req] {
+        for req in [
+            create_agent_req,
+            config_agent_req,
+            ingest_req,
+            delete_agent_req,
+        ] {
             let resp = execute(&conn, &req).unwrap();
             assert!(resp.ok, "operation {} should succeed", req.op);
             let corr = req.request_id.unwrap();

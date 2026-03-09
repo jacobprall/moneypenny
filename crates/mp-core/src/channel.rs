@@ -55,7 +55,9 @@ pub trait Channel: Send + Sync {
 pub struct CliChannel;
 
 impl Channel for CliChannel {
-    fn name(&self) -> &str { "cli" }
+    fn name(&self) -> &str {
+        "cli"
+    }
 
     fn capabilities(&self) -> ChannelCapabilities {
         ChannelCapabilities {
@@ -83,7 +85,9 @@ pub struct HttpApiChannel {
 }
 
 impl Channel for HttpApiChannel {
-    fn name(&self) -> &str { "http_api" }
+    fn name(&self) -> &str {
+        "http_api"
+    }
 
     fn capabilities(&self) -> ChannelCapabilities {
         ChannelCapabilities {
@@ -109,7 +113,9 @@ pub struct SlackChannel {
 }
 
 impl Channel for SlackChannel {
-    fn name(&self) -> &str { "slack" }
+    fn name(&self) -> &str {
+        "slack"
+    }
 
     fn capabilities(&self) -> ChannelCapabilities {
         ChannelCapabilities {
@@ -135,7 +141,9 @@ pub struct DiscordChannel {
 }
 
 impl Channel for DiscordChannel {
-    fn name(&self) -> &str { "discord" }
+    fn name(&self) -> &str {
+        "discord"
+    }
 
     fn capabilities(&self) -> ChannelCapabilities {
         ChannelCapabilities {
@@ -167,7 +175,6 @@ pub fn format_for_channel(content: &str, caps: &ChannelCapabilities) -> String {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,7 +193,10 @@ mod tests {
 
     #[test]
     fn http_api_supports_all_major_features() {
-        let http = HttpApiChannel { host: "0.0.0.0".into(), port: 8080 };
+        let http = HttpApiChannel {
+            host: "0.0.0.0".into(),
+            port: 8080,
+        };
         let caps = http.capabilities();
         assert!(caps.supports_threads);
         assert!(caps.supports_files);
@@ -196,7 +206,9 @@ mod tests {
 
     #[test]
     fn slack_has_message_length_limit() {
-        let slack = SlackChannel { bot_token: "xoxb-test".into() };
+        let slack = SlackChannel {
+            bot_token: "xoxb-test".into(),
+        };
         let caps = slack.capabilities();
         assert!(caps.supports_threads);
         assert!(caps.supports_reactions);
@@ -206,7 +218,9 @@ mod tests {
 
     #[test]
     fn discord_has_2000_char_limit() {
-        let discord = DiscordChannel { bot_token: "test".into() };
+        let discord = DiscordChannel {
+            bot_token: "test".into(),
+        };
         assert_eq!(discord.capabilities().max_message_length, Some(2000));
     }
 
@@ -218,7 +232,10 @@ mod tests {
     fn channel_trait_is_object_safe() {
         let channels: Vec<Box<dyn Channel>> = vec![
             Box::new(CliChannel),
-            Box::new(HttpApiChannel { host: "0.0.0.0".into(), port: 8080 }),
+            Box::new(HttpApiChannel {
+                host: "0.0.0.0".into(),
+                port: 8080,
+            }),
         ];
         assert_eq!(channels.len(), 2);
         assert_eq!(channels[0].name(), "cli");
@@ -231,7 +248,10 @@ mod tests {
 
     #[test]
     fn format_truncates_for_discord() {
-        let caps = DiscordChannel { bot_token: "t".into() }.capabilities();
+        let caps = DiscordChannel {
+            bot_token: "t".into(),
+        }
+        .capabilities();
         let long = "a".repeat(3000);
         let formatted = format_for_channel(&long, &caps);
         assert!(formatted.len() <= 2000);
@@ -240,7 +260,10 @@ mod tests {
 
     #[test]
     fn format_keeps_short_messages() {
-        let caps = DiscordChannel { bot_token: "t".into() }.capabilities();
+        let caps = DiscordChannel {
+            bot_token: "t".into(),
+        }
+        .capabilities();
         let short = "hello world";
         let formatted = format_for_channel(short, &caps);
         assert_eq!(formatted, "hello world");

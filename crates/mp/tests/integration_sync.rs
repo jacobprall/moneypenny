@@ -35,10 +35,8 @@ fn sync_push_pull_between_two_dbs() {
     assert!(db_a.exists());
     assert!(db_b.exists());
 
-    let out = run_mp_with_config(
-        &config_a,
-        &["sync", "push", "--to", db_b.to_str().unwrap()],
-    ).unwrap();
+    let out =
+        run_mp_with_config(&config_a, &["sync", "push", "--to", db_b.to_str().unwrap()]).unwrap();
 
     // payload_save can fail in some environments (e.g. "Invalid column type Null")
     if !out.status.success() {
@@ -52,7 +50,8 @@ fn sync_push_pull_between_two_dbs() {
     let out = run_mp_with_config(
         &config_b,
         &["sync", "pull", "--from", db_a.to_str().unwrap()],
-    ).unwrap();
+    )
+    .unwrap();
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         if stderr.contains("cloudsync_payload") {

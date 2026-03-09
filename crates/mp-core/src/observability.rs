@@ -38,20 +38,24 @@ pub struct JobsHealth {
 }
 
 /// Build a health report for an agent from its database.
-pub fn agent_health(conn: &Connection, agent_id: &str, db_path: &str) -> anyhow::Result<AgentHealth> {
-    let facts: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM facts WHERE superseded_at IS NULL",
-        [], |r| r.get(0),
-    ).unwrap_or(0);
-
-    let sessions: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sessions",
-        [], |r| r.get(0),
-    ).unwrap_or(0);
-
-    let db_size = std::fs::metadata(db_path)
-        .map(|m| m.len())
+pub fn agent_health(
+    conn: &Connection,
+    agent_id: &str,
+    db_path: &str,
+) -> anyhow::Result<AgentHealth> {
+    let facts: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM facts WHERE superseded_at IS NULL",
+            [],
+            |r| r.get(0),
+        )
         .unwrap_or(0);
+
+    let sessions: i64 = conn
+        .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+        .unwrap_or(0);
+
+    let db_size = std::fs::metadata(db_path).map(|m| m.len()).unwrap_or(0);
 
     Ok(AgentHealth {
         id: agent_id.to_string(),
@@ -66,18 +70,27 @@ pub fn agent_health(conn: &Connection, agent_id: &str, db_path: &str) -> anyhow:
 
 /// Build a jobs health summary from an agent's database.
 pub fn jobs_health(conn: &Connection) -> anyhow::Result<JobsHealth> {
-    let active: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM jobs WHERE enabled = 1 AND status = 'active'",
-        [], |r| r.get(0),
-    ).unwrap_or(0);
+    let active: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM jobs WHERE enabled = 1 AND status = 'active'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
 
     let day_ago = chrono::Utc::now().timestamp() - 86400;
-    let failed: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM job_runs WHERE status = 'error' AND created_at >= ?1",
-        [day_ago], |r| r.get(0),
-    ).unwrap_or(0);
+    let failed: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM job_runs WHERE status = 'error' AND created_at >= ?1",
+            [day_ago],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
 
-    Ok(JobsHealth { active, failed_24h: failed })
+    Ok(JobsHealth {
+        active,
+        failed_24h: failed,
+    })
 }
 
 // =========================================================================
@@ -177,7 +190,6 @@ impl Metrics {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,15 +208,20 @@ mod tests {
     #[test]
     fn agent_health_counts_facts_and_sessions() {
         let conn = setup();
-        crate::store::facts::add(&conn, &crate::store::facts::NewFact {
-            agent_id: "a".into(),
-            content: "test".into(),
-            summary: "t".into(),
-            pointer: "p".into(),
-            keywords: None,
-            source_message_id: None,
-            confidence: 1.0,
-        }, None).unwrap();
+        crate::store::facts::add(
+            &conn,
+            &crate::store::facts::NewFact {
+                agent_id: "a".into(),
+                content: "test".into(),
+                summary: "t".into(),
+                pointer: "p".into(),
+                keywords: None,
+                source_message_id: None,
+                confidence: 1.0,
+            },
+            None,
+        )
+        .unwrap();
         crate::store::log::create_session(&conn, "a", None).unwrap();
 
         let health = agent_health(&conn, "a", ":memory:").unwrap();
@@ -224,19 +241,23 @@ mod tests {
     fn jobs_health_counts_active_and_failed() {
         let conn = setup();
         let now = chrono::Utc::now().timestamp();
-        crate::scheduler::create_job(&conn, &crate::scheduler::NewJob {
-            agent_id: "a".into(),
-            name: "test".into(),
-            description: None,
-            schedule: "* * * * *".into(),
-            next_run_at: now + 60,
-            job_type: "prompt".into(),
-            payload: "{}".into(),
-            max_retries: None,
-            retry_delay_ms: None,
-            timeout_ms: None,
-            overlap_policy: None,
-        }).unwrap();
+        crate::scheduler::create_job(
+            &conn,
+            &crate::scheduler::NewJob {
+                agent_id: "a".into(),
+                name: "test".into(),
+                description: None,
+                schedule: "* * * * *".into(),
+                next_run_at: now + 60,
+                job_type: "prompt".into(),
+                payload: "{}".into(),
+                max_retries: None,
+                retry_delay_ms: None,
+                timeout_ms: None,
+                overlap_policy: None,
+            },
+        )
+        .unwrap();
 
         let jh = jobs_health(&conn).unwrap();
         assert_eq!(jh.active, 1);
@@ -292,7 +313,10 @@ mod tests {
     fn health_report_serializes_to_json() {
         let report = HealthReport {
             status: "healthy".into(),
-            gateway: GatewayHealth { pid: 1234, uptime_seconds: 3600 },
+            gateway: GatewayHealth {
+                pid: 1234,
+                uptime_seconds: 3600,
+            },
             agents: vec![AgentHealth {
                 id: "main".into(),
                 name: "main".into(),
@@ -302,7 +326,10 @@ mod tests {
                 db_size_bytes: 1024000,
                 llm_provider: "local".into(),
             }],
-            jobs: JobsHealth { active: 2, failed_24h: 0 },
+            jobs: JobsHealth {
+                active: 2,
+                failed_24h: 0,
+            },
         };
 
         let json = serde_json::to_string_pretty(&report).unwrap();

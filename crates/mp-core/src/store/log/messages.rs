@@ -161,10 +161,25 @@ pub fn set_message_embedding(
     message_id: &str,
     blob: &[u8],
 ) -> anyhow::Result<()> {
+    set_message_embedding_with_meta(conn, message_id, blob, None, None)
+}
+
+/// Write or overwrite the FLOAT32 content embedding for a message and persist
+/// embedding provenance metadata.
+pub fn set_message_embedding_with_meta(
+    conn: &Connection,
+    message_id: &str,
+    blob: &[u8],
+    embedding_model: Option<&str>,
+    embedding_content_hash: Option<&str>,
+) -> anyhow::Result<()> {
     conn.execute(
-        "UPDATE messages SET content_embedding = ?1 WHERE id = ?2",
-        params![blob, message_id],
+        "UPDATE messages
+         SET content_embedding = ?1,
+             embedding_model = ?2,
+             embedding_content_hash = ?3
+         WHERE id = ?4",
+        params![blob, embedding_model, embedding_content_hash, message_id],
     )?;
     Ok(())
 }
-

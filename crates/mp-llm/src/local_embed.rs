@@ -44,7 +44,10 @@ impl LocalEmbeddingProvider {
             model_path,
             model_name,
             dims: dimensions,
-            state: Arc::new(Mutex::new(EmbedState { conn, model_loaded: false })),
+            state: Arc::new(Mutex::new(EmbedState {
+                conn,
+                model_loaded: false,
+            })),
         })
     }
 
@@ -83,8 +86,12 @@ impl EmbeddingProvider for LocalEmbeddingProvider {
                     );
                 }
 
-                guard.conn.execute("SELECT llm_model_load(?1)", rusqlite::params![path_str])?;
-                guard.conn.execute("SELECT llm_context_create_embedding()", [])?;
+                guard
+                    .conn
+                    .execute("SELECT llm_model_load(?1)", rusqlite::params![path_str])?;
+                guard
+                    .conn
+                    .execute("SELECT llm_context_create_embedding()", [])?;
                 guard.model_loaded = true;
                 tracing::debug!(model = path_str, "sqlite-ai embedding model loaded");
             }
@@ -160,7 +167,8 @@ impl EmbeddingProvider for HttpEmbeddingProvider {
             "input": text,
         });
 
-        let mut req = self.client
+        let mut req = self
+            .client
             .post(format!("{}/embeddings", self.api_base))
             .json(&body);
 
@@ -190,7 +198,8 @@ impl EmbeddingProvider for HttpEmbeddingProvider {
             "input": texts,
         });
 
-        let mut req = self.client
+        let mut req = self
+            .client
             .post(format!("{}/embeddings", self.api_base))
             .json(&body);
 

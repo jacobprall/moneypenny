@@ -55,8 +55,11 @@ impl TokenBudget {
     }
 
     pub fn reserved(&self) -> usize {
-        self.system_prompt + self.policies + self.fact_pointers
-            + self.current_message + self.response_headroom
+        self.system_prompt
+            + self.policies
+            + self.fact_pointers
+            + self.current_message
+            + self.response_headroom
     }
 
     pub fn flexible(&self) -> usize {
@@ -166,11 +169,13 @@ pub fn assemble(
     }
 
     // 2.5. Rolling session summary (accumulated from previous turns)
-    let session_summary: Option<String> = conn.query_row(
-        "SELECT summary FROM sessions WHERE id = ?1",
-        [session_id],
-        |r| r.get(0),
-    ).unwrap_or(None);
+    let session_summary: Option<String> = conn
+        .query_row(
+            "SELECT summary FROM sessions WHERE id = ?1",
+            [session_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(None);
     if let Some(ref s) = session_summary {
         if !s.trim().is_empty() {
             let text = format!("[Conversation history summary]\n{s}");
@@ -186,7 +191,8 @@ pub fn assemble(
     crate::store::facts::compact_for_context(conn, agent_id)?;
     let pointers = crate::store::facts::all_pointers(conn, agent_id)?;
     if !pointers.is_empty() {
-        let pointer_text = pointers.iter()
+        let pointer_text = pointers
+            .iter()
             .map(|(id, p, compact, level)| {
                 if let Some(c) = compact {
                     if !c.trim().is_empty() {
@@ -220,7 +226,8 @@ pub fn assemble(
     // 4. Auto-expanded facts (Level 1 summaries by relevance)
     let expanded_facts = crate::search::fts5_search_facts(conn, current_message, agent_id, 20)?;
     if !expanded_facts.is_empty() {
-        let expanded_text: String = expanded_facts.iter()
+        let expanded_text: String = expanded_facts
+            .iter()
             .map(|(_, content, _)| content.as_str())
             .collect::<Vec<_>>()
             .join("\n---\n");
@@ -236,7 +243,8 @@ pub fn assemble(
 
     // 5. Scratch
     if !scratch_entries.is_empty() {
-        let scratch_text = scratch_entries.iter()
+        let scratch_text = scratch_entries
+            .iter()
             .map(|e| format!("[{}] {}", e.key, e.content))
             .collect::<Vec<_>>()
             .join("\n");
@@ -253,7 +261,8 @@ pub fn assemble(
     // 6. Log (recent messages from current session)
     let recent = crate::store::log::get_recent_messages(conn, session_id, 20)?;
     if !recent.is_empty() {
-        let log_text = recent.iter()
+        let log_text = recent
+            .iter()
             .map(|m| format!("{}: {}", m.role, m.content))
             .collect::<Vec<_>>()
             .join("\n");
@@ -270,7 +279,8 @@ pub fn assemble(
     // 7. Knowledge (search results)
     let knowledge_results = crate::search::fts5_search_knowledge(conn, current_message, 10)?;
     if !knowledge_results.is_empty() {
-        let knowledge_text = knowledge_results.iter()
+        let knowledge_text = knowledge_results
+            .iter()
             .map(|(_, content, _)| content.as_str())
             .collect::<Vec<_>>()
             .join("\n---\n");
@@ -298,23 +308,27 @@ fn load_active_policies(conn: &Connection) -> anyhow::Result<String> {
     let mut stmt = conn.prepare(
         "SELECT name, effect, message FROM policies
          WHERE enabled = 1 AND effect = 'deny'
-         ORDER BY priority DESC LIMIT 10"
+         ORDER BY priority DESC LIMIT 10",
     )?;
-    let rules: Vec<String> = stmt.query_map([], |r| {
-        let name: String = r.get(0)?;
-        let effect: String = r.get(1)?;
-        let msg: Option<String> = r.get(2)?;
-        Ok(format!("[{effect}] {name}: {}", msg.unwrap_or_default()))
-    })?.collect::<Result<Vec<_>, _>>()?;
+    let rules: Vec<String> = stmt
+        .query_map([], |r| {
+            let name: String = r.get(0)?;
+            let effect: String = r.get(1)?;
+            let msg: Option<String> = r.get(2)?;
+            Ok(format!("[{effect}] {name}: {}", msg.unwrap_or_default()))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(rules.join("\n"))
 }
 
 fn message_count(conn: &Connection, session_id: &str) -> anyhow::Result<usize> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM messages WHERE session_id = ?1",
-        [session_id],
-        |r| r.get(0),
-    ).unwrap_or(0);
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM messages WHERE session_id = ?1",
+            [session_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
     Ok(count as usize)
 }
 
@@ -379,11 +393,14 @@ mod tests {
 
     #[test]
     fn rebalance_empty_scratch_redistributes() {
-        let split = rebalance(&BudgetSplit::default(), &RebalanceContext {
-            scratch_is_empty: true,
-            session_is_new: false,
-            session_message_count: 10,
-        });
+        let split = rebalance(
+            &BudgetSplit::default(),
+            &RebalanceContext {
+                scratch_is_empty: true,
+                session_is_new: false,
+                session_message_count: 10,
+            },
+        );
         assert_eq!(split.scratch_pct, 0.0);
         assert!(split.log_pct > BudgetSplit::default().log_pct);
         assert!(split.knowledge_pct > BudgetSplit::default().knowledge_pct);
@@ -391,33 +408,42 @@ mod tests {
 
     #[test]
     fn rebalance_new_session_moves_log_to_knowledge() {
-        let split = rebalance(&BudgetSplit::default(), &RebalanceContext {
-            scratch_is_empty: false,
-            session_is_new: true,
-            session_message_count: 0,
-        });
+        let split = rebalance(
+            &BudgetSplit::default(),
+            &RebalanceContext {
+                scratch_is_empty: false,
+                session_is_new: true,
+                session_message_count: 0,
+            },
+        );
         assert_eq!(split.log_pct, 0.0);
         assert!(split.knowledge_pct > BudgetSplit::default().knowledge_pct);
     }
 
     #[test]
     fn rebalance_deep_session_boosts_log() {
-        let split = rebalance(&BudgetSplit::default(), &RebalanceContext {
-            scratch_is_empty: false,
-            session_is_new: false,
-            session_message_count: 200,
-        });
+        let split = rebalance(
+            &BudgetSplit::default(),
+            &RebalanceContext {
+                scratch_is_empty: false,
+                session_is_new: false,
+                session_message_count: 200,
+            },
+        );
         assert!(split.log_pct > BudgetSplit::default().log_pct);
     }
 
     #[test]
     fn rebalance_normal_session_unchanged() {
         let base = BudgetSplit::default();
-        let split = rebalance(&base, &RebalanceContext {
-            scratch_is_empty: false,
-            session_is_new: false,
-            session_message_count: 10,
-        });
+        let split = rebalance(
+            &base,
+            &RebalanceContext {
+                scratch_is_empty: false,
+                session_is_new: false,
+                session_message_count: 10,
+            },
+        );
         assert_eq!(split.facts_expanded_pct, base.facts_expanded_pct);
         assert_eq!(split.scratch_pct, base.scratch_pct);
         assert_eq!(split.log_pct, base.log_pct);
@@ -434,13 +460,22 @@ mod tests {
         let sid = store::log::create_session(&conn, "a", None).unwrap();
 
         let segments = assemble(
-            &conn, "a", &sid, None, "hello",
-            &TokenBudget::new(128_000), None,
-        ).unwrap();
+            &conn,
+            "a",
+            &sid,
+            None,
+            "hello",
+            &TokenBudget::new(128_000),
+            None,
+        )
+        .unwrap();
 
         let labels: Vec<&str> = segments.iter().map(|s| s.label).collect();
         assert!(labels.contains(&"system_prompt"), "must have system prompt");
-        assert!(labels.contains(&"current_message"), "must have current message");
+        assert!(
+            labels.contains(&"current_message"),
+            "must have current message"
+        );
         assert_eq!(segments.last().unwrap().label, "current_message");
     }
 
@@ -448,25 +483,46 @@ mod tests {
     fn assemble_includes_facts_when_present() {
         let conn = setup();
         let sid = store::log::create_session(&conn, "a", None).unwrap();
-        store::facts::add(&conn, &store::facts::NewFact {
-            agent_id: "a".into(),
-            content: "ORDERS uses soft deletes with deleted_at audit and compliance history".into(),
-            summary: "ORDERS soft deletes".into(),
-            pointer: "ORDERS: soft-delete".into(),
-            keywords: Some("orders".into()),
-            source_message_id: None,
-            confidence: 1.0,
-        }, None).unwrap();
+        store::facts::add(
+            &conn,
+            &store::facts::NewFact {
+                agent_id: "a".into(),
+                content: "ORDERS uses soft deletes with deleted_at audit and compliance history"
+                    .into(),
+                summary: "ORDERS soft deletes".into(),
+                pointer: "ORDERS: soft-delete".into(),
+                keywords: Some("orders".into()),
+                source_message_id: None,
+                confidence: 1.0,
+            },
+            None,
+        )
+        .unwrap();
 
         let segments = assemble(
-            &conn, "a", &sid, None, "tell me about orders",
-            &TokenBudget::new(128_000), None,
-        ).unwrap();
+            &conn,
+            "a",
+            &sid,
+            None,
+            "tell me about orders",
+            &TokenBudget::new(128_000),
+            None,
+        )
+        .unwrap();
 
         let labels: Vec<&str> = segments.iter().map(|s| s.label).collect();
-        assert!(labels.contains(&"fact_pointers"), "should include fact pointers");
-        let pointers = segments.iter().find(|s| s.label == "fact_pointers").unwrap();
-        assert!(pointers.content.contains("compact_level="), "fact pointers should include compaction metadata");
+        assert!(
+            labels.contains(&"fact_pointers"),
+            "should include fact pointers"
+        );
+        let pointers = segments
+            .iter()
+            .find(|s| s.label == "fact_pointers")
+            .unwrap();
+        assert!(
+            pointers.content.contains("compact_level="),
+            "fact pointers should include compaction metadata"
+        );
     }
 
     #[test]
@@ -476,9 +532,15 @@ mod tests {
         store::scratch::set(&conn, &sid, "plan", "Step 1: research").unwrap();
 
         let segments = assemble(
-            &conn, "a", &sid, None, "continue",
-            &TokenBudget::new(128_000), None,
-        ).unwrap();
+            &conn,
+            "a",
+            &sid,
+            None,
+            "continue",
+            &TokenBudget::new(128_000),
+            None,
+        )
+        .unwrap();
 
         let labels: Vec<&str> = segments.iter().map(|s| s.label).collect();
         assert!(labels.contains(&"scratch"));
@@ -492,9 +554,15 @@ mod tests {
         store::log::append_message(&conn, &sid, "assistant", "ORDERS uses soft deletes.").unwrap();
 
         let segments = assemble(
-            &conn, "a", &sid, None, "tell me more",
-            &TokenBudget::new(128_000), None,
-        ).unwrap();
+            &conn,
+            "a",
+            &sid,
+            None,
+            "tell me more",
+            &TokenBudget::new(128_000),
+            None,
+        )
+        .unwrap();
 
         let labels: Vec<&str> = segments.iter().map(|s| s.label).collect();
         assert!(labels.contains(&"log"));
@@ -504,12 +572,25 @@ mod tests {
     fn assemble_includes_knowledge_when_relevant() {
         let conn = setup();
         let sid = store::log::create_session(&conn, "a", None).unwrap();
-        store::knowledge::ingest(&conn, None, None, "Soft deletes use a deleted_at column to mark records.", None).unwrap();
+        store::knowledge::ingest(
+            &conn,
+            None,
+            None,
+            "Soft deletes use a deleted_at column to mark records.",
+            None,
+        )
+        .unwrap();
 
         let segments = assemble(
-            &conn, "a", &sid, None, "deleted_at",
-            &TokenBudget::new(128_000), None,
-        ).unwrap();
+            &conn,
+            "a",
+            &sid,
+            None,
+            "deleted_at",
+            &TokenBudget::new(128_000),
+            None,
+        )
+        .unwrap();
 
         let labels: Vec<&str> = segments.iter().map(|s| s.label).collect();
         assert!(labels.contains(&"knowledge"));
@@ -522,14 +603,29 @@ mod tests {
         store::log::update_summary(&conn, &sid, "User asked about Rust async patterns.").unwrap();
 
         let segments = assemble(
-            &conn, "a", &sid, None, "continue",
-            &TokenBudget::new(128_000), None,
-        ).unwrap();
+            &conn,
+            "a",
+            &sid,
+            None,
+            "continue",
+            &TokenBudget::new(128_000),
+            None,
+        )
+        .unwrap();
 
         let labels: Vec<&str> = segments.iter().map(|s| s.label).collect();
-        assert!(labels.contains(&"session_summary"), "should include session_summary");
-        let sum_seg = segments.iter().find(|s| s.label == "session_summary").unwrap();
-        assert!(sum_seg.content.contains("Rust async"), "summary content should be present");
+        assert!(
+            labels.contains(&"session_summary"),
+            "should include session_summary"
+        );
+        let sum_seg = segments
+            .iter()
+            .find(|s| s.label == "session_summary")
+            .unwrap();
+        assert!(
+            sum_seg.content.contains("Rust async"),
+            "summary content should be present"
+        );
     }
 
     #[test]
@@ -540,12 +636,19 @@ mod tests {
             "INSERT INTO policies (id, name, priority, effect, message, created_at)
              VALUES ('p1', 'no-drop', 100, 'deny', 'DROP statements are blocked', 1)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         let segments = assemble(
-            &conn, "a", &sid, None, "hello",
-            &TokenBudget::new(128_000), None,
-        ).unwrap();
+            &conn,
+            "a",
+            &sid,
+            None,
+            "hello",
+            &TokenBudget::new(128_000),
+            None,
+        )
+        .unwrap();
 
         let labels: Vec<&str> = segments.iter().map(|s| s.label).collect();
         assert!(labels.contains(&"policies"));
@@ -557,25 +660,31 @@ mod tests {
         let sid = store::log::create_session(&conn, "a", None).unwrap();
 
         for i in 0..50 {
-            store::facts::add(&conn, &store::facts::NewFact {
-                agent_id: "a".into(),
-                content: format!("Fact {i} with some longer content to take up space"),
-                summary: format!("Fact {i}"),
-                pointer: format!("fact-{i}"),
-                keywords: Some("fact".into()),
-                source_message_id: None,
-                confidence: 1.0,
-            }, None).unwrap();
+            store::facts::add(
+                &conn,
+                &store::facts::NewFact {
+                    agent_id: "a".into(),
+                    content: format!("Fact {i} with some longer content to take up space"),
+                    summary: format!("Fact {i}"),
+                    pointer: format!("fact-{i}"),
+                    keywords: Some("fact".into()),
+                    source_message_id: None,
+                    confidence: 1.0,
+                },
+                None,
+            )
+            .unwrap();
         }
 
         let budget = TokenBudget::new(8000);
-        let segments = assemble(
-            &conn, "a", &sid, None, "hello",
-            &budget, None,
-        ).unwrap();
+        let segments = assemble(&conn, "a", &sid, None, "hello", &budget, None).unwrap();
 
         let total_tokens: usize = segments.iter().map(|s| s.token_estimate).sum();
-        assert!(total_tokens <= budget.total, "total {total_tokens} exceeds budget {}", budget.total);
+        assert!(
+            total_tokens <= budget.total,
+            "total {total_tokens} exceeds budget {}",
+            budget.total
+        );
     }
 
     // ========================================================================

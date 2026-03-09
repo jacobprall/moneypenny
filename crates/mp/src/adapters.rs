@@ -11,16 +11,16 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use axum::body::Bytes;
-use axum::extract::{Query, State, WebSocketUpgrade};
 use axum::extract::ws::{Message, WebSocket};
+use axum::extract::{Query, State, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
 use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::stream;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use tower_http::cors::CorsLayer;
 use tracing::{error, info, warn};
 
@@ -34,8 +34,11 @@ use mp_core::config::{
 
 /// Async function that sends a message to an agent and returns `(response, session_id)`.
 pub type DispatchFn = Arc<
-    dyn Fn(String, String, Option<String>)
-            -> Pin<Box<dyn Future<Output = anyhow::Result<(String, String)>> + Send>>
+    dyn Fn(
+            String,
+            String,
+            Option<String>,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<(String, String)>> + Send>>
         + Send
         + Sync,
 >;
@@ -43,8 +46,9 @@ pub type DispatchFn = Arc<
 /// Async function that executes a canonical operation request payload and
 /// returns the canonical operation response as JSON.
 pub type OpDispatchFn = Arc<
-    dyn Fn(serde_json::Value)
-            -> Pin<Box<dyn Future<Output = anyhow::Result<serde_json::Value>> + Send>>
+    dyn Fn(
+            serde_json::Value,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<serde_json::Value>> + Send>>
         + Send
         + Sync,
 >;
@@ -104,7 +108,11 @@ async fn http_chat(
     }
     let agent = req.agent.unwrap_or_else(|| state.default_agent.clone());
     match (state.dispatch)(agent, req.message, req.session_id).await {
-        Ok((response, session_id)) => Json(ChatResponse { response, session_id }).into_response(),
+        Ok((response, session_id)) => Json(ChatResponse {
+            response,
+            session_id,
+        })
+        .into_response(),
         Err(e) => {
             error!("http_chat error: {e}");
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
@@ -200,7 +208,9 @@ async fn ws_handler(mut socket: WebSocket, state: HttpState) {
             Err(_) => {
                 let _ = socket
                     .send(Message::Text(
-                        serde_json::json!({"error": "invalid JSON"}).to_string().into(),
+                        serde_json::json!({"error": "invalid JSON"})
+                            .to_string()
+                            .into(),
                     ))
                     .await;
                 continue;
@@ -284,7 +294,11 @@ fn verify_slack_signature(headers: &HeaderMap, body: &[u8], signing_secret: &str
         None => return false,
     };
 
-    let base = format!("v0:{}:{}", timestamp, std::str::from_utf8(body).unwrap_or(""));
+    let base = format!(
+        "v0:{}:{}",
+        timestamp,
+        std::str::from_utf8(body).unwrap_or("")
+    );
     let mut mac = Hmac::<Sha256>::new_from_slice(signing_secret.as_bytes())
         .expect("HMAC accepts any key size");
     mac.update(base.as_bytes());
@@ -419,10 +433,7 @@ fn verify_discord_signature(headers: &HeaderMap, body: &[u8], public_key_hex: &s
         None => return false,
     };
 
-    let sig_bytes: [u8; 64] = match hex::decode(sig_hex)
-        .ok()
-        .and_then(|b| b.try_into().ok())
-    {
+    let sig_bytes: [u8; 64] = match hex::decode(sig_hex).ok().and_then(|b| b.try_into().ok()) {
         Some(a) => a,
         None => return false,
     };
@@ -490,7 +501,10 @@ async fn discord_interactions(
             let agent = state.default_agent.clone();
             let sessions = Arc::clone(&state.sessions);
             let interaction_token = interaction["token"].as_str().unwrap_or("").to_string();
-            let app_id = interaction["application_id"].as_str().unwrap_or("").to_string();
+            let app_id = interaction["application_id"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
 
             tokio::spawn(async move {
                 match dispatch(agent, message, session_id).await {

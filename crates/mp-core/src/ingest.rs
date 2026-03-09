@@ -106,24 +106,31 @@ pub fn ingest_jsonl_file(
             continue;
         }
 
-        let parsed: Value = serde_json::from_str(&line).unwrap_or_else(|_| {
-            serde_json::json!({ "raw_line": line })
-        });
+        let parsed: Value =
+            serde_json::from_str(&line).unwrap_or_else(|_| serde_json::json!({ "raw_line": line }));
 
         let event_type = pick_str(&parsed, &["type", "event", "event_type", "name"])
             .unwrap_or("unknown")
             .to_string();
-        let source_event_id = pick_str(&parsed, &["event_id", "eventId", "id", "uuid"])
-            .map(str::to_string);
+        let source_event_id =
+            pick_str(&parsed, &["event_id", "eventId", "id", "uuid"]).map(str::to_string);
         let session_id = pick_str(
             &parsed,
-            &["session_id", "sessionId", "session", "conversation_id", "conversationId"],
+            &[
+                "session_id",
+                "sessionId",
+                "session",
+                "conversation_id",
+                "conversationId",
+            ],
         )
         .map(str::to_string);
         let event_ts = pick_ts(&parsed).unwrap_or_else(|| chrono::Utc::now().timestamp());
         let payload_json = serde_json::to_string(&parsed).unwrap_or_else(|_| "{}".to_string());
         let content_hash = stable_hash_hex(&line);
-        let event_key = source_event_id.clone().unwrap_or_else(|| content_hash.clone());
+        let event_key = source_event_id
+            .clone()
+            .unwrap_or_else(|| content_hash.clone());
         let event_id = format!("ext:{source}:{event_key}");
         let normalized = normalized_projection_fields(
             &parsed,
@@ -166,7 +173,16 @@ pub fn ingest_jsonl_file(
         }
         inserted_count += 1;
 
-        match project_event(conn, source, &event_key, &parsed, &event_type, session_id.as_deref(), event_ts, agent_id) {
+        match project_event(
+            conn,
+            source,
+            &event_key,
+            &parsed,
+            &event_type,
+            session_id.as_deref(),
+            event_ts,
+            agent_id,
+        ) {
             Ok(done) => {
                 if done {
                     projected_count += 1;
@@ -189,7 +205,11 @@ pub fn ingest_jsonl_file(
     }
 
     let finished_at = chrono::Utc::now().timestamp();
-    let status = if error_count > 0 { "completed_with_errors" } else { "completed" };
+    let status = if error_count > 0 {
+        "completed_with_errors"
+    } else {
+        "completed"
+    };
     conn.execute(
         "UPDATE ingest_runs
          SET to_line = ?2, processed_count = ?3, inserted_count = ?4, deduped_count = ?5,
@@ -223,7 +243,11 @@ pub fn ingest_jsonl_file(
     })
 }
 
-pub fn replay_run(conn: &Connection, run_id: &str, agent_id: &str) -> anyhow::Result<IngestSummary> {
+pub fn replay_run(
+    conn: &Connection,
+    run_id: &str,
+    agent_id: &str,
+) -> anyhow::Result<IngestSummary> {
     let (source, file_path): (String, String) = conn.query_row(
         "SELECT source, file_path FROM ingest_runs WHERE id = ?1",
         [run_id],
@@ -336,10 +360,12 @@ pub fn preflight_jsonl_file(
                 continue;
             }
         };
-        let source_event_id = pick_str(&parsed, &["event_id", "eventId", "id", "uuid"])
-            .map(str::to_string);
+        let source_event_id =
+            pick_str(&parsed, &["event_id", "eventId", "id", "uuid"]).map(str::to_string);
         let content_hash = stable_hash_hex(&line);
-        let event_key = source_event_id.clone().unwrap_or_else(|| content_hash.clone());
+        let event_key = source_event_id
+            .clone()
+            .unwrap_or_else(|| content_hash.clone());
         let event_id = format!("ext:{source}:{event_key}");
         let exists: i64 = conn
             .query_row(
@@ -379,7 +405,9 @@ fn project_event(
 ) -> anyhow::Result<bool> {
     let sid = session_id
         .map(str::to_string)
-        .or_else(|| pick_str(payload, &["session_id", "session", "conversation_id"]).map(str::to_string))
+        .or_else(|| {
+            pick_str(payload, &["session_id", "session", "conversation_id"]).map(str::to_string)
+        })
         .unwrap_or_else(|| format!("ext:{source}:session:{event_key}"));
     ensure_session(conn, &sid, agent_id, ts)?;
 
@@ -389,8 +417,11 @@ fn project_event(
 
     if event_type.starts_with("message.") {
         let msg_id = format!("ext:{source}:msg:{event_key}");
-        let role = pick_str(payload, &["role"])
-            .unwrap_or(if event_type.contains("queued") { "user" } else { "assistant" });
+        let role = pick_str(payload, &["role"]).unwrap_or(if event_type.contains("queued") {
+            "user"
+        } else {
+            "assistant"
+        });
         let content = pick_str(payload, &["content", "text", "message"])
             .map(str::to_string)
             .unwrap_or_else(|| serde_json::to_string(payload).unwrap_or_else(|_| "{}".to_string()));
@@ -411,7 +442,8 @@ fn project_event(
         let channel = pick_str(payload, &["channel"]).unwrap_or("external");
         let input_tokens = pick_i64(payload, &["input_tokens", "prompt_tokens"]).unwrap_or(0);
         let output_tokens = pick_i64(payload, &["output_tokens", "completion_tokens"]).unwrap_or(0);
-        let total_tokens = pick_i64(payload, &["total_tokens"]).unwrap_or(input_tokens + output_tokens);
+        let total_tokens =
+            pick_i64(payload, &["total_tokens"]).unwrap_or(input_tokens + output_tokens);
         let cost = pick_f64(payload, &["cost_usd", "cost"]).unwrap_or(0.0);
         let duration_ms = pick_i64(payload, &["duration_ms", "latency_ms"]).unwrap_or(0);
         let msg_id = format!("ext:{source}:msg:tool:{event_key}");
@@ -472,7 +504,11 @@ fn project_event(
 
     if event_type.starts_with("webhook.") {
         let audit_id = format!("ext:{source}:audit:{event_key}");
-        let effect = if event_type.ends_with(".error") { "denied" } else { "audited" };
+        let effect = if event_type.ends_with(".error") {
+            "denied"
+        } else {
+            "audited"
+        };
         let actor = pick_str(payload, &["provider", "source"]).unwrap_or(source);
         let reason = pick_str(payload, &["error", "reason", "message"])
             .map(str::to_string)
@@ -499,7 +535,12 @@ fn project_event(
     Ok(false)
 }
 
-fn ensure_session(conn: &Connection, session_id: &str, agent_id: &str, ts: i64) -> anyhow::Result<()> {
+fn ensure_session(
+    conn: &Connection,
+    session_id: &str,
+    agent_id: &str,
+    ts: i64,
+) -> anyhow::Result<()> {
     conn.execute(
         "INSERT OR IGNORE INTO sessions (id, agent_id, channel, started_at)
          VALUES (?1, ?2, 'external', ?3)",
@@ -624,7 +665,12 @@ fn candidate_from_message(content: &str) -> Option<crate::extraction::CandidateF
 }
 
 fn truncate_chars(input: &str, max_chars: usize) -> String {
-    input.chars().take(max_chars).collect::<String>().trim().to_string()
+    input
+        .chars()
+        .take(max_chars)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 fn extract_keywords(input: &str) -> Option<String> {
@@ -731,7 +777,10 @@ pub fn convert_cortex_session(path: &Path) -> anyhow::Result<Vec<String>> {
     let raw = std::fs::read_to_string(path)?;
     let doc: Value = serde_json::from_str(&raw)?;
 
-    let session_id = doc.get("session_id").and_then(Value::as_str).unwrap_or("unknown");
+    let session_id = doc
+        .get("session_id")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
     let history = match doc.get("history").and_then(Value::as_array) {
         Some(h) => h,
         None => return Ok(Vec::new()),
@@ -751,7 +800,10 @@ pub fn convert_cortex_session(path: &Path) -> anyhow::Result<Vec<String>> {
     for msg in history {
         let role = msg.get("role").and_then(Value::as_str).unwrap_or("user");
         let msg_id = msg.get("id").and_then(Value::as_str).unwrap_or("");
-        let ts = msg.get("user_sent_time").and_then(Value::as_str).unwrap_or("");
+        let ts = msg
+            .get("user_sent_time")
+            .and_then(Value::as_str)
+            .unwrap_or("");
 
         let content_blocks = match msg.get("content").and_then(Value::as_array) {
             Some(blocks) => blocks,
@@ -781,7 +833,11 @@ pub fn convert_cortex_session(path: &Path) -> anyhow::Result<Vec<String>> {
         }
         let content = text_parts.join("\n");
 
-        let event_type = if role == "user" { "message.queued" } else { "message.processed" };
+        let event_type = if role == "user" {
+            "message.queued"
+        } else {
+            "message.processed"
+        };
         lines.push(serde_json::to_string(&serde_json::json!({
             "type": event_type,
             "role": role,
@@ -808,7 +864,11 @@ pub fn discover_claude_code_sessions(project_slug: Option<&str>) -> Vec<PathBuf>
 
     let project_dirs: Vec<PathBuf> = if let Some(slug) = project_slug {
         let specific = projects_dir.join(slug);
-        if specific.is_dir() { vec![specific] } else { Vec::new() }
+        if specific.is_dir() {
+            vec![specific]
+        } else {
+            Vec::new()
+        }
     } else {
         match std::fs::read_dir(&projects_dir) {
             Ok(entries) => entries
@@ -855,9 +915,15 @@ pub fn convert_claude_code_session(path: &Path) -> anyhow::Result<Vec<String>> {
         };
 
         let event_type = parsed.get("type").and_then(Value::as_str).unwrap_or("");
-        let session_id = parsed.get("sessionId").and_then(Value::as_str).unwrap_or("");
+        let session_id = parsed
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let uuid = parsed.get("uuid").and_then(Value::as_str).unwrap_or("");
-        let timestamp = parsed.get("timestamp").and_then(Value::as_str).unwrap_or("");
+        let timestamp = parsed
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .unwrap_or("");
 
         if session_id.is_empty() || event_type == "queue-operation" {
             continue;
@@ -882,15 +948,29 @@ pub fn convert_claude_code_session(path: &Path) -> anyhow::Result<Vec<String>> {
 
         if has_tool_result {
             let tool_result = &parsed["toolUseResult"];
-            let status = tool_result.get("status").and_then(Value::as_str).unwrap_or("completed");
-            let duration_ms = tool_result.get("totalDurationMs").and_then(Value::as_i64).unwrap_or(0);
-            let output = tool_result.get("content")
+            let status = tool_result
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("completed");
+            let duration_ms = tool_result
+                .get("totalDurationMs")
+                .and_then(Value::as_i64)
+                .unwrap_or(0);
+            let output = tool_result
+                .get("content")
                 .and_then(Value::as_array)
-                .and_then(|arr| arr.iter().find(|b| b.get("type").and_then(Value::as_str) == Some("text")))
+                .and_then(|arr| {
+                    arr.iter()
+                        .find(|b| b.get("type").and_then(Value::as_str) == Some("text"))
+                })
                 .and_then(|b| b.get("text"))
                 .and_then(Value::as_str)
                 .unwrap_or("");
-            let truncated = if output.len() > 500 { &output[..500] } else { output };
+            let truncated = if output.len() > 500 {
+                &output[..500]
+            } else {
+                output
+            };
 
             lines.push(serde_json::to_string(&serde_json::json!({
                 "type": "run.attempt",
@@ -914,7 +994,11 @@ pub fn convert_claude_code_session(path: &Path) -> anyhow::Result<Vec<String>> {
             continue;
         }
 
-        let msg_type = if role == "user" { "message.queued" } else { "message.processed" };
+        let msg_type = if role == "user" {
+            "message.queued"
+        } else {
+            "message.processed"
+        };
         lines.push(serde_json::to_string(&serde_json::json!({
             "type": msg_type,
             "role": role,
@@ -926,11 +1010,19 @@ pub fn convert_claude_code_session(path: &Path) -> anyhow::Result<Vec<String>> {
 
         if role == "assistant" {
             if let Some(usage) = message.get("usage") {
-                let model = message.get("model").and_then(Value::as_str).unwrap_or("unknown");
-                let input_tokens = usage.get("input_tokens").and_then(Value::as_i64)
+                let model = message
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                let input_tokens = usage
+                    .get("input_tokens")
+                    .and_then(Value::as_i64)
                     .or_else(|| usage.get("cache_read_input_tokens").and_then(Value::as_i64))
                     .unwrap_or(0);
-                let output_tokens = usage.get("output_tokens").and_then(Value::as_i64).unwrap_or(0);
+                let output_tokens = usage
+                    .get("output_tokens")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0);
                 lines.push(serde_json::to_string(&serde_json::json!({
                     "type": "model.usage",
                     "provider": "anthropic",
@@ -962,7 +1054,8 @@ fn extract_claude_code_text_content(message: &Value) -> String {
     }
 
     if let Some(blocks) = content.as_array() {
-        let parts: Vec<&str> = blocks.iter()
+        let parts: Vec<&str> = blocks
+            .iter()
             .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
             .filter_map(|b| b.get("text").and_then(Value::as_str))
             .filter(|t| !t.starts_with("<system-reminder>"))
@@ -1033,7 +1126,11 @@ mod tests {
         assert_eq!(count, 1);
 
         let msg_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM messages WHERE session_id = 's1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE session_id = 's1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(msg_count, 1);
     }
@@ -1041,7 +1138,8 @@ mod tests {
     #[test]
     fn ingest_deduplication() {
         let conn = setup();
-        let event = r#"{"type":"message.queued","content":"hello","id":"dup1","timestamp":1700000000}"#;
+        let event =
+            r#"{"type":"message.queued","content":"hello","id":"dup1","timestamp":1700000000}"#;
         let f = write_tmp_jsonl(&[event, event]);
         let summary = ingest_jsonl_file(&conn, "test", f.path(), false, "agent1").unwrap();
         assert_eq!(summary.inserted_count, 1);
@@ -1051,8 +1149,10 @@ mod tests {
     #[test]
     fn ingest_incremental_resume() {
         let conn = setup();
-        let e1 = r#"{"type":"message.queued","content":"first","id":"inc1","timestamp":1700000000}"#;
-        let e2 = r#"{"type":"message.queued","content":"second","id":"inc2","timestamp":1700000001}"#;
+        let e1 =
+            r#"{"type":"message.queued","content":"first","id":"inc1","timestamp":1700000000}"#;
+        let e2 =
+            r#"{"type":"message.queued","content":"second","id":"inc2","timestamp":1700000001}"#;
 
         // Use a persistent file path so the resume lookup matches
         let dir = tempfile::tempdir().unwrap();
@@ -1072,7 +1172,8 @@ mod tests {
     #[test]
     fn ingest_replay_reruns_from_start() {
         let conn = setup();
-        let event = r#"{"type":"message.queued","content":"replayed","id":"rpl1","timestamp":1700000000}"#;
+        let event =
+            r#"{"type":"message.queued","content":"replayed","id":"rpl1","timestamp":1700000000}"#;
         let f = write_tmp_jsonl(&[event]);
 
         ingest_jsonl_file(&conn, "test", f.path(), false, "agent1").unwrap();
@@ -1090,7 +1191,11 @@ mod tests {
         assert_eq!(s.projected_count, 1);
 
         let tool_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM tool_calls WHERE tool_name LIKE 'model.usage%'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM tool_calls WHERE tool_name LIKE 'model.usage%'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(tool_count, 1);
     }
@@ -1104,7 +1209,11 @@ mod tests {
         assert_eq!(s.projected_count, 1);
 
         let tc: i64 = conn
-            .query_row("SELECT COUNT(*) FROM tool_calls WHERE tool_name = 'run.completed'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM tool_calls WHERE tool_name = 'run.completed'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(tc, 1);
     }
@@ -1118,7 +1227,11 @@ mod tests {
         assert_eq!(s.projected_count, 1);
 
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM policy_audit WHERE action = 'webhook.received'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM policy_audit WHERE action = 'webhook.received'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(count, 1);
     }
@@ -1135,7 +1248,8 @@ mod tests {
     #[test]
     fn ingest_blank_lines_skipped() {
         let conn = setup();
-        let event = r#"{"type":"message.queued","content":"hello","id":"bl1","timestamp":1700000000}"#;
+        let event =
+            r#"{"type":"message.queued","content":"hello","id":"bl1","timestamp":1700000000}"#;
         let f = write_tmp_jsonl(&["", event, "  ", ""]);
         let s = ingest_jsonl_file(&conn, "test", f.path(), false, "agent1").unwrap();
         assert_eq!(s.inserted_count, 1);
@@ -1233,13 +1347,18 @@ mod tests {
 
     #[test]
     fn candidate_from_message_json_rejected() {
-        assert!(candidate_from_message(r#"{"key": "value", "another": "field that is long enough to pass length check"}"#).is_none());
+        assert!(
+            candidate_from_message(
+                r#"{"key": "value", "another": "field that is long enough to pass length check"}"#
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn candidate_from_message_valid() {
         let c = candidate_from_message(
-            "The Moneypenny agent platform uses SQLite for durable storage and CRDT sync across multiple agents."
+            "The Moneypenny agent platform uses SQLite for durable storage and CRDT sync across multiple agents.",
         );
         assert!(c.is_some());
         let c = c.unwrap();

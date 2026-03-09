@@ -21,15 +21,30 @@ pub struct Message {
 
 impl Message {
     pub fn system(content: impl Into<String>) -> Self {
-        Self { role: Role::System, content: content.into(), tool_call_id: None, tool_calls: Vec::new() }
+        Self {
+            role: Role::System,
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+        }
     }
 
     pub fn user(content: impl Into<String>) -> Self {
-        Self { role: Role::User, content: content.into(), tool_call_id: None, tool_calls: Vec::new() }
+        Self {
+            role: Role::User,
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+        }
     }
 
     pub fn assistant(content: impl Into<String>) -> Self {
-        Self { role: Role::Assistant, content: content.into(), tool_call_id: None, tool_calls: Vec::new() }
+        Self {
+            role: Role::Assistant,
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+        }
     }
 
     pub fn assistant_with_tool_calls(content: Option<String>, tool_calls: Vec<ToolCall>) -> Self {
@@ -42,7 +57,12 @@ impl Message {
     }
 
     pub fn tool(content: impl Into<String>, tool_call_id: impl Into<String>) -> Self {
-        Self { role: Role::Tool, content: content.into(), tool_call_id: Some(tool_call_id.into()), tool_calls: Vec::new() }
+        Self {
+            role: Role::Tool,
+            content: content.into(),
+            tool_call_id: Some(tool_call_id.into()),
+            tool_calls: Vec::new(),
+        }
     }
 }
 
