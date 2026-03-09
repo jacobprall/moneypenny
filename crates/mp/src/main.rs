@@ -873,118 +873,24 @@ async fn embed_pending(
     embed: &dyn mp_llm::provider::EmbeddingProvider,
     agent_id: &str,
 ) {
-    // --- Facts ---
-    let ids = match mp_core::store::facts::ids_without_embedding(conn, agent_id) {
-        Ok(v) => v,
-        Err(e) => { tracing::warn!("embed_pending: facts query failed: {e}"); return; }
+    let stats = match mp_core::store::embedding::embed_all_pending(conn, agent_id, |content| async move {
+        let vec = embed.embed(&content).await?;
+        Ok::<Vec<u8>, anyhow::Error>(mp_llm::f32_slice_to_blob(&vec))
+    })
+    .await
+    {
+        Ok(stats) => stats,
+        Err(e) => {
+            tracing::warn!("embed_pending: pending query failed: {e}");
+            return;
+        }
     };
 
-    let mut embedded = 0usize;
-    for id in &ids {
-        let content: String = match conn.query_row(
-            "SELECT content FROM facts WHERE id = ?1",
-            rusqlite::params![id],
-            |r| r.get(0),
-        ) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        match embed.embed(&content).await {
-            Ok(vec) => {
-                let blob = mp_llm::f32_slice_to_blob(&vec);
-                if mp_core::store::facts::set_content_embedding(conn, id, &blob).is_ok() {
-                    embedded += 1;
-                }
-            }
-            Err(e) => tracing::warn!(fact_id = %id, "embedding failed: {e}"),
-        }
+    if stats.failed > 0 {
+        tracing::warn!(failed = stats.failed, "some embeddings failed");
     }
-
-    // --- Messages (session/log data) ---
-    let messages = match mp_core::store::log::messages_without_embedding(conn, agent_id) {
-        Ok(v) => v,
-        Err(e) => { tracing::warn!("embed_pending: messages query failed: {e}"); return; }
-    };
-
-    for (message_id, content) in &messages {
-        match embed.embed(content).await {
-            Ok(vec) => {
-                let blob = mp_llm::f32_slice_to_blob(&vec);
-                if mp_core::store::log::set_message_embedding(conn, message_id, &blob).is_ok() {
-                    embedded += 1;
-                }
-            }
-            Err(e) => tracing::warn!(message_id = %message_id, "embedding failed: {e}"),
-        }
-    }
-
-    // --- Tool calls ---
-    let tool_calls = match mp_core::store::log::tool_calls_without_embedding(conn, agent_id) {
-        Ok(v) => v,
-        Err(e) => { tracing::warn!("embed_pending: tool_calls query failed: {e}"); return; }
-    };
-
-    for (tool_call_id, content) in &tool_calls {
-        match embed.embed(content).await {
-            Ok(vec) => {
-                let blob = mp_llm::f32_slice_to_blob(&vec);
-                if mp_core::store::log::set_tool_call_embedding(conn, tool_call_id, &blob).is_ok() {
-                    embedded += 1;
-                }
-            }
-            Err(e) => tracing::warn!(tool_call_id = %tool_call_id, "embedding failed: {e}"),
-        }
-    }
-
-    // --- Policy audit ---
-    let policy_audit_rows = match mp_core::store::log::policy_audit_without_embedding(conn, agent_id) {
-        Ok(v) => v,
-        Err(e) => { tracing::warn!("embed_pending: policy_audit query failed: {e}"); return; }
-    };
-
-    for (audit_id, content) in &policy_audit_rows {
-        match embed.embed(content).await {
-            Ok(vec) => {
-                let blob = mp_llm::f32_slice_to_blob(&vec);
-                if mp_core::store::log::set_policy_audit_embedding(conn, audit_id, &blob).is_ok() {
-                    embedded += 1;
-                }
-            }
-            Err(e) => tracing::warn!(audit_id = %audit_id, "embedding failed: {e}"),
-        }
-    }
-
-    // --- Chunks ---
-    let chunks = match mp_core::store::knowledge::chunks_without_embedding(conn) {
-        Ok(v) => v,
-        Err(e) => { tracing::warn!("embed_pending: chunks query failed: {e}"); return; }
-    };
-
-    for (chunk_id, content) in &chunks {
-        match embed.embed(content).await {
-            Ok(vec) => {
-                let blob = mp_llm::f32_slice_to_blob(&vec);
-                if mp_core::store::knowledge::set_chunk_embedding(conn, chunk_id, &blob).is_ok() {
-                    embedded += 1;
-                }
-            }
-            Err(e) => tracing::warn!(chunk_id = %chunk_id, "embedding failed: {e}"),
-        }
-    }
-
-    if embedded > 0 {
-        // Rebuild the quantized vector index so new embeddings are searchable.
-        for (table, col) in &[
-            ("facts", "content_embedding"),
-            ("messages", "content_embedding"),
-            ("tool_calls", "content_embedding"),
-            ("policy_audit", "content_embedding"),
-            ("chunks", "content_embedding"),
-        ] {
-            let _ = conn.execute("SELECT vector_quantize(?1, ?2)", rusqlite::params![table, col]);
-        }
-        tracing::debug!(count = embedded, "embeddings updated and indexes rebuilt");
+    if stats.embedded > 0 {
+        tracing::debug!(count = stats.embedded, "embeddings updated and indexes rebuilt");
     }
 }
 

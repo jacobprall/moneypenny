@@ -59,6 +59,44 @@ pub fn detect_intent(query: &str) -> StoreWeights {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SearchSourceId {
+    Facts,
+    Messages,
+    ToolCalls,
+    PolicyAudit,
+    Knowledge,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SearchSource {
+    id: SearchSourceId,
+    store: Store,
+}
+
+const SEARCH_SOURCES: [SearchSource; 5] = [
+    SearchSource {
+        id: SearchSourceId::Facts,
+        store: Store::Facts,
+    },
+    SearchSource {
+        id: SearchSourceId::Messages,
+        store: Store::Log,
+    },
+    SearchSource {
+        id: SearchSourceId::ToolCalls,
+        store: Store::Log,
+    },
+    SearchSource {
+        id: SearchSourceId::PolicyAudit,
+        store: Store::Log,
+    },
+    SearchSource {
+        id: SearchSourceId::Knowledge,
+        store: Store::Knowledge,
+    },
+];
+
 // ---------------------------------------------------------------------------
 // FTS5 search per store
 // ---------------------------------------------------------------------------
@@ -120,15 +158,10 @@ pub fn fts5_search_messages(conn: &Connection, query: &str, agent_id: &str, limi
 /// Search projected tool call logs scoped to the agent's sessions.
 pub fn fts5_search_tool_calls(conn: &Connection, query: &str, agent_id: &str, limit: usize) -> anyhow::Result<Vec<(String, String, f64)>> {
     let pattern = format!("%{query}%");
-    let mut stmt = conn.prepare(
+    let projection = crate::store::log::tool_call_projection_expr("tc");
+    let sql = format!(
         "SELECT tc.id,
-                (
-                    '[tool_call] tool=' || tc.tool_name ||
-                    ' status=' || COALESCE(tc.status, '') ||
-                    ' policy=' || COALESCE(tc.policy_decision, '') ||
-                    ' args=' || COALESCE(tc.arguments, '') ||
-                    ' result=' || COALESCE(tc.result, '')
-                ) AS content,
+                ({projection}) AS content,
                 1.0
          FROM tool_calls tc
          JOIN sessions s ON s.id = tc.session_id
@@ -142,7 +175,8 @@ pub fn fts5_search_tool_calls(conn: &Connection, query: &str, agent_id: &str, li
            )
          ORDER BY tc.created_at DESC
          LIMIT ?3"
-    )?;
+    );
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![agent_id, pattern, limit], |r| {
         Ok((r.get(0)?, r.get(1)?, r.get(2)?))
     })?.collect::<Result<Vec<_>, _>>()?;
@@ -152,15 +186,10 @@ pub fn fts5_search_tool_calls(conn: &Connection, query: &str, agent_id: &str, li
 /// Search projected policy audit logs scoped to the agent (via session or actor).
 pub fn fts5_search_policy_audit(conn: &Connection, query: &str, agent_id: &str, limit: usize) -> anyhow::Result<Vec<(String, String, f64)>> {
     let pattern = format!("%{query}%");
-    let mut stmt = conn.prepare(
+    let projection = crate::store::log::policy_audit_projection_expr("pa");
+    let sql = format!(
         "SELECT pa.id,
-                (
-                    '[policy_audit] actor=' || pa.actor ||
-                    ' action=' || pa.action ||
-                    ' resource=' || pa.resource ||
-                    ' effect=' || pa.effect ||
-                    ' reason=' || COALESCE(pa.reason, '')
-                ) AS content,
+                ({projection}) AS content,
                 1.0
          FROM policy_audit pa
          WHERE (
@@ -176,7 +205,8 @@ pub fn fts5_search_policy_audit(conn: &Connection, query: &str, agent_id: &str, 
                )
          ORDER BY pa.created_at DESC
          LIMIT ?3"
-    )?;
+    );
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![agent_id, pattern, limit], |r| {
         Ok((r.get(0)?, r.get(1)?, r.get(2)?))
     })?.collect::<Result<Vec<_>, _>>()?;
@@ -412,6 +442,114 @@ pub fn vector_search_knowledge(
     Ok(rows)
 }
 
+fn text_search_for_source(
+    conn: &Connection,
+    source: SearchSource,
+    query: &str,
+    agent_id: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<(String, String, f64)>> {
+    match source.id {
+        SearchSourceId::Facts => fts5_search_facts(conn, query, agent_id, limit),
+        SearchSourceId::Messages => fts5_search_messages(conn, query, agent_id, limit),
+        SearchSourceId::ToolCalls => fts5_search_tool_calls(conn, query, agent_id, limit),
+        SearchSourceId::PolicyAudit => fts5_search_policy_audit(conn, query, agent_id, limit),
+        SearchSourceId::Knowledge => fts5_search_knowledge(conn, query, limit),
+    }
+}
+
+fn vector_search_for_source(
+    conn: &Connection,
+    source: SearchSource,
+    query_blob: &[u8],
+    agent_id: &str,
+    limit: usize,
+) -> Vec<(String, f64)> {
+    let rows = match source.id {
+        SearchSourceId::Facts => vector_search_facts(conn, query_blob, agent_id, limit),
+        SearchSourceId::Messages => vector_search_messages(conn, query_blob, agent_id, limit),
+        SearchSourceId::ToolCalls => vector_search_tool_calls(conn, query_blob, agent_id, limit),
+        SearchSourceId::PolicyAudit => vector_search_policy_audit(conn, query_blob, agent_id, limit),
+        SearchSourceId::Knowledge => vector_search_knowledge(conn, query_blob, limit),
+    }
+    .unwrap_or_default();
+
+    rows.into_iter().map(|(id, d)| (id, 1.0 / (1.0 + d))).collect()
+}
+
+fn fetch_content_for_source(
+    conn: &Connection,
+    source: SearchSource,
+    id: &str,
+    agent_id: &str,
+) -> anyhow::Result<Option<String>> {
+    match source.id {
+        SearchSourceId::Facts => conn
+            .query_row(
+                "SELECT content FROM facts WHERE id = ?1 AND superseded_at IS NULL",
+                rusqlite::params![id],
+                |r| r.get::<_, String>(0),
+            )
+            .map(Some)
+            .or_else(|_| Ok(None)),
+        SearchSourceId::Messages => conn
+            .query_row(
+                "SELECT m.content
+                 FROM messages m
+                 JOIN sessions s ON s.id = m.session_id
+                 WHERE m.id = ?1 AND s.agent_id = ?2",
+                rusqlite::params![id, agent_id],
+                |r| r.get::<_, String>(0),
+            )
+            .map(Some)
+            .or_else(|_| Ok(None)),
+        SearchSourceId::ToolCalls => conn
+            .query_row(
+                &{
+                    let projection = crate::store::log::tool_call_projection_expr("tc");
+                    format!(
+                        "SELECT
+                            {projection}
+                         FROM tool_calls tc
+                         JOIN sessions s ON s.id = tc.session_id
+                         WHERE tc.id = ?1 AND s.agent_id = ?2"
+                    )
+                },
+                rusqlite::params![id, agent_id],
+                |r| r.get::<_, String>(0),
+            )
+            .map(Some)
+            .or_else(|_| Ok(None)),
+        SearchSourceId::PolicyAudit => conn
+            .query_row(
+                &{
+                    let projection = crate::store::log::policy_audit_projection_expr("pa");
+                    format!(
+                        "SELECT
+                            {projection}
+                         FROM policy_audit pa
+                         WHERE pa.id = ?1 AND (
+                             pa.actor = ?2 OR
+                             pa.session_id IN (SELECT id FROM sessions WHERE agent_id = ?2)
+                         )"
+                    )
+                },
+                rusqlite::params![id, agent_id],
+                |r| r.get::<_, String>(0),
+            )
+            .map(Some)
+            .or_else(|_| Ok(None)),
+        SearchSourceId::Knowledge => conn
+            .query_row(
+                "SELECT content FROM chunks WHERE id = ?1",
+                rusqlite::params![id],
+                |r| r.get::<_, String>(0),
+            )
+            .map(Some)
+            .or_else(|_| Ok(None)),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Cross-store search (unified)
 // ---------------------------------------------------------------------------
@@ -434,153 +572,45 @@ pub fn search(
 
     let per_store_limit = limit * 3;
 
-    let fact_results = fts5_search_facts(conn, query, agent_id, per_store_limit)?;
-    let msg_results = fts5_search_messages(conn, query, agent_id, per_store_limit)?;
-    let tool_call_results = fts5_search_tool_calls(conn, query, agent_id, per_store_limit)?;
-    let policy_audit_results = fts5_search_policy_audit(conn, query, agent_id, per_store_limit)?;
-    let knowledge_results = fts5_search_knowledge(conn, query, per_store_limit)?;
+    let mut all_ranked: Vec<Vec<(String, f64)>> = Vec::new();
+    let mut content_map: HashMap<String, (String, Store)> = HashMap::new();
 
-    // Build ranked lists for RRF — text signals
-    let fact_ranked: Vec<(String, f64)> = fact_results.iter().map(|(id, _, s)| (id.clone(), *s)).collect();
-    let msg_ranked: Vec<(String, f64)> = msg_results.iter().map(|(id, _, s)| (id.clone(), *s)).collect();
-    let tool_call_ranked: Vec<(String, f64)> = tool_call_results.iter().map(|(id, _, s)| (id.clone(), *s)).collect();
-    let policy_audit_ranked: Vec<(String, f64)> = policy_audit_results.iter().map(|(id, _, s)| (id.clone(), *s)).collect();
-    let know_ranked: Vec<(String, f64)> = knowledge_results.iter().map(|(id, _, s)| (id.clone(), *s)).collect();
+    for source in SEARCH_SOURCES {
+        let text_results = text_search_for_source(conn, source, query, agent_id, per_store_limit)?;
+        all_ranked.push(
+            text_results
+                .iter()
+                .map(|(id, _, score)| (id.clone(), *score))
+                .collect(),
+        );
 
-    // Optional vector search signals
-    let (vec_fact_ranked, vec_msg_ranked, vec_tool_ranked, vec_policy_ranked, vec_know_ranked): (Vec<(String, f64)>, Vec<(String, f64)>, Vec<(String, f64)>, Vec<(String, f64)>, Vec<(String, f64)>) =
-        if let Some(blob) = query_embedding {
-            // Invert distance: smaller distance = higher score for RRF rank ordering.
-            let vf = vector_search_facts(conn, blob, agent_id, per_store_limit)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(id, d)| (id, 1.0 / (1.0 + d)))  // proximity score
-                .collect();
-            let vm = vector_search_messages(conn, blob, agent_id, per_store_limit)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(id, d)| (id, 1.0 / (1.0 + d)))
-                .collect();
-            let vt = vector_search_tool_calls(conn, blob, agent_id, per_store_limit)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(id, d)| (id, 1.0 / (1.0 + d)))
-                .collect();
-            let vp = vector_search_policy_audit(conn, blob, agent_id, per_store_limit)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(id, d)| (id, 1.0 / (1.0 + d)))
-                .collect();
-            let vk = vector_search_knowledge(conn, blob, per_store_limit)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(id, d)| (id, 1.0 / (1.0 + d)))
-                .collect();
-            (vf, vm, vt, vp, vk)
-        } else {
-            (vec![], vec![], vec![], vec![], vec![])
-        };
+        for (id, content, _) in text_results {
+            content_map.insert(id, (content, source.store));
+        }
+    }
 
-    let mut all_ranked = vec![
-        fact_ranked,
-        msg_ranked,
-        tool_call_ranked,
-        policy_audit_ranked,
-        know_ranked,
-    ];
-    if !vec_fact_ranked.is_empty() {
-        all_ranked.push(vec_fact_ranked);
-    }
-    if !vec_msg_ranked.is_empty() {
-        all_ranked.push(vec_msg_ranked);
-    }
-    if !vec_tool_ranked.is_empty() {
-        all_ranked.push(vec_tool_ranked);
-    }
-    if !vec_policy_ranked.is_empty() {
-        all_ranked.push(vec_policy_ranked);
-    }
-    if !vec_know_ranked.is_empty() {
-        all_ranked.push(vec_know_ranked);
+    if let Some(blob) = query_embedding {
+        for source in SEARCH_SOURCES {
+            let ranked = vector_search_for_source(conn, source, blob, agent_id, per_store_limit);
+            if !ranked.is_empty() {
+                all_ranked.push(ranked);
+            }
+        }
     }
 
     let fused = rrf_fuse(&all_ranked);
 
-    // Build content lookup from text search results
-    let mut content_map: HashMap<String, (String, Store)> = HashMap::new();
-    for (id, content, _) in &fact_results {
-        content_map.insert(id.clone(), (content.clone(), Store::Facts));
-    }
-    for (id, content, _) in &msg_results {
-        content_map.insert(id.clone(), (content.clone(), Store::Log));
-    }
-    for (id, content, _) in &tool_call_results {
-        content_map.insert(id.clone(), (content.clone(), Store::Log));
-    }
-    for (id, content, _) in &policy_audit_results {
-        content_map.insert(id.clone(), (content.clone(), Store::Log));
-    }
-    for (id, content, _) in &knowledge_results {
-        content_map.insert(id.clone(), (content.clone(), Store::Knowledge));
-    }
-
     // Vector search may surface IDs not found by text search — fetch their content.
-    for (id, _) in fused.iter() {
+    for (id, _) in &fused {
         if content_map.contains_key(id) {
             continue;
         }
-        // Try facts first, then chunks
-        if let Ok(Some(row)) = conn.query_row(
-            "SELECT content FROM facts WHERE id = ?1 AND superseded_at IS NULL",
-            rusqlite::params![id],
-            |r| r.get::<_, String>(0),
-        ).map(Some).or_else(|_| Ok::<_, anyhow::Error>(None)) {
-            content_map.insert(id.clone(), (row, Store::Facts));
-        } else if let Ok(Some(row)) = conn.query_row(
-            "SELECT m.content
-             FROM messages m
-             JOIN sessions s ON s.id = m.session_id
-             WHERE m.id = ?1 AND s.agent_id = ?2",
-            rusqlite::params![id, agent_id],
-            |r| r.get::<_, String>(0),
-        ).map(Some).or_else(|_| Ok::<_, anyhow::Error>(None)) {
-            content_map.insert(id.clone(), (row, Store::Log));
-        } else if let Ok(Some(row)) = conn.query_row(
-            "SELECT
-                '[tool_call] tool=' || tc.tool_name ||
-                ' status=' || COALESCE(tc.status, '') ||
-                ' policy=' || COALESCE(tc.policy_decision, '') ||
-                ' args=' || COALESCE(tc.arguments, '') ||
-                ' result=' || COALESCE(tc.result, '')
-             FROM tool_calls tc
-             JOIN sessions s ON s.id = tc.session_id
-             WHERE tc.id = ?1 AND s.agent_id = ?2",
-            rusqlite::params![id, agent_id],
-            |r| r.get::<_, String>(0),
-        ).map(Some).or_else(|_| Ok::<_, anyhow::Error>(None)) {
-            content_map.insert(id.clone(), (row, Store::Log));
-        } else if let Ok(Some(row)) = conn.query_row(
-            "SELECT
-                '[policy_audit] actor=' || pa.actor ||
-                ' action=' || pa.action ||
-                ' resource=' || pa.resource ||
-                ' effect=' || pa.effect ||
-                ' reason=' || COALESCE(pa.reason, '')
-             FROM policy_audit pa
-             WHERE pa.id = ?1 AND (
-                 pa.actor = ?2 OR
-                 pa.session_id IN (SELECT id FROM sessions WHERE agent_id = ?2)
-             )",
-            rusqlite::params![id, agent_id],
-            |r| r.get::<_, String>(0),
-        ).map(Some).or_else(|_| Ok::<_, anyhow::Error>(None)) {
-            content_map.insert(id.clone(), (row, Store::Log));
-        } else if let Ok(Some(row)) = conn.query_row(
-            "SELECT content FROM chunks WHERE id = ?1",
-            rusqlite::params![id],
-            |r| r.get::<_, String>(0),
-        ).map(Some).or_else(|_| Ok::<_, anyhow::Error>(None)) {
-            content_map.insert(id.clone(), (row, Store::Knowledge));
+
+        for source in SEARCH_SOURCES {
+            if let Ok(Some(row)) = fetch_content_for_source(conn, source, id, agent_id) {
+                content_map.insert(id.clone(), (row, source.store));
+                break;
+            }
         }
     }
 
