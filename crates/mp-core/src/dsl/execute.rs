@@ -45,7 +45,7 @@ pub fn execute_program(
                     code: result.code.clone(),
                     message: result.message.clone(),
                     data: json!({
-                        "results": statement_results.iter().map(|r| &r.data).collect::<Vec<_>>(),
+                        "results": statement_results.iter().map(|r: &StatementResult| &r.data).collect::<Vec<_>>(),
                         "failed_statement": result.data,
                         "meta": {
                             "statements": statement_results.len() + 1,
