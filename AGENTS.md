@@ -39,7 +39,7 @@ UPDATE facts SET key=value WHERE id = "id"
 DELETE FROM facts WHERE <filters>
 INGEST "url"
 SEARCH audit WHERE <filters> [| TAKE n]
-CREATE POLICY allow|deny|audit <action> ON <resource> [MESSAGE "reason"]
+CREATE POLICY "name" allow|deny|audit <action> ON <resource> [MESSAGE "reason"]
 CREATE JOB "name" SCHEDULE "cron" [TYPE type]
 ```
 

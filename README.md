@@ -10,83 +10,42 @@ It runs as a standalone agent runtime (CLI, HTTP, Slack, Discord, Telegram) or a
 
 ## For Agents
 
-If you are a coding agent in Cursor and your user wants to set up Moneypenny, run these commands in order:
-
-### Docker (recommended — no Rust toolchain required)
+If you are a coding agent (Cursor, Claude Code, etc.) and your user wants to set up Moneypenny, run the following:
 
 ```bash
-# 1. Clone and build the Docker image
+# 1. Clone and build (~5 min first time, requires Rust toolchain)
 git clone --recurse-submodules https://github.com/jacobprall/moneypenny.git
-cd moneypenny && docker build -t moneypenny .
+cd moneypenny
+cargo build --release
 
-# 2. Navigate to the user's project and initialize
-cd /path/to/users/project
-docker run -it --rm \
-  -v "$(pwd)/mp-data:/data" \
-  -v "$(pwd)/moneypenny.toml:/app/moneypenny.toml:ro" \
-  -e ANTHROPIC_API_KEY \
-  moneypenny init
+# 2. Initialize the agent database
+./target/release/mp init
 
-# 3. Register Moneypenny as your MCP server
-mp setup cursor
+# 3. Register MCP server, hooks, and agent rules with Cursor
+./target/release/mp setup cursor --local
 ```
 
-### From source (alternative — requires Rust toolchain)
-
-```bash
-git clone --recurse-submodules https://github.com/jacobprall/moneypenny.git
-cd moneypenny && cargo build --release
-sudo cp target/release/mp /usr/local/bin/mp
-
-cd /path/to/users/project
-mp init
-mp setup cursor --local
-```
-
-After setup, restart Cursor (or reload the window). Moneypenny registers 3 MCP tools: `moneypenny.query` (the primary interface — every operation is an MPQ expression), `moneypenny.capabilities` (domain discovery), and `moneypenny.execute` (advanced fallback). All state is stored in a single SQLite database at `mp-data/main.db`.
+Then restart Cursor (or reload the window). Moneypenny registers 3 MCP tools: `moneypenny.query` (the primary interface — every operation is an MPQ expression), `moneypenny.capabilities` (domain discovery), and `moneypenny.execute` (advanced fallback).
 
 To verify the connection works, call `moneypenny.query` with expression `SEARCH facts WHERE topic = "test" | TAKE 5`.
+
+**What `mp setup cursor --local` configures:**
+- `.cursor/mcp.json` — MCP server pointing to the local binary
+- `.cursor/hooks.json` — audit + policy enforcement on every tool call, shell command, file edit
+- `.cursor/rules/moneypenny.mdc` — agent instructions so Cursor knows how to use Moneypenny
+
+All state lives in a single SQLite database at `mp-data/main.db`. If you rebuild `mp`, Cursor picks up changes on next restart.
 
 ---
 
 ## Quick Start
 
-### Docker (recommended)
-
-```bash
-git clone --recurse-submodules https://github.com/jacobprall/moneypenny.git
-cd moneypenny
-docker build -t moneypenny .
-```
-
-Then in any project:
-
-```bash
-# Initialize the database
-docker run -it --rm \
-  -v "$(pwd)/mp-data:/data" \
-  -v "$(pwd)/moneypenny.toml:/app/moneypenny.toml:ro" \
-  -e ANTHROPIC_API_KEY \
-  moneypenny init
-
-# Register as MCP server
-mp setup cursor
-```
-
-### From source
-
 ```bash
 git clone --recurse-submodules https://github.com/jacobprall/moneypenny.git
 cd moneypenny
 cargo build --release
-cp target/release/mp /usr/local/bin/mp
-```
-
-Then in any project:
-
-```bash
-mp init                    # creates moneypenny.toml + agent database
-mp setup cursor --local    # uses local binary instead of Docker
+./target/release/mp init
+./target/release/mp setup cursor --local
 ```
 
 Restart Cursor (or reload the window). Done. Everything else happens through conversation:
@@ -261,18 +220,22 @@ Same agent loop, thin adapters:
 | Discord   | Interactions API, Ed25519 verification, slash commands |
 | Telegram  | Long-polling, per-chat sessions |
 
-## Sidecar Mode
+## Cursor Integration
 
-Moneypenny exposes its full surface area as an MCP server. Register it with one command:
+Moneypenny exposes its full surface area as an MCP server. One command sets up everything:
 
 ```bash
-mp setup cursor          # writes .cursor/mcp.json (Docker sidecar by default)
-mp setup cursor --local  # uses local binary instead of Docker
+mp setup cursor --local
 ```
 
-For Cursor, the default Docker mode spawns a container per session via stdio. The project's `mp-data/` directory and `moneypenny.toml` are volume-mounted so state persists and config changes take effect without rebuilding. Pass `--local` to use the local `mp` binary instead, or `--image <name>` to use a custom Docker image.
+This writes three files to `.cursor/`:
+- **`mcp.json`** — registers the MCP server (runs `mp serve` over stdio)
+- **`hooks.json`** — audit trail + policy enforcement on every tool call, shell command, and file edit
+- **`rules/moneypenny.mdc`** — agent instructions so Cursor knows how to use Moneypenny
 
-Under the hood, `mp sidecar` runs the MCP server over stdio. Every operation Moneypenny supports is expressible as a short string in **MPQ (Moneypenny Query)** — a single unified language exposed through one MCP tool whose description *is* the syntax. Instead of discovering 12 tools and learning their JSON schemas, the agent reads ~200 tokens of grammar and can immediately write expressions like `SEARCH facts WHERE topic = "auth" SINCE 7d | TAKE 10` or `CREATE POLICY deny DELETE ON facts FOR AGENT "junior"`. The verb maps directly to the canonical operation; the policy engine pattern-matches against the raw expression; the audit trail is human-readable by default.
+Under the hood, `mp serve` runs both the MCP server over stdio and an HTTP gateway on port 4820. Every operation Moneypenny supports is expressible as a short string in **MPQ (Moneypenny Query)** — a single unified language exposed through one MCP tool whose description *is* the syntax. Instead of discovering 12 tools and learning their JSON schemas, the agent reads ~200 tokens of grammar and can immediately write expressions like `SEARCH facts WHERE topic = "auth" SINCE 7d | TAKE 10` or `CREATE POLICY "no-junior-deletes" deny DELETE ON facts FOR AGENT "junior"`. The verb maps directly to the canonical operation; the policy engine pattern-matches against the raw expression; the audit trail is human-readable by default.
+
+The CLI agent (`mp chat`, `mp send`) shares the same database and agent — knowledge persists seamlessly between Cursor and terminal sessions.
 
 ### Import conversation history
 
