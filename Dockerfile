@@ -25,6 +25,8 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 COPY vendor/ vendor/
 
+ENV GGML_NATIVE=OFF
+
 RUN cargo build --release --bin mp \
     && strip target/release/mp
 

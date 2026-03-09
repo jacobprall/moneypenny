@@ -1,14 +1,15 @@
 {
   "mcpServers": {
     "moneypenny": {
+      "command": "docker",
       "args": [
-        "--config",
-        "/Users/jprall/moneypenny/moneypenny.toml",
-        "sidecar",
-        "--agent",
-        "main"
-      ],
-      "command": "/Users/jprall/moneypenny/target/release/mp"
+        "run", "-i", "--rm",
+        "-v", "/Users/colossus/Desktop/untitled folder 2/moneypenny/mp-data:/data",
+        "-v", "/Users/colossus/Desktop/untitled folder 2/moneypenny/moneypenny.toml:/app/moneypenny.toml:ro",
+        "-e", "ANTHROPIC_API_KEY",
+        "moneypenny",
+        "sidecar", "--agent", "main"
+      ]
     }
   }
 }

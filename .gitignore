@@ -12,3 +12,5 @@ docs/.astro/
 .env
 .vercel
 system-design.md
+.cursor/*
+.cursorrules

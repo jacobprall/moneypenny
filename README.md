@@ -4,39 +4,76 @@
 
 Persistent memory, policy governance, and audit for AI agents — in a single SQLite file.
 
-Moneypenny sits between your agent and its LLM. After every turn it extracts and compresses knowledge into structured facts, enforces policy on every tool call, logs an auditable decision trail, and syncs state across agents via CRDTs. The entire agent state lives in one portable SQLite database. No Postgres, no Redis, no Docker.
+Moneypenny sits between your agent and its LLM. After every turn it extracts and compresses knowledge into structured facts, enforces policy on every tool call, logs an auditable decision trail, and syncs state across agents via CRDTs. The entire agent state lives in one portable SQLite database. No Postgres, no Redis — just SQLite.
 
-It runs as a standalone agent runtime (CLI, HTTP, Slack, Discord, Telegram) or as a sidecar that plugs into **Claude Code**, **Cortex Code CLI**, or **OpenClaw** via MCP. One command to connect.
+It runs as a standalone agent runtime (CLI, HTTP, Slack, Discord, Telegram) or as a sidecar that plugs into **Cursor** via MCP. One command to connect.
 
 ## For Agents
 
-If you are a coding agent (Claude Code, Cortex Code CLI, OpenClaw, Cursor, etc.) and your user wants to set up Moneypenny, run these commands in order:
+If you are a coding agent in Cursor and your user wants to set up Moneypenny, run these commands in order:
+
+### Docker (recommended — no Rust toolchain required)
 
 ```bash
-# 1. Clone and build (requires Rust toolchain)
+# 1. Clone and build the Docker image
 git clone --recurse-submodules https://github.com/jacobprall/moneypenny.git
-cd moneypenny && cargo build --release
+cd moneypenny && docker build -t moneypenny .
 
-# 2. Put the binary on PATH
-sudo cp target/release/mp /usr/local/bin/mp
-
-# 3. Navigate to the user's project and initialize
+# 2. Navigate to the user's project and initialize
 cd /path/to/users/project
-mp init
+docker run -it --rm \
+  -v "$(pwd)/mp-data:/data" \
+  -v "$(pwd)/moneypenny.toml:/app/moneypenny.toml:ro" \
+  -e ANTHROPIC_API_KEY \
+  moneypenny init
 
-# 4. Register Moneypenny as your MCP server
-mp setup claude-code       # for Claude Code
-mp setup cortex            # for Cortex Code CLI
-mp setup openclaw          # for OpenClaw
+# 3. Register Moneypenny as your MCP server
+mp setup cursor
 ```
 
-After setup, restart the agent runtime. Moneypenny registers 3 MCP tools: `moneypenny.query` (the primary interface — every operation is an MPQ expression), `moneypenny.capabilities` (domain discovery), and `moneypenny.execute` (advanced fallback). All state is stored in a single SQLite database at `mp-data/main.db`.
+### From source (alternative — requires Rust toolchain)
+
+```bash
+git clone --recurse-submodules https://github.com/jacobprall/moneypenny.git
+cd moneypenny && cargo build --release
+sudo cp target/release/mp /usr/local/bin/mp
+
+cd /path/to/users/project
+mp init
+mp setup cursor --local
+```
+
+After setup, restart Cursor (or reload the window). Moneypenny registers 3 MCP tools: `moneypenny.query` (the primary interface — every operation is an MPQ expression), `moneypenny.capabilities` (domain discovery), and `moneypenny.execute` (advanced fallback). All state is stored in a single SQLite database at `mp-data/main.db`.
 
 To verify the connection works, call `moneypenny.query` with expression `SEARCH facts WHERE topic = "test" | TAKE 5`.
 
 ---
 
 ## Quick Start
+
+### Docker (recommended)
+
+```bash
+git clone --recurse-submodules https://github.com/jacobprall/moneypenny.git
+cd moneypenny
+docker build -t moneypenny .
+```
+
+Then in any project:
+
+```bash
+# Initialize the database
+docker run -it --rm \
+  -v "$(pwd)/mp-data:/data" \
+  -v "$(pwd)/moneypenny.toml:/app/moneypenny.toml:ro" \
+  -e ANTHROPIC_API_KEY \
+  moneypenny init
+
+# Register as MCP server
+mp setup cursor
+```
+
+### From source
 
 ```bash
 git clone --recurse-submodules https://github.com/jacobprall/moneypenny.git
@@ -49,10 +86,10 @@ Then in any project:
 
 ```bash
 mp init                    # creates moneypenny.toml + agent database
-mp setup claude-code       # registers as MCP server (or: mp setup cortex / mp setup openclaw)
+mp setup cursor --local    # uses local binary instead of Docker
 ```
 
-Restart your agent. Done. Everything else happens through conversation:
+Restart Cursor (or reload the window). Done. Everything else happens through conversation:
 
 ```
 You: Remember that deploys happen Tuesday and Thursday via ArgoCD with canary at 5%
@@ -229,22 +266,21 @@ Same agent loop, thin adapters:
 Moneypenny exposes its full surface area as an MCP server. Register it with one command:
 
 ```bash
-mp setup claude-code     # writes .mcp.json (or --global for ~/.claude.json)
-mp setup cortex          # runs cortex mcp add
-mp setup openclaw        # writes ~/.clawdbot/clawdbot.json
+mp setup cursor          # writes .cursor/mcp.json (Docker sidecar by default)
+mp setup cursor --local  # uses local binary instead of Docker
 ```
+
+For Cursor, the default Docker mode spawns a container per session via stdio. The project's `mp-data/` directory and `moneypenny.toml` are volume-mounted so state persists and config changes take effect without rebuilding. Pass `--local` to use the local `mp` binary instead, or `--image <name>` to use a custom Docker image.
 
 Under the hood, `mp sidecar` runs the MCP server over stdio. Every operation Moneypenny supports is expressible as a short string in **MPQ (Moneypenny Query)** — a single unified language exposed through one MCP tool whose description *is* the syntax. Instead of discovering 12 tools and learning their JSON schemas, the agent reads ~200 tokens of grammar and can immediately write expressions like `SEARCH facts WHERE topic = "auth" SINCE 7d | TAKE 10` or `CREATE POLICY deny DELETE ON facts FOR AGENT "junior"`. The verb maps directly to the canonical operation; the policy engine pattern-matches against the raw expression; the audit trail is human-readable by default.
 
 ### Import conversation history
 
-Auto-ingest prior conversations from your agent runtime into Moneypenny's memory:
+Auto-ingest prior conversations from Cursor into Moneypenny's memory:
 
 ```bash
-mp ingest --cortex                       # all Cortex Code CLI sessions
-mp ingest --claude-code                  # all Claude Code sessions
-mp ingest --claude-code=my-project-slug  # scoped to one project
-mp ingest --openclaw-file events.jsonl   # OpenClaw JSONL
+mp ingest --cursor                       # all Cursor sessions
+mp ingest --cursor=my-project-slug       # scoped to one project
 ```
 
 Content-hash deduplication makes re-runs safe.

@@ -137,7 +137,8 @@ fn build_sqlite_ai(vendor: &PathBuf, target_os: &str, sqlite_include: &str) {
     let fp16_dir = vendor.join("sqlite-vector/libs/fp16");
 
     // 1. Build llama.cpp via CMake
-    let llama_build = cmake::Config::new(&llama_dir)
+    let mut llama_cfg = cmake::Config::new(&llama_dir);
+    llama_cfg
         .define("BUILD_SHARED_LIBS", "OFF")
         .define("LLAMA_BUILD_COMMON", "ON")
         .define("LLAMA_BUILD_EXAMPLES", "OFF")
@@ -148,8 +149,16 @@ fn build_sqlite_ai(vendor: &PathBuf, target_os: &str, sqlite_include: &str) {
         .define("LLAMA_OPENSSL", "OFF")
         .define("GGML_RPC", "OFF")
         .define("GGML_LTO", "ON")
-        .define("GGML_OPENMP", "OFF")
-        .build();
+        .define("GGML_OPENMP", "OFF");
+
+    // In Docker on Apple Silicon (QEMU emulation), GCC detects ARM FP16 support
+    // but can't actually inline the intrinsics. Disable native CPU detection so
+    // GGML falls back to safe baseline NEON.
+    if std::env::var("GGML_NATIVE").as_deref() == Ok("OFF") {
+        llama_cfg.define("GGML_NATIVE", "OFF");
+    }
+
+    let llama_build = llama_cfg.build();
 
     // 2. Build whisper.cpp via CMake (uses system ggml from llama build)
     let whisper_build = cmake::Config::new(&whisper_dir)
@@ -206,24 +215,37 @@ fn build_sqlite_ai(vendor: &PathBuf, target_os: &str, sqlite_include: &str) {
         miniaudio_build.join("lib64").display()
     );
 
-    println!("cargo:rustc-link-lib=static=llama");
-    println!("cargo:rustc-link-lib=static=ggml");
-    println!("cargo:rustc-link-lib=static=ggml-base");
-    println!("cargo:rustc-link-lib=static=ggml-cpu");
-    println!("cargo:rustc-link-lib=static=mtmd");
-    println!("cargo:rustc-link-lib=static=whisper");
-    println!("cargo:rustc-link-lib=static=miniaudio");
+    let is_apple = target_os == "macos" || target_os == "ios";
 
-    // Platform-specific accelerator frameworks
-    if target_os == "macos" || target_os == "ios" {
+    // On Linux, ggml's static libraries have circular dependencies that
+    // defeat GNU ld's single-pass resolution. Use +whole-archive so the
+    // linker pulls in every object file unconditionally.
+    // On macOS the linker handles this natively.
+    if is_apple {
+        println!("cargo:rustc-link-lib=static=llama");
+        println!("cargo:rustc-link-lib=static=mtmd");
+        println!("cargo:rustc-link-lib=static=whisper");
+        println!("cargo:rustc-link-lib=static=miniaudio");
+        println!("cargo:rustc-link-lib=static=ggml");
+        println!("cargo:rustc-link-lib=static=ggml-cpu");
+        println!("cargo:rustc-link-lib=static=ggml-base");
         println!("cargo:rustc-link-lib=static=ggml-metal");
         println!("cargo:rustc-link-lib=static=ggml-blas");
         println!("cargo:rustc-link-lib=framework=Accelerate");
         println!("cargo:rustc-link-lib=framework=Metal");
         println!("cargo:rustc-link-lib=framework=CoreFoundation");
         println!("cargo:rustc-link-lib=framework=QuartzCore");
+        println!("cargo:rustc-link-lib=c++");
+    } else {
+        println!("cargo:rustc-link-lib=static:+whole-archive=ggml-base");
+        println!("cargo:rustc-link-lib=static:+whole-archive=ggml-cpu");
+        println!("cargo:rustc-link-lib=static:+whole-archive=ggml");
+        println!("cargo:rustc-link-lib=static=llama");
+        println!("cargo:rustc-link-lib=static=mtmd");
+        println!("cargo:rustc-link-lib=static=whisper");
+        println!("cargo:rustc-link-lib=static=miniaudio");
+        println!("cargo:rustc-link-lib=stdc++");
     }
-    println!("cargo:rustc-link-lib=c++");
 
     // 4. Compile sqlite-ai.c against the built headers
     cc::Build::new()

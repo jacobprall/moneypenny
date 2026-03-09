@@ -1,6 +1,7 @@
 mod adapters;
 mod cli;
 mod domain_tools;
+mod ui;
 
 use anyhow::Result;
 use clap::Parser;
@@ -9,7 +10,6 @@ use mp_core::config::Config;
 use mp_llm::provider::{EmbeddingProvider, LlmProvider};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
-use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex};
 use tracing_subscriber::{EnvFilter, fmt};
@@ -1102,13 +1102,9 @@ async fn download_model(url: &str, dest: &Path) -> Result<()> {
     use futures_util::StreamExt;
     use tokio::io::AsyncWriteExt;
 
-    fn flush() {
-        let _ = std::io::stdout().flush();
-    }
-
     if dest.exists() {
-        println!("  \u{2713} Model already present at {}", dest.display());
-        flush();
+        ui::success(format!("Model already present at {}", dest.display()));
+        ui::flush();
         return Ok(());
     }
 
@@ -1121,8 +1117,8 @@ async fn download_model(url: &str, dest: &Path) -> Result<()> {
         .and_then(|f| f.to_str())
         .unwrap_or("model");
 
-    println!("  \u{2193} Connecting to download {fname}...");
-    flush();
+    ui::info(format!("↓ Connecting to download {fname}..."));
+    ui::flush();
 
     let resp = reqwest::get(url).await?;
     if !resp.status().is_success() {
@@ -1135,9 +1131,9 @@ async fn download_model(url: &str, dest: &Path) -> Result<()> {
         None => "unknown size".to_string(),
     };
 
-    println!("  \u{2193} Downloading {fname} ({size_label})...");
-    println!("      This may take a few minutes on slower connections.");
-    flush();
+    ui::info(format!("↓ Downloading {fname} ({size_label})..."));
+    ui::detail("This may take a few minutes on slower connections.");
+    ui::flush();
 
     let tmp = dest.with_extension("gguf.tmp");
     let mut file = tokio::fs::File::create(&tmp).await?;
@@ -1154,19 +1150,19 @@ async fn download_model(url: &str, dest: &Path) -> Result<()> {
             last_mb = current_mb;
             if let Some(t) = total {
                 let pct = (downloaded * 100) / t;
-                println!("      {current_mb} / {} MB ({pct}%)", t / 1_000_000);
+                ui::detail(format!("{current_mb} / {} MB ({pct}%)", t / 1_000_000));
             } else {
-                println!("      {current_mb} MB downloaded...");
+                ui::detail(format!("{current_mb} MB downloaded..."));
             }
-            flush();
+            ui::flush();
         }
     }
     file.flush().await?;
     drop(file);
 
     tokio::fs::rename(&tmp, dest).await?;
-    println!("  \u{2713} Model saved to {}", dest.display());
-    flush();
+    ui::success(format!("Model saved to {}", dest.display()));
+    ui::flush();
     Ok(())
 }
 
@@ -1180,18 +1176,18 @@ async fn ensure_embedding_models(config: &Config) {
         let url = match default_model_url(&agent.embedding.model) {
             Some(u) => u,
             None => {
-                println!(
-                    "  ! No download URL known for model \"{}\". Place the GGUF file at {:?} manually.",
+                ui::warn(format!(
+                    "No download URL known for model \"{}\". Place the GGUF file at {:?} manually.",
                     agent.embedding.model, model_path
-                );
+                ));
                 continue;
             }
         };
         if let Err(e) = download_model(url, &model_path).await {
-            eprintln!(
-                "  ! Failed to download model for agent \"{}\": {e}",
+            ui::error(format!(
+                "Failed to download model for agent \"{}\": {e}",
                 agent.name
-            );
+            ));
         }
     }
 }
@@ -1374,40 +1370,38 @@ async fn cmd_init(config_path: &str) -> Result<()> {
         }
     }
 
-    println!();
-    println!("  Moneypenny v{}", env!("CARGO_PKG_VERSION"));
-    println!();
-    println!("  Creating project in {}", config.data_dir.display());
-    println!();
-    println!("  \u{2713} Created {config_path}");
-    println!("  \u{2713} Created data directory");
-    println!("  \u{2713} Created models directory");
+    ui::banner();
+    ui::info(format!("Creating project in {}", config.data_dir.display()));
+    ui::blank();
+    ui::success(format!("Created {config_path}"));
+    ui::success("Created data directory");
+    ui::success("Created models directory");
     for agent in &config.agents {
-        println!("  \u{2713} Initialized agent \"{}\"", agent.name);
-        println!(
-            "      Embedding: {} ({}, {}D)",
+        ui::success(format!("Initialized agent \"{}\"", agent.name));
+        ui::detail(format!(
+            "Embedding: {} ({}, {}D)",
             agent.embedding.provider, agent.embedding.model, agent.embedding.dimensions
-        );
+        ));
     }
-    println!("  \u{2713} Seeded bootstrap facts");
-    println!();
+    ui::success("Seeded bootstrap facts");
+    ui::blank();
 
     ensure_embedding_models(&config).await;
 
-    println!();
-    println!("  Ready! Next steps:");
-    println!();
-    println!("  Docker (recommended):");
-    println!("    docker build -t moneypenny .");
-    println!("    mp setup cursor                    # generates Docker-based MCP config");
-    println!();
-    println!("  Local (alternative):");
-    println!("    mp setup cursor --local            # uses local binary instead");
-    println!();
-    println!("  Then reload Cursor and ask: \"What Moneypenny tools do you have?\"");
-    println!();
-    println!("  Tip: Set ANTHROPIC_API_KEY in .env for LLM features (mp chat, mp ask).");
-    println!();
+    ui::blank();
+    ui::info("Ready! Next steps:");
+    ui::blank();
+    ui::info("Docker (recommended):");
+    ui::hint("docker build -t moneypenny .");
+    ui::hint("mp setup cursor                    # generates Docker-based MCP config");
+    ui::blank();
+    ui::info("Local (alternative):");
+    ui::hint("mp setup cursor --local            # uses local binary instead");
+    ui::blank();
+    ui::info("Then reload Cursor and ask: \"What Moneypenny tools do you have?\"");
+    ui::blank();
+    ui::info("Tip: Set ANTHROPIC_API_KEY in .env for LLM features (mp chat, mp ask).");
+    ui::blank();
 
     Ok(())
 }
@@ -1419,15 +1413,15 @@ async fn cmd_init(config_path: &str) -> Result<()> {
 async fn cmd_setup(config: &Config, cmd: cli::SetupCommand) -> Result<()> {
     match &cmd {
         cli::SetupCommand::Models => {
-            println!();
-            println!("  Checking embedding models...");
-            println!();
+            ui::blank();
+            ui::info("Checking embedding models...");
+            ui::blank();
             ensure_embedding_models(config).await;
-            println!();
+            ui::blank();
             return Ok(());
         }
         cli::SetupCommand::Seed => {
-            println!();
+            ui::blank();
             for agent in &config.agents {
                 let conn = open_agent_db(config, &agent.name)?;
                 let existing: i64 = conn.query_row(
@@ -1437,13 +1431,13 @@ async fn cmd_setup(config: &Config, cmd: cli::SetupCommand) -> Result<()> {
                     |r| r.get(0),
                 ).unwrap_or(0);
                 if existing >= 4 {
-                    println!("  \u{2713} {}: bootstrap facts already present ({existing})", agent.name);
+                    ui::success(format!("{}: bootstrap facts already present ({existing})", agent.name));
                     continue;
                 }
                 seed_bootstrap_facts(&conn, &agent.name);
-                println!("  \u{2713} {}: seeded bootstrap facts", agent.name);
+                ui::success(format!("{}: seeded bootstrap facts", agent.name));
             }
-            println!();
+            ui::blank();
             return Ok(());
         }
         _ => {}
@@ -1510,34 +1504,32 @@ async fn cmd_setup(config: &Config, cmd: cli::SetupCommand) -> Result<()> {
     // Ensure data directory exists for Docker volume mount
     std::fs::create_dir_all(&data_dir)?;
 
-    println!();
-    println!("  Moneypenny v{}", env!("CARGO_PKG_VERSION"));
-    println!();
-    println!("  \u{2713} Registered MCP server in {}", mcp_path.display());
-    println!("  \u{2713} Wrote agent rules to {}", rule_path.display());
-    println!("  \u{2713} Wrote hooks config to {}", hooks_json_path.display());
-    println!();
-    println!("  Mode:    {mode_label}");
-    println!("  Agent:   {}", ag.name);
-    println!("  Data:    {}", data_dir.display());
-    println!("  Project: {}", project_dir.display());
+    ui::banner();
+    ui::success(format!("Registered MCP server in {}", mcp_path.display()));
+    ui::success(format!("Wrote agent rules to {}", rule_path.display()));
+    ui::success(format!("Wrote hooks config to {}", hooks_json_path.display()));
+    ui::blank();
+    ui::field("Mode", 9, &mode_label);
+    ui::field("Agent", 9, &ag.name);
+    ui::field("Data", 9, data_dir.display());
+    ui::field("Project", 9, project_dir.display());
     if !local {
-        println!();
-        println!("  Docker quick start:");
-        println!("    docker build -t {image} .");
-        println!("    docker run -it --rm -v {}:/data -e ANTHROPIC_API_KEY {image} init", data_dir.display());
+        ui::blank();
+        ui::info("Docker quick start:");
+        ui::hint(format!("docker build -t {image} ."));
+        ui::hint(format!("docker run -it --rm -v {}:/data -e ANTHROPIC_API_KEY {image} init", data_dir.display()));
     }
-    println!();
-    println!("  Governance:");
-    println!("    - All tool calls, shell commands, file edits, and MCP calls are audited");
-    println!("    - Policy engine enforces allow/deny on pre-execution hooks");
-    println!("    - View audit trail: mp audit");
-    println!("    - Add policies: mp policy add --name <name> --effect deny --action shell_exec");
-    println!();
-    println!("  Next steps:");
-    println!("    1. Restart Cursor (or reload the window)");
-    println!("    2. Ask the agent: \"What Moneypenny tools do you have?\"");
-    println!();
+    ui::blank();
+    ui::info("Governance:");
+    ui::hint("- All tool calls, shell commands, file edits, and MCP calls are audited");
+    ui::hint("- Policy engine enforces allow/deny on pre-execution hooks");
+    ui::hint("- View audit trail: mp audit");
+    ui::hint("- Add policies: mp policy add --name <name> --effect deny --action shell_exec");
+    ui::blank();
+    ui::info("Next steps:");
+    ui::hint("1. Restart Cursor (or reload the window)");
+    ui::hint("2. Ask the agent: \"What Moneypenny tools do you have?\"");
+    ui::blank();
 
     Ok(())
 }
@@ -1965,9 +1957,7 @@ fn upsert_json_mcp_config(
 // =========================================================================
 
 async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
-    println!();
-    println!("  Moneypenny v{}", env!("CARGO_PKG_VERSION"));
-    println!();
+    ui::banner();
 
     let shutdown = tokio::sync::broadcast::channel::<()>(1).0;
 
@@ -1976,7 +1966,7 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
     let mut workers: Vec<WorkerHandle> = Vec::new();
     for agent in &config.agents {
         let (handle, w_stdin, w_stdout) = spawn_worker(config, config_path, &agent.name)?;
-        println!("  Worker \"{}\" started (pid {})", agent.name, handle.pid);
+        ui::info(format!("Worker \"{}\" started (pid {})", agent.name, handle.pid));
         bus.register(agent.name.clone(), w_stdin, w_stdout).await;
         workers.push(handle);
     }
@@ -2160,8 +2150,8 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
     let pid_path = config.data_dir.join("mp.pid");
     std::fs::write(&pid_path, std::process::id().to_string())?;
 
-    println!();
-    println!("  Gateway ready. {} agent(s) running.", config.agents.len());
+    ui::blank();
+    ui::info(format!("Gateway ready. {} agent(s) running.", config.agents.len()));
     if has_http_channel {
         let port = config
             .channels
@@ -2169,22 +2159,22 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
             .as_ref()
             .map(|h| h.port)
             .unwrap_or(8080);
-        println!(
-            "  HTTP API listening on port {port}  (POST /v1/chat, POST /v1/ops, WS /v1/ws, GET /health)"
-        );
+        ui::info(format!(
+            "HTTP API listening on port {port}  (POST /v1/chat, POST /v1/ops, WS /v1/ws, GET /health)"
+        ));
     }
     if config.channels.slack.is_some() {
-        println!("  Slack Events API endpoint: POST /slack/events");
+        ui::info("Slack Events API endpoint: POST /slack/events");
     }
     if config.channels.discord.is_some() {
-        println!("  Discord Interactions endpoint: POST /discord/interactions");
+        ui::info("Discord Interactions endpoint: POST /discord/interactions");
     }
     if config.channels.telegram.is_some() {
-        println!("  Telegram long-polling active");
+        ui::info("Telegram long-polling active");
     }
     if has_sync {
-        println!(
-            "  Auto-sync every {}s ({} peer(s){})",
+        ui::info(format!(
+            "Auto-sync every {}s ({} peer(s){})",
             config.sync.interval_secs,
             config.sync.peers.len(),
             if config.sync.cloud_url.is_some() {
@@ -2192,10 +2182,10 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
             } else {
                 ""
             }
-        );
+        ));
     }
-    println!("  Press Ctrl-C to shut down.");
-    println!();
+    ui::info("Press Ctrl-C to shut down.");
+    ui::blank();
 
     // If CLI channel is enabled, run interactive chat on the default agent
     if config.channels.cli {
@@ -2210,17 +2200,16 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
         let embed = build_embedding_provider(config, ag).ok();
         let sid = mp_core::store::log::create_session(&conn, &ag.name, Some("cli"))?;
 
-        println!("  CLI channel active — agent: {}", ag.name);
-        println!("  Type /help for commands, Ctrl-C to shut down.");
-        println!();
+        ui::info(format!("CLI channel active — agent: {}", ag.name));
+        ui::info("Type /help for commands, Ctrl-C to shut down.");
+        ui::blank();
 
         let mut shutdown_rx = shutdown.subscribe();
         let stdin = tokio::io::stdin();
         let mut reader = tokio::io::BufReader::new(stdin);
 
         loop {
-            print!("  > ");
-            std::io::stdout().flush()?;
+            ui::prompt();
 
             let mut line = String::new();
             let read = tokio::select! {
@@ -2240,22 +2229,22 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
             }
 
             if trimmed == "/help" {
-                println!("  /facts    — list stored facts");
-                println!("  /scratch  — list scratch entries");
-                println!("  /quit     — exit");
-                println!();
+                ui::info("/facts    — list stored facts");
+                ui::info("/scratch  — list scratch entries");
+                ui::info("/quit     — exit");
+                ui::blank();
                 continue;
             }
             if trimmed == "/facts" {
                 let facts = mp_core::store::facts::list_active(&conn, &ag.name)?;
                 if facts.is_empty() {
-                    println!("  No facts stored.");
+                    ui::info("No facts stored.");
                 } else {
                     for f in &facts {
-                        println!("  [{:.1}] {}", f.confidence, f.pointer);
+                        ui::info(format!("[{:.1}] {}", f.confidence, f.pointer));
                     }
                 }
-                println!();
+                ui::blank();
                 continue;
             }
 
@@ -2273,14 +2262,15 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
             .await
             {
                 Ok(response) => {
-                    println!();
+                    ui::blank();
                     for l in response.lines() {
-                        println!("  {l}");
+                        ui::info(l);
                     }
-                    println!();
+                    ui::blank();
                     if let Ok(n) = extract_facts(&conn, provider.as_ref(), &ag.name, &sid).await {
                         if n > 0 {
-                            println!("  ({n} fact{} learned)\n", if n == 1 { "" } else { "s" });
+                            ui::dim(format!("({n} fact{} learned)", if n == 1 { "" } else { "s" }));
+                            ui::blank();
                         }
                     }
                     if let Some(ref ep) = embed {
@@ -2290,17 +2280,17 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
                     maybe_summarize_session(&conn, provider.as_ref(), &sid).await;
                 }
                 Err(e) => {
-                    eprintln!("  Error: {e}\n");
+                    ui::error(e);
+                    ui::blank();
                 }
             }
         }
     } else {
-        // No CLI channel — just wait for Ctrl-C
         tokio::signal::ctrl_c().await?;
     }
 
-    // Graceful shutdown
-    println!("\n  Shutting down...");
+    println!();
+    ui::info("Shutting down...");
     let _ = shutdown.send(());
     scheduler_handle.abort();
 
@@ -2309,7 +2299,7 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
     }
 
     let _ = std::fs::remove_file(&pid_path);
-    println!("  Goodbye.");
+    ui::info("Goodbye.");
     Ok(())
 }
 
@@ -2828,28 +2818,37 @@ async fn cmd_chat(
     let embed = build_embedding_provider(config, ag).ok();
     let sid = resolve_or_create_session(&conn, &ag.name, Some("cli"), session_id)?;
 
-    println!();
-    println!(
-        "  Moneypenny v{} — agent: {}",
-        env!("CARGO_PKG_VERSION"),
-        ag.name
-    );
-    println!(
-        "  LLM:       {} ({})",
+    ui::blank();
+    if ui::styled() {
+        use owo_colors::OwoColorize;
+        println!(
+            "  {} v{} — agent: {}",
+            "Moneypenny".bold(),
+            env!("CARGO_PKG_VERSION"),
+            ag.name
+        );
+    } else {
+        println!(
+            "  Moneypenny v{} — agent: {}",
+            env!("CARGO_PKG_VERSION"),
+            ag.name
+        );
+    }
+    ui::field("LLM", 11, format!(
+        "{} ({})",
         ag.llm.provider,
         ag.llm.model.as_deref().unwrap_or("default")
-    );
-    println!(
-        "  Embedding: {} ({}, {}D)",
+    ));
+    ui::field("Embedding", 11, format!(
+        "{} ({}, {}D)",
         ag.embedding.provider, ag.embedding.model, ag.embedding.dimensions
-    );
-    println!("  Type /help for commands, Ctrl-C to exit.");
-    println!();
+    ));
+    ui::info("Type /help for commands, Ctrl-C to exit.");
+    ui::blank();
 
     let stdin = std::io::stdin();
     loop {
-        print!("  > ");
-        std::io::stdout().flush()?;
+        ui::prompt();
 
         let mut line = String::new();
         if stdin.read_line(&mut line)? == 0 {
@@ -2863,43 +2862,43 @@ async fn cmd_chat(
         match line {
             "/quit" | "/exit" => break,
             "/help" => {
-                println!("  /facts    — list stored facts");
-                println!("  /scratch  — list scratch entries");
-                println!("  /session  — show session info");
-                println!("  /quit     — exit chat");
-                println!();
+                ui::info("/facts    — list stored facts");
+                ui::info("/scratch  — list scratch entries");
+                ui::info("/session  — show session info");
+                ui::info("/quit     — exit chat");
+                ui::blank();
                 continue;
             }
             "/facts" => {
                 let facts = mp_core::store::facts::list_active(&conn, &ag.name)?;
                 if facts.is_empty() {
-                    println!("  No facts stored.");
+                    ui::info("No facts stored.");
                 } else {
                     for f in &facts {
-                        println!("  [{:.1}] {}", f.confidence, f.pointer);
+                        ui::info(format!("[{:.1}] {}", f.confidence, f.pointer));
                     }
                 }
-                println!();
+                ui::blank();
                 continue;
             }
             "/scratch" => {
                 let entries = mp_core::store::scratch::list(&conn, &sid)?;
                 if entries.is_empty() {
-                    println!("  Scratch is empty.");
+                    ui::info("Scratch is empty.");
                 } else {
                     for e in &entries {
                         let preview: String = e.content.chars().take(60).collect();
-                        println!("  [{}] {}", e.key, preview);
+                        ui::info(format!("[{}] {}", e.key, preview));
                     }
                 }
-                println!();
+                ui::blank();
                 continue;
             }
             "/session" => {
                 let msgs = mp_core::store::log::get_messages(&conn, &sid)?;
-                println!("  Session: {sid}");
-                println!("  Messages: {}", msgs.len());
-                println!();
+                ui::info(format!("Session: {sid}"));
+                ui::info(format!("Messages: {}", msgs.len()));
+                ui::blank();
                 continue;
             }
             _ => {}
@@ -2919,16 +2918,16 @@ async fn cmd_chat(
         .await
         {
             Ok(response) => {
-                println!();
+                ui::blank();
                 for resp_line in response.lines() {
-                    println!("  {resp_line}");
+                    ui::info(resp_line);
                 }
-                println!();
+                ui::blank();
 
                 match extract_facts(&conn, provider.as_ref(), &ag.name, &sid).await {
                     Ok(n) if n > 0 => {
-                        println!("  ({n} fact{} learned)", if n == 1 { "" } else { "s" });
-                        println!();
+                        ui::dim(format!("({n} fact{} learned)", if n == 1 { "" } else { "s" }));
+                        ui::blank();
                     }
                     Err(e) => tracing::debug!("extraction error: {e}"),
                     _ => {}
@@ -2940,13 +2939,13 @@ async fn cmd_chat(
                 maybe_summarize_session(&conn, provider.as_ref(), &sid).await;
             }
             Err(e) => {
-                eprintln!("  Error: {e}");
-                eprintln!();
+                ui::error(e);
+                ui::blank();
             }
         }
     }
 
-    println!("  Session {sid} ended.");
+    ui::info(format!("Session {sid} ended."));
     Ok(())
 }
 
@@ -2975,16 +2974,16 @@ async fn cmd_send(
     )
     .await?;
 
-    println!();
+    ui::blank();
     for line in response.lines() {
-        println!("  {line}");
+        ui::info(line);
     }
-    println!();
+    ui::blank();
 
     if let Ok(n) = extract_facts(&conn, provider.as_ref(), &agent.name, &sid).await {
         if n > 0 {
-            println!("  ({n} fact{} learned)", if n == 1 { "" } else { "s" });
-            println!();
+            ui::dim(format!("({n} fact{} learned)", if n == 1 { "" } else { "s" }));
+            ui::blank();
         }
     }
     if let Some(ref ep) = embed {
@@ -3007,22 +3006,21 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
             let conn = open_agent_db(config, &ag.name)?;
             let facts = mp_core::store::facts::list_active(&conn, &ag.name)?;
 
-            println!();
+            ui::blank();
             if facts.is_empty() {
-                println!("  No facts found for agent \"{}\".", ag.name);
+                ui::info(format!("No facts found for agent \"{}\".", ag.name));
             } else {
-                println!("  {:36} {:6} {:6} {:50}", "ID", "CONF", "CMPCT", "POINTER");
-                println!("  {:36} {:6} {:6} {:50}", "--", "----", "-----", "-------");
+                ui::table_header(&[("ID", 36), ("CONF", 6), ("CMPCT", 6), ("POINTER", 50)]);
                 for f in &facts {
                     println!(
                         "  {:36} {:<6.1} {:<6} {}",
                         f.id, f.confidence, f.compaction_level, f.pointer
                     );
                 }
-                println!();
-                println!("  {} active facts", facts.len());
+                ui::blank();
+                ui::dim(format!("{} active facts", facts.len()));
             }
-            println!();
+            ui::blank();
         }
         cli::FactsCommand::Search { query, agent } => {
             let ag = resolve_agent(config, agent.as_deref())?;
@@ -3038,14 +3036,14 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
             );
             let resp = mp_core::operations::execute(&conn, &req)?;
             if !resp.ok {
-                println!("  Memory search denied: {}", resp.message);
+                ui::warn(format!("Memory search denied: {}", resp.message));
                 return Ok(());
             }
             let results = resp.data.as_array().cloned().unwrap_or_default();
 
-            println!();
+            ui::blank();
             if results.is_empty() {
-                println!("  No results for \"{query}\".");
+                ui::info(format!("No results for \"{query}\"."));
             } else {
                 for r in &results {
                     let preview: String = r["content"]
@@ -3061,10 +3059,10 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
                         preview
                     );
                 }
-                println!();
-                println!("  {} results", results.len());
+                ui::blank();
+                ui::dim(format!("{} results", results.len()));
             }
-            println!();
+            ui::blank();
         }
         cli::FactsCommand::Inspect { id } => {
             let ag = resolve_agent(config, None)?;
@@ -3076,52 +3074,37 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
             );
             let resp = mp_core::operations::execute(&conn, &req)?;
             if !resp.ok {
-                println!("  {}", resp.message);
+                ui::warn(&resp.message);
                 return Ok(());
             }
 
-            println!();
-            println!("  ID:         {}", resp.data["id"].as_str().unwrap_or("-"));
-            println!(
-                "  Pointer:    {}",
-                resp.data["pointer"].as_str().unwrap_or("-")
-            );
-            println!(
-                "  Summary:    {}",
-                resp.data["summary"].as_str().unwrap_or("-")
-            );
-            println!(
-                "  Confidence: {:.1}",
-                resp.data["confidence"].as_f64().unwrap_or(0.0)
-            );
-            println!(
-                "  Version:    {}",
-                resp.data["version"].as_i64().unwrap_or(1)
-            );
-            println!(
-                "  Compact Lv: {}",
-                resp.data["compaction_level"].as_i64().unwrap_or(0)
-            );
+            ui::blank();
+            ui::field("ID", 12, resp.data["id"].as_str().unwrap_or("-"));
+            ui::field("Pointer", 12, resp.data["pointer"].as_str().unwrap_or("-"));
+            ui::field("Summary", 12, resp.data["summary"].as_str().unwrap_or("-"));
+            ui::field("Confidence", 12, format!("{:.1}", resp.data["confidence"].as_f64().unwrap_or(0.0)));
+            ui::field("Version", 12, resp.data["version"].as_i64().unwrap_or(1));
+            ui::field("Compact Lv", 12, resp.data["compaction_level"].as_i64().unwrap_or(0));
             if let Some(compact) = resp.data["context_compact"].as_str() {
-                println!("  Compact:    {}", compact);
+                ui::field("Compact", 12, compact);
             }
-            println!();
-            println!("  Content:");
-            println!("  {}", resp.data["content"].as_str().unwrap_or(""));
-            println!();
+            ui::blank();
+            ui::info("Content:");
+            ui::info(resp.data["content"].as_str().unwrap_or(""));
+            ui::blank();
 
             let audit = mp_core::store::facts::get_audit(&conn, &id)?;
             if !audit.is_empty() {
-                println!("  Audit trail:");
+                ui::info("Audit trail:");
                 for a in &audit {
-                    println!(
-                        "    {} — {}",
+                    ui::hint(format!(
+                        "{} — {}",
                         a.operation,
                         a.reason.as_deref().unwrap_or("")
-                    );
+                    ));
                 }
             }
-            println!();
+            ui::blank();
         }
         cli::FactsCommand::Expand { id } => {
             let ag = resolve_agent(config, None)?;
@@ -3129,18 +3112,18 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
             let req = op_request(&ag.name, "memory.fact.get", serde_json::json!({ "id": id }));
             let resp = mp_core::operations::execute(&conn, &req)?;
             if !resp.ok {
-                println!("  {}", resp.message);
+                ui::warn(&resp.message);
                 return Ok(());
             }
-            println!();
-            println!(
-                "  [{}] {}",
+            ui::blank();
+            ui::info(format!(
+                "[{}] {}",
                 resp.data["id"].as_str().unwrap_or("-"),
                 resp.data["pointer"].as_str().unwrap_or("-")
-            );
-            println!("  Full content:");
-            println!("  {}", resp.data["content"].as_str().unwrap_or(""));
-            println!();
+            ));
+            ui::info("Full content:");
+            ui::info(resp.data["content"].as_str().unwrap_or(""));
+            ui::blank();
         }
         cli::FactsCommand::ResetCompaction {
             id,
@@ -3153,14 +3136,12 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
 
             if all {
                 if !confirm {
-                    println!(
-                        "  Use --confirm with --all to reset compaction for every active fact."
-                    );
+                    ui::info("Use --confirm with --all to reset compaction for every active fact.");
                     return Ok(());
                 }
                 let facts = mp_core::store::facts::list_active(&conn, &ag.name)?;
                 if facts.is_empty() {
-                    println!("  No active facts found for agent \"{}\".", ag.name);
+                    ui::info(format!("No active facts found for agent \"{}\".", ag.name));
                     return Ok(());
                 }
 
@@ -3179,17 +3160,17 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
                         reset_count += 1;
                     }
                 }
-                println!(
-                    "  Reset compaction for {reset_count}/{} facts.",
+                ui::success(format!(
+                    "Reset compaction for {reset_count}/{} facts.",
                     facts.len()
-                );
+                ));
                 return Ok(());
             }
 
             let fact_id = match id {
                 Some(v) => v,
                 None => {
-                    println!("  Provide a fact ID, or use --all --confirm.");
+                    ui::info("Provide a fact ID, or use --all --confirm.");
                     return Ok(());
                 }
             };
@@ -3204,23 +3185,23 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
             );
             let resp = mp_core::operations::execute(&conn, &req)?;
             if !resp.ok {
-                println!("  Fact reset failed: {}", resp.message);
+                ui::warn(format!("Fact reset failed: {}", resp.message));
                 return Ok(());
             }
-            println!(
-                "  Fact {} compaction reset.",
+            ui::success(format!(
+                "Fact {} compaction reset.",
                 resp.data["id"].as_str().unwrap_or("-")
-            );
+            ));
         }
         cli::FactsCommand::Promote { id, scope } => {
-            println!("  [mp facts promote {id} --scope {scope} — requires sync (M13)]");
+            ui::info(format!("[mp facts promote {id} --scope {scope} — requires sync (M13)]"));
         }
         cli::FactsCommand::Delete { id, confirm } => {
             let ag = resolve_agent(config, None)?;
             let conn = open_agent_db(config, &ag.name)?;
 
             if !confirm {
-                println!("  Use --confirm to delete fact {id}");
+                ui::info(format!("Use --confirm to delete fact {id}"));
             } else {
                 let req = op_request(
                     &ag.name,
@@ -3232,13 +3213,13 @@ async fn cmd_facts(config: &Config, cmd: cli::FactsCommand) -> Result<()> {
                 );
                 let resp = mp_core::operations::execute(&conn, &req)?;
                 if !resp.ok {
-                    println!("  Fact delete failed: {}", resp.message);
+                    ui::warn(format!("Fact delete failed: {}", resp.message));
                     return Ok(());
                 }
-                println!(
-                    "  Fact {} deleted.",
+                ui::success(format!(
+                    "Fact {} deleted.",
                     resp.data["id"].as_str().unwrap_or("-")
-                );
+                ));
             }
         }
     }
@@ -3286,14 +3267,11 @@ async fn cmd_ingest(
         );
         let resp = mp_core::operations::execute(&conn, &req)?;
         let rows = resp.data.as_array().cloned().unwrap_or_default();
-        println!();
+        ui::blank();
         if rows.is_empty() {
-            println!("  No ingest runs found.");
+            ui::info("No ingest runs found.");
         } else {
-            println!(
-                "  {:36} {:10} {:22} {:8} {:8} {:8} {:8} {:8}",
-                "RUN_ID", "SOURCE", "STATUS", "PROC", "INS", "DEDUP", "PROJ", "ERR"
-            );
+            ui::table_header(&[("RUN_ID", 36), ("SOURCE", 10), ("STATUS", 22), ("PROC", 8), ("INS", 8), ("DEDUP", 8), ("PROJ", 8), ("ERR", 8)]);
             for r in rows {
                 println!(
                     "  {:36} {:10} {:22} {:8} {:8} {:8} {:8} {:8}",
@@ -3308,7 +3286,7 @@ async fn cmd_ingest(
                 );
             }
         }
-        println!();
+        ui::blank();
     } else if replay_run.is_some() || replay_latest {
         let selected_run_id = if let Some(run_id) = replay_run {
             run_id
@@ -3352,8 +3330,8 @@ async fn cmd_ingest(
             anyhow::bail!("replay denied: {}", resp.message);
         }
         if effective_dry_run {
-            println!(
-                "  Replay preview {}: processed={}, would_insert={}, would_dedupe={}, parse_errors={}, lines={}..{} (use --apply to execute)",
+            ui::info(format!(
+                "Replay preview {}: processed={}, would_insert={}, would_dedupe={}, parse_errors={}, lines={}..{} (use --apply to execute)",
                 resp.data["run_id"].as_str().unwrap_or("-"),
                 resp.data["processed_count"].as_i64().unwrap_or(0),
                 resp.data["would_insert_count"].as_i64().unwrap_or(0),
@@ -3361,17 +3339,17 @@ async fn cmd_ingest(
                 resp.data["parse_error_count"].as_i64().unwrap_or(0),
                 resp.data["from_line"].as_i64().unwrap_or(0),
                 resp.data["to_line"].as_i64().unwrap_or(0),
-            );
+            ));
         } else {
-            println!(
-                "  Replay run {}: processed={}, inserted={}, deduped={}, projected={}, errors={}",
+            ui::success(format!(
+                "Replay run {}: processed={}, inserted={}, deduped={}, projected={}, errors={}",
                 resp.data["run_id"].as_str().unwrap_or("-"),
                 resp.data["processed_count"].as_i64().unwrap_or(0),
                 resp.data["inserted_count"].as_i64().unwrap_or(0),
                 resp.data["deduped_count"].as_i64().unwrap_or(0),
                 resp.data["projected_count"].as_i64().unwrap_or(0),
                 resp.data["error_count"].as_i64().unwrap_or(0),
-            );
+            ));
         }
     } else if let Some(file) = openclaw_file {
         let req = op_request(
@@ -3387,23 +3365,23 @@ async fn cmd_ingest(
         if !resp.ok {
             anyhow::bail!("external ingest denied: {}", resp.message);
         }
-        println!(
-            "  Ingest run {}: processed={}, inserted={}, deduped={}, projected={}, errors={}",
+        ui::success(format!(
+            "Ingest run {}: processed={}, inserted={}, deduped={}, projected={}, errors={}",
             resp.data["run_id"].as_str().unwrap_or("-"),
             resp.data["processed_count"].as_i64().unwrap_or(0),
             resp.data["inserted_count"].as_i64().unwrap_or(0),
             resp.data["deduped_count"].as_i64().unwrap_or(0),
             resp.data["projected_count"].as_i64().unwrap_or(0),
             resp.data["error_count"].as_i64().unwrap_or(0),
-        );
+        ));
     } else if cortex {
         let sessions = mp_core::ingest::discover_cortex_sessions();
         if sessions.is_empty() {
-            println!("  No Cortex Code conversations found in ~/.snowflake/cortex/conversations/");
+            ui::info("No Cortex Code conversations found in ~/.snowflake/cortex/conversations/");
             return Ok(());
         }
-        println!("  Found {} Cortex Code session(s)", sessions.len());
-        println!();
+        ui::info(format!("Found {} Cortex Code session(s)", sessions.len()));
+        ui::blank();
         let mut total_inserted = 0i64;
         let mut total_deduped = 0i64;
         let mut total_errors = 0i64;
@@ -3411,11 +3389,11 @@ async fn cmd_ingest(
             let lines = match mp_core::ingest::convert_cortex_session(session_path) {
                 Ok(l) => l,
                 Err(e) => {
-                    eprintln!(
-                        "  Skipping {:?}: {}",
+                    ui::warn(format!(
+                        "Skipping {:?}: {}",
                         session_path.file_name().unwrap_or_default(),
                         e
-                    );
+                    ));
                     total_errors += 1;
                     continue;
                 }
@@ -3430,40 +3408,40 @@ async fn cmd_ingest(
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy();
-            println!(
-                "  {}: inserted={}, deduped={}, projected={}, errors={}",
+            ui::info(format!(
+                "{}: inserted={}, deduped={}, projected={}, errors={}",
                 fname,
                 summary.inserted_count,
                 summary.deduped_count,
                 summary.projected_count,
                 summary.error_count,
-            );
+            ));
             total_inserted += summary.inserted_count;
             total_deduped += summary.deduped_count;
             total_errors += summary.error_count;
             let _ = std::fs::remove_file(&tmp);
         }
-        println!();
-        println!(
-            "  Total: {} sessions, {} inserted, {} deduped, {} errors",
+        ui::blank();
+        ui::dim(format!(
+            "Total: {} sessions, {} inserted, {} deduped, {} errors",
             sessions.len(),
             total_inserted,
             total_deduped,
             total_errors
-        );
+        ));
     } else if claude_code.is_some() {
         let slug = claude_code.as_deref().filter(|s| !s.is_empty());
         let sessions = mp_core::ingest::discover_claude_code_sessions(slug);
         if sessions.is_empty() {
             if let Some(s) = slug {
-                println!("  No Claude Code sessions found for project slug: {s}");
+                ui::info(format!("No Claude Code sessions found for project slug: {s}"));
             } else {
-                println!("  No Claude Code sessions found in ~/.claude/projects/");
+                ui::info("No Claude Code sessions found in ~/.claude/projects/");
             }
             return Ok(());
         }
-        println!("  Found {} Claude Code session(s)", sessions.len());
-        println!();
+        ui::info(format!("Found {} Claude Code session(s)", sessions.len()));
+        ui::blank();
         let mut total_inserted = 0i64;
         let mut total_deduped = 0i64;
         let mut total_errors = 0i64;
@@ -3471,11 +3449,11 @@ async fn cmd_ingest(
             let lines = match mp_core::ingest::convert_claude_code_session(session_path) {
                 Ok(l) => l,
                 Err(e) => {
-                    eprintln!(
-                        "  Skipping {:?}: {}",
+                    ui::warn(format!(
+                        "Skipping {:?}: {}",
                         session_path.file_name().unwrap_or_default(),
                         e
-                    );
+                    ));
                     total_errors += 1;
                     continue;
                 }
@@ -3490,40 +3468,40 @@ async fn cmd_ingest(
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy();
-            println!(
-                "  {}: inserted={}, deduped={}, projected={}, errors={}",
+            ui::info(format!(
+                "{}: inserted={}, deduped={}, projected={}, errors={}",
                 fname,
                 summary.inserted_count,
                 summary.deduped_count,
                 summary.projected_count,
                 summary.error_count,
-            );
+            ));
             total_inserted += summary.inserted_count;
             total_deduped += summary.deduped_count;
             total_errors += summary.error_count;
             let _ = std::fs::remove_file(&tmp);
         }
-        println!();
-        println!(
-            "  Total: {} sessions, {} inserted, {} deduped, {} errors",
+        ui::blank();
+        ui::dim(format!(
+            "Total: {} sessions, {} inserted, {} deduped, {} errors",
             sessions.len(),
             total_inserted,
             total_deduped,
             total_errors
-        );
+        ));
     } else if cursor.is_some() {
         let slug = cursor.as_deref().filter(|s| !s.is_empty());
         let sessions = mp_core::ingest::discover_cursor_sessions(slug);
         if sessions.is_empty() {
             if let Some(s) = slug {
-                println!("  No Cursor sessions found for project slug: {s}");
+                ui::info(format!("No Cursor sessions found for project slug: {s}"));
             } else {
-                println!("  No Cursor sessions found in ~/.cursor/projects/");
+                ui::info("No Cursor sessions found in ~/.cursor/projects/");
             }
             return Ok(());
         }
-        println!("  Found {} Cursor session(s)", sessions.len());
-        println!();
+        ui::info(format!("Found {} Cursor session(s)", sessions.len()));
+        ui::blank();
         let mut total_inserted = 0i64;
         let mut total_deduped = 0i64;
         let mut total_errors = 0i64;
@@ -3531,11 +3509,11 @@ async fn cmd_ingest(
             let lines = match mp_core::ingest::convert_cursor_session(session_path) {
                 Ok(l) => l,
                 Err(e) => {
-                    eprintln!(
-                        "  Skipping {:?}: {}",
+                    ui::warn(format!(
+                        "Skipping {:?}: {}",
                         session_path.file_name().unwrap_or_default(),
                         e
-                    );
+                    ));
                     total_errors += 1;
                     continue;
                 }
@@ -3550,27 +3528,27 @@ async fn cmd_ingest(
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy();
-            println!(
-                "  {}: inserted={}, deduped={}, projected={}, errors={}",
+            ui::info(format!(
+                "{}: inserted={}, deduped={}, projected={}, errors={}",
                 fname,
                 summary.inserted_count,
                 summary.deduped_count,
                 summary.projected_count,
                 summary.error_count,
-            );
+            ));
             total_inserted += summary.inserted_count;
             total_deduped += summary.deduped_count;
             total_errors += summary.error_count;
             let _ = std::fs::remove_file(&tmp);
         }
-        println!();
-        println!(
-            "  Total: {} sessions, {} inserted, {} deduped, {} errors",
+        ui::blank();
+        ui::dim(format!(
+            "Total: {} sessions, {} inserted, {} deduped, {} errors",
             sessions.len(),
             total_inserted,
             total_deduped,
             total_errors
-        );
+        ));
     } else if let Some(p) = path {
         let content = std::fs::read_to_string(&p)?;
         let title = Path::new(&p)
@@ -3591,14 +3569,13 @@ async fn cmd_ingest(
         }
         let doc_id = resp.data["document_id"].as_str().unwrap_or("-");
         let chunks = resp.data["chunks_created"].as_u64().unwrap_or(0);
-        println!("  Ingested {p}: {chunks} chunks (doc {doc_id})");
-        // Embed new chunks in the background; fails gracefully if model is missing.
+        ui::success(format!("Ingested {p}: {chunks} chunks (doc {doc_id})"));
         if let Ok(ep) = build_embedding_provider(config, ag) {
             let model_id = embedding_model_id(ag);
             embed_pending(&conn, ep.as_ref(), &ag.name, &model_id).await;
         }
     } else if let Some(u) = url {
-        println!("  Fetching {u} …");
+        ui::info(format!("Fetching {u} …"));
         let response = reqwest::get(&u)
             .await
             .map_err(|e| anyhow::anyhow!("HTTP fetch failed for {u}: {e}"))?;
@@ -3656,7 +3633,7 @@ async fn cmd_ingest(
         }
         let doc_id = resp.data["document_id"].as_str().unwrap_or("-");
         let chunks = resp.data["chunks_created"].as_u64().unwrap_or(0);
-        println!("  Ingested {u}: {chunks} chunks (doc {doc_id})");
+        ui::success(format!("Ingested {u}: {chunks} chunks (doc {doc_id})"));
         if let Ok(ep) = build_embedding_provider(config, ag) {
             let model_id = embedding_model_id(ag);
             embed_pending(&conn, ep.as_ref(), &ag.name, &model_id).await;
@@ -4638,25 +4615,24 @@ async fn cmd_knowledge(config: &Config, cmd: cli::KnowledgeCommand) -> Result<()
     match cmd {
         cli::KnowledgeCommand::Search { query } => {
             let results = mp_core::search::fts5_search_knowledge(&conn, &query, 20)?;
-            println!();
+            ui::blank();
             if results.is_empty() {
-                println!("  No knowledge results for \"{query}\".");
+                ui::info(format!("No knowledge results for \"{query}\"."));
             } else {
                 for (id, content, _score) in &results {
                     let preview: String = content.chars().take(80).collect();
-                    println!("  {id}: {preview}");
+                    ui::info(format!("{id}: {preview}"));
                 }
             }
-            println!();
+            ui::blank();
         }
         cli::KnowledgeCommand::List => {
             let docs = mp_core::store::knowledge::list_documents(&conn)?;
-            println!();
+            ui::blank();
             if docs.is_empty() {
-                println!("  No documents ingested.");
+                ui::info("No documents ingested.");
             } else {
-                println!("  {:36} {:30} {:20}", "ID", "TITLE", "PATH");
-                println!("  {:36} {:30} {:20}", "--", "-----", "----");
+                ui::table_header(&[("ID", 36), ("TITLE", 30), ("PATH", 20)]);
                 for d in &docs {
                     println!(
                         "  {:36} {:30} {:20}",
@@ -4666,7 +4642,7 @@ async fn cmd_knowledge(config: &Config, cmd: cli::KnowledgeCommand) -> Result<()
                     );
                 }
             }
-            println!();
+            ui::blank();
         }
     }
     Ok(())
@@ -4698,12 +4674,12 @@ async fn cmd_skill(config: &Config, cmd: cli::SkillCommand) -> Result<()> {
             );
             let resp = mp_core::operations::execute(&conn, &req)?;
             if !resp.ok {
-                println!("  Skill add denied: {}", resp.message);
+                ui::warn(format!("Skill add denied: {}", resp.message));
                 return Ok(());
             }
             let id = resp.data["id"].as_str().unwrap_or("-");
             let printed_name = resp.data["name"].as_str().unwrap_or("skill");
-            println!("  Added skill \"{printed_name}\" ({id})");
+            ui::success(format!("Added skill \"{printed_name}\" ({id})"));
         }
         cli::SkillCommand::List { .. } => {
             let mut stmt = conn.prepare(
@@ -4721,18 +4697,11 @@ async fn cmd_skill(config: &Config, cmd: cli::SkillCommand) -> Result<()> {
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
 
-            println!();
+            ui::blank();
             if skills.is_empty() {
-                println!("  No skills registered.");
+                ui::info("No skills registered.");
             } else {
-                println!(
-                    "  {:36} {:20} {:6} {:8} {:8}",
-                    "ID", "NAME", "USES", "RATE", "PROMO"
-                );
-                println!(
-                    "  {:36} {:20} {:6} {:8} {:8}",
-                    "--", "----", "----", "----", "-----"
-                );
+                ui::table_header(&[("ID", 36), ("NAME", 20), ("USES", 6), ("RATE", 8), ("PROMO", 8)]);
                 for (id, name, uses, rate, promoted) in &skills {
                     let rate_str = rate
                         .map(|r| format!("{:.0}%", r * 100.0))
@@ -4747,19 +4716,19 @@ async fn cmd_skill(config: &Config, cmd: cli::SkillCommand) -> Result<()> {
                     );
                 }
             }
-            println!();
+            ui::blank();
         }
         cli::SkillCommand::Promote { id } => {
             let req = op_request(&ag.name, "skill.promote", serde_json::json!({ "id": id }));
             let resp = mp_core::operations::execute(&conn, &req)?;
             if !resp.ok {
-                println!("  Skill promote failed: {}", resp.message);
+                ui::warn(format!("Skill promote failed: {}", resp.message));
                 return Ok(());
             }
-            println!(
-                "  Skill {} promoted.",
+            ui::success(format!(
+                "Skill {} promoted.",
                 resp.data["id"].as_str().unwrap_or("-")
-            );
+            ));
         }
     }
     Ok(())
@@ -4803,14 +4772,11 @@ async fn cmd_policy(config: &Config, cmd: cli::PolicyCommand) -> Result<()> {
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
 
-            println!();
+            ui::blank();
             if policies.is_empty() {
-                println!("  No policies configured.");
+                ui::info("No policies configured.");
             } else {
-                println!(
-                    "  {:36} {:20} {:4} {:6} {:10} {:10} {:15}",
-                    "ID", "NAME", "PRI", "EFFECT", "ACTOR", "ACTION", "RESOURCE"
-                );
+                ui::table_header(&[("ID", 36), ("NAME", 20), ("PRI", 4), ("EFFECT", 6), ("ACTOR", 10), ("ACTION", 10), ("RESOURCE", 15)]);
                 for (id, name, pri, effect, actor, action, resource, _) in &policies {
                     println!(
                         "  {:36} {:20} {:4} {:6} {:10} {:10} {:15}",
@@ -4824,7 +4790,7 @@ async fn cmd_policy(config: &Config, cmd: cli::PolicyCommand) -> Result<()> {
                     );
                 }
             }
-            println!();
+            ui::blank();
         }
         cli::PolicyCommand::Add {
             name,
@@ -4860,13 +4826,13 @@ async fn cmd_policy(config: &Config, cmd: cli::PolicyCommand) -> Result<()> {
             );
             let resp = mp_core::operations::execute(&conn, &req)?;
             if !resp.ok {
-                println!("  Policy add denied: {}", resp.message);
+                ui::warn(format!("Policy add denied: {}", resp.message));
                 return Ok(());
             }
             let id = resp.data["id"].as_str().unwrap_or("-");
             let printed_name = resp.data["name"].as_str().unwrap_or("policy");
             let pri = resp.data["priority"].as_i64().unwrap_or(0);
-            println!("  Policy \"{printed_name}\" added ({id}, priority={pri})");
+            ui::success(format!("Policy \"{printed_name}\" added ({id}, priority={pri})"));
         }
         cli::PolicyCommand::Test { input } => {
             let resource = format!("sql:{input}");
@@ -4882,18 +4848,15 @@ async fn cmd_policy(config: &Config, cmd: cli::PolicyCommand) -> Result<()> {
             );
             let resp = mp_core::operations::execute(&conn, &req)?;
             if !resp.ok {
-                println!("  Policy explain denied: {}", resp.message);
+                ui::warn(format!("Policy explain denied: {}", resp.message));
                 return Ok(());
             }
-            println!(
-                "  Effect: {}",
-                resp.data["effect"].as_str().unwrap_or("unknown")
-            );
+            ui::field("Effect", 12, resp.data["effect"].as_str().unwrap_or("unknown"));
             if let Some(reason) = resp.data["reason"].as_str() {
-                println!("  Reason: {reason}");
+                ui::field("Reason", 12, reason);
             }
             if let Some(policy_id) = resp.data["policy_id"].as_str() {
-                println!("  Policy ID: {policy_id}");
+                ui::field("Policy ID", 12, policy_id);
             }
         }
         cli::PolicyCommand::Violations { last } => {
@@ -4909,7 +4872,7 @@ async fn cmd_policy(config: &Config, cmd: cli::PolicyCommand) -> Result<()> {
             );
             let resp = mp_core::operations::execute(&conn, &req)?;
             if !resp.ok {
-                println!("  Audit query denied: {}", resp.message);
+                ui::warn(format!("Audit query denied: {}", resp.message));
                 return Ok(());
             }
             let violations: Vec<serde_json::Value> = resp
@@ -4921,22 +4884,22 @@ async fn cmd_policy(config: &Config, cmd: cli::PolicyCommand) -> Result<()> {
                 .filter(|v| v["created_at"].as_i64().unwrap_or(0) >= since)
                 .collect();
 
-            println!();
+            ui::blank();
             if violations.is_empty() {
-                println!("  No policy violations in the last {last}.");
+                ui::info(format!("No policy violations in the last {last}."));
             } else {
                 for v in &violations {
-                    println!(
-                        "  [{effect}] {actor} → {action} on {resource}: {}",
+                    ui::info(format!(
+                        "[{effect}] {actor} → {action} on {resource}: {}",
                         v["reason"].as_str().unwrap_or(""),
                         effect = v["effect"].as_str().unwrap_or(""),
                         actor = v["actor"].as_str().unwrap_or(""),
                         action = v["action"].as_str().unwrap_or(""),
                         resource = v["resource"].as_str().unwrap_or(""),
-                    );
+                    ));
                 }
             }
-            println!();
+            ui::blank();
         }
         cli::PolicyCommand::Load { file } => {
             let content = std::fs::read_to_string(&file)?;
@@ -4956,7 +4919,7 @@ async fn cmd_policy(config: &Config, cmd: cli::PolicyCommand) -> Result<()> {
                 let name = match p["name"].as_str() {
                     Some(n) => n,
                     None => {
-                        eprintln!("  Skipping policy without 'name' field");
+                        ui::warn("Skipping policy without 'name' field");
                         errors += 1;
                         continue;
                     }
@@ -4969,21 +4932,21 @@ async fn cmd_policy(config: &Config, cmd: cli::PolicyCommand) -> Result<()> {
                 match mp_core::operations::execute(&conn, &req) {
                     Ok(resp) if resp.ok => {
                         let id = resp.data["id"].as_str().unwrap_or("-");
-                        println!("  Loaded policy \"{name}\" ({id})");
+                        ui::success(format!("Loaded policy \"{name}\" ({id})"));
                         loaded += 1;
                     }
                     Ok(resp) => {
-                        eprintln!("  Failed to load \"{name}\": {}", resp.message);
+                        ui::error(format!("Failed to load \"{name}\": {}", resp.message));
                         errors += 1;
                     }
                     Err(e) => {
-                        eprintln!("  Error loading \"{name}\": {e}");
+                        ui::error(format!("Error loading \"{name}\": {e}"));
                         errors += 1;
                     }
                 }
             }
-            println!();
-            println!("  Loaded {loaded} policies ({errors} errors) from {file}");
+            ui::blank();
+            ui::dim(format!("Loaded {loaded} policies ({errors} errors) from {file}"));
         }
     }
     Ok(())
@@ -5029,19 +4992,16 @@ async fn cmd_job(config: &Config, cmd: cli::JobCommand) -> Result<()> {
             );
             let resp = mp_core::operations::execute(&conn, &req)?;
             if !resp.ok {
-                println!("  Job list denied: {}", resp.message);
+                ui::warn(format!("Job list denied: {}", resp.message));
                 return Ok(());
             }
             let jobs: Vec<serde_json::Value> =
                 serde_json::from_value(resp.data).unwrap_or_default();
-            println!();
+            ui::blank();
             if jobs.is_empty() {
-                println!("  No jobs scheduled.");
+                ui::info("No jobs scheduled.");
             } else {
-                println!(
-                    "  {:36} {:20} {:8} {:10} {:8}",
-                    "ID", "NAME", "TYPE", "STATUS", "SCHED"
-                );
+                ui::table_header(&[("ID", 36), ("NAME", 20), ("TYPE", 8), ("STATUS", 10), ("SCHED", 8)]);
                 for j in &jobs {
                     println!(
                         "  {:36} {:20} {:8} {:10} {:8}",
@@ -5053,7 +5013,7 @@ async fn cmd_job(config: &Config, cmd: cli::JobCommand) -> Result<()> {
                     );
                 }
             }
-            println!();
+            ui::blank();
         }
         cli::JobCommand::Create {
             name,
@@ -5075,37 +5035,37 @@ async fn cmd_job(config: &Config, cmd: cli::JobCommand) -> Result<()> {
             );
             let resp = mp_core::operations::execute(&conn, &req)?;
             if !resp.ok {
-                println!("  Job create denied: {}", resp.message);
+                ui::warn(format!("Job create denied: {}", resp.message));
                 return Ok(());
             }
             let id = resp.data["id"].as_str().unwrap_or("-");
             let printed_name = resp.data["name"].as_str().unwrap_or("job");
-            println!("  Job \"{printed_name}\" created ({id})");
+            ui::success(format!("Job \"{printed_name}\" created ({id})"));
         }
         cli::JobCommand::Run { id } => {
             let req = op_request(&ag.name, "job.run", serde_json::json!({ "id": id }));
             let resp = mp_core::operations::execute(&conn, &req)?;
             if !resp.ok {
-                println!("  Job run failed: {}", resp.message);
+                ui::warn(format!("Job run failed: {}", resp.message));
                 return Ok(());
             }
-            println!(
-                "  Run {}: {}",
+            ui::info(format!(
+                "Run {}: {}",
                 resp.data["run_id"].as_str().unwrap_or("-"),
                 resp.data["status"].as_str().unwrap_or("-")
-            );
+            ));
             if let Some(result) = resp.data["result"].as_str() {
-                println!("  Result: {result}");
+                ui::info(format!("Result: {result}"));
             }
         }
         cli::JobCommand::Pause { id } => {
             let req = op_request(&ag.name, "job.pause", serde_json::json!({ "id": id }));
             let resp = mp_core::operations::execute(&conn, &req)?;
             if !resp.ok {
-                println!("  Job pause failed: {}", resp.message);
+                ui::warn(format!("Job pause failed: {}", resp.message));
                 return Ok(());
             }
-            println!("  Job {} paused.", resp.data["id"].as_str().unwrap_or("-"));
+            ui::success(format!("Job {} paused.", resp.data["id"].as_str().unwrap_or("-")));
         }
         cli::JobCommand::History { id } => {
             let mut args = serde_json::json!({ "limit": 20 });
@@ -5115,25 +5075,25 @@ async fn cmd_job(config: &Config, cmd: cli::JobCommand) -> Result<()> {
             let req = op_request(&ag.name, "job.history", args);
             let resp = mp_core::operations::execute(&conn, &req)?;
             if !resp.ok {
-                println!("  Job history denied: {}", resp.message);
+                ui::warn(format!("Job history denied: {}", resp.message));
                 return Ok(());
             }
             let runs = resp.data.as_array().cloned().unwrap_or_default();
-            println!();
+            ui::blank();
             if runs.is_empty() {
-                println!("  No job runs found.");
+                ui::info("No job runs found.");
             } else {
                 for r in &runs {
-                    println!(
-                        "  {}  job:{}  {}  {}",
+                    ui::info(format!(
+                        "{}  job:{}  {}  {}",
                         r["id"].as_str().unwrap_or("-"),
                         r["job_id"].as_str().unwrap_or("-"),
                         r["status"].as_str().unwrap_or("-"),
                         r["result"].as_str().unwrap_or("-"),
-                    );
+                    ));
                 }
             }
-            println!();
+            ui::blank();
         }
     }
     Ok(())
@@ -5151,20 +5111,17 @@ async fn cmd_embeddings(config: &Config, cmd: cli::EmbeddingsCommand) -> Result<
             let stats = mp_core::store::embedding::queue_stats(&conn)?;
             let by_target = mp_core::store::embedding::queue_target_stats(&conn)?;
 
-            println!();
-            println!("  Embedding queue status (agent: {})", ag.name);
-            println!(
-                "  total={} pending={} retry={} processing={} dead={}",
+            ui::blank();
+            ui::info(format!("Embedding queue status (agent: {})", ag.name));
+            ui::info(format!(
+                "total={} pending={} retry={} processing={} dead={}",
                 stats.total, stats.pending, stats.retry, stats.processing, stats.dead
-            );
+            ));
             if by_target.is_empty() {
-                println!("  No queue entries.");
+                ui::info("No queue entries.");
             } else {
-                println!();
-                println!(
-                    "  {:14} {:7} {:7} {:7} {:10} {:7}",
-                    "TARGET", "TOTAL", "PENDING", "RETRY", "PROCESSING", "DEAD"
-                );
+                ui::blank();
+                ui::table_header(&[("TARGET", 14), ("TOTAL", 7), ("PENDING", 7), ("RETRY", 7), ("PROCESSING", 10), ("DEAD", 7)]);
                 for row in &by_target {
                     println!(
                         "  {:14} {:7} {:7} {:7} {:10} {:7}",
@@ -5172,7 +5129,7 @@ async fn cmd_embeddings(config: &Config, cmd: cli::EmbeddingsCommand) -> Result<
                     );
                 }
             }
-            println!();
+            ui::blank();
         }
         cli::EmbeddingsCommand::RetryDead {
             agent,
@@ -5192,14 +5149,14 @@ async fn cmd_embeddings(config: &Config, cmd: cli::EmbeddingsCommand) -> Result<
             };
 
             let revived = mp_core::store::embedding::retry_dead_jobs(&conn, target_norm, limit)?;
-            println!(
-                "  Revived {revived} dead embedding job{} for agent \"{}\"{}.",
+            ui::success(format!(
+                "Revived {revived} dead embedding job{} for agent \"{}\"{}.",
                 if revived == 1 { "" } else { "s" },
                 ag.name,
                 target_norm
                     .map(|t| format!(" (target={t})"))
                     .unwrap_or_default()
-            );
+            ));
         }
         cli::EmbeddingsCommand::Backfill {
             agent,
@@ -5222,12 +5179,12 @@ async fn cmd_embeddings(config: &Config, cmd: cli::EmbeddingsCommand) -> Result<
 
             let queued =
                 mp_core::store::embedding::enqueue_drift_jobs(&conn, &ag.name, &model_id, limit)?;
-            println!(
-                "  Enqueued {queued} backfill candidat{} for agent \"{}\" using model \"{}\".",
+            ui::info(format!(
+                "Enqueued {queued} backfill candidat{} for agent \"{}\" using model \"{}\".",
                 if queued == 1 { "e" } else { "es" },
                 ag.name,
                 model_name
-            );
+            ));
 
             if enqueue_only {
                 return Ok(());
@@ -5265,15 +5222,15 @@ async fn cmd_embeddings(config: &Config, cmd: cli::EmbeddingsCommand) -> Result<
             }
 
             let queue = mp_core::store::embedding::queue_stats(&conn)?;
-            println!(
-                "  Backfill run complete: embedded={}, failed={}, queue pending={} retry={} processing={} dead={}.",
+            ui::success(format!(
+                "Backfill run complete: embedded={}, failed={}, queue pending={} retry={} processing={} dead={}.",
                 total_embedded,
                 total_failed,
                 queue.pending,
                 queue.retry,
                 queue.processing,
                 queue.dead
-            );
+            ));
         }
     }
     Ok(())
@@ -5302,27 +5259,27 @@ async fn cmd_audit(
             );
             let resp = mp_core::operations::execute(&conn, &req)?;
             if !resp.ok {
-                println!("  Audit query denied: {}", resp.message);
+                ui::warn(format!("Audit query denied: {}", resp.message));
                 return Ok(());
             }
             let entries = resp.data.as_array().cloned().unwrap_or_default();
 
-            println!();
+            ui::blank();
             if entries.is_empty() {
-                println!("  No audit entries.");
+                ui::info("No audit entries.");
             } else {
                 for e in &entries {
-                    println!(
-                        "  [{effect}] {actor} → {action} on {resource}: {}",
+                    ui::info(format!(
+                        "[{effect}] {actor} → {action} on {resource}: {}",
                         e["reason"].as_str().unwrap_or(""),
                         effect = e["effect"].as_str().unwrap_or(""),
                         actor = e["actor"].as_str().unwrap_or(""),
                         action = e["action"].as_str().unwrap_or(""),
                         resource = e["resource"].as_str().unwrap_or(""),
-                    );
+                    ));
                 }
             }
-            println!();
+            ui::blank();
         }
         Some(cli::AuditCommand::Search { query }) => {
             let req = op_request(
@@ -5335,23 +5292,23 @@ async fn cmd_audit(
             );
             let resp = mp_core::operations::execute(&conn, &req)?;
             if !resp.ok {
-                println!("  Audit query denied: {}", resp.message);
+                ui::warn(format!("Audit query denied: {}", resp.message));
                 return Ok(());
             }
             let entries = resp.data.as_array().cloned().unwrap_or_default();
 
-            println!();
+            ui::blank();
             for e in &entries {
-                println!(
-                    "  [{effect}] {actor} → {action} on {resource}: {}",
+                ui::info(format!(
+                    "[{effect}] {actor} → {action} on {resource}: {}",
                     e["reason"].as_str().unwrap_or(""),
                     effect = e["effect"].as_str().unwrap_or(""),
                     actor = e["actor"].as_str().unwrap_or(""),
                     action = e["action"].as_str().unwrap_or(""),
                     resource = e["resource"].as_str().unwrap_or(""),
-                );
+                ));
             }
-            println!();
+            ui::blank();
         }
         Some(cli::AuditCommand::Export { format }) => {
             let req = op_request(
@@ -5428,8 +5385,8 @@ async fn cmd_sync(config: &Config, cmd: cli::SyncCommand) -> Result<()> {
             let ag = resolve_agent(config, agent.as_deref())?;
             let conn = open_agent_db(config, &ag.name)?;
             let st = mp_core::sync::status(&conn, &sync_tables)?;
-            println!();
-            println!("  Sync status for agent \"{}\"", ag.name);
+            ui::blank();
+            ui::info(format!("Sync status for agent \"{}\"", ag.name));
             println!("{st}");
         }
 
@@ -5447,15 +5404,15 @@ async fn cmd_sync(config: &Config, cmd: cli::SyncCommand) -> Result<()> {
             for peer in &config.sync.peers {
                 let peer_path = resolve_peer_path(config, peer);
                 if !peer_path.exists() {
-                    eprintln!("  Peer DB not found: {}", peer_path.display());
+                    ui::warn(format!("Peer DB not found: {}", peer_path.display()));
                     continue;
                 }
                 print!("  Syncing with peer \"{}\"… ", peer);
-                std::io::stdout().flush()?;
+                ui::flush();
                 let peer_conn = match open_peer_db(&peer_path, &sync_tables) {
                     Ok(c) => c,
                     Err(e) => {
-                        eprintln!("error opening peer: {e}");
+                        ui::error(format!("error opening peer: {e}"));
                         continue;
                     }
                 };
@@ -5465,34 +5422,31 @@ async fn cmd_sync(config: &Config, cmd: cli::SyncCommand) -> Result<()> {
                         total_sent += r.sent;
                         total_received += r.received;
                     }
-                    Err(e) => eprintln!("error: {e}"),
+                    Err(e) => ui::error(format!("sync error: {e}")),
                 }
             }
 
-            // Cloud sync
             if let Some(ref url) = config.sync.cloud_url {
                 print!("  Cloud sync… ");
-                std::io::stdout().flush()?;
+                ui::flush();
                 match mp_core::sync::cloud_sync(&conn, url) {
                     Ok(r) => {
                         println!("{} batch(es)", r.sent);
                         total_sent += r.sent;
                     }
-                    Err(e) => eprintln!("error: {e}"),
+                    Err(e) => ui::error(format!("cloud sync error: {e}")),
                 }
             }
 
             if config.sync.peers.is_empty() && config.sync.cloud_url.is_none() {
-                println!("  No peers or cloud URL configured.");
-                println!(
-                    "  Add [sync] peers = [\"other-agent\"] or cloud_url = \"…\" to moneypenny.toml"
-                );
+                ui::info("No peers or cloud URL configured.");
+                ui::info("Add [sync] peers = [\"other-agent\"] or cloud_url = \"…\" to moneypenny.toml");
             } else {
-                println!();
-                println!(
-                    "  Sync complete. Sent {}B, received {}B.",
+                ui::blank();
+                ui::success(format!(
+                    "Sync complete. Sent {}B, received {}B.",
                     total_sent, total_received
-                );
+                ));
             }
         }
 
@@ -5507,7 +5461,7 @@ async fn cmd_sync(config: &Config, cmd: cli::SyncCommand) -> Result<()> {
                 anyhow::bail!("target DB not found: {}", peer_path.display());
             }
             print!("  Pushing \"{}\" → \"{}\"… ", ag.name, to);
-            std::io::stdout().flush()?;
+            ui::flush();
             let peer_conn = open_peer_db(&peer_path, &sync_tables)?;
             let r = mp_core::sync::local_sync_push(&conn, &peer_conn, &sync_tables)?;
             println!("sent {}B", r.sent);
@@ -5524,7 +5478,7 @@ async fn cmd_sync(config: &Config, cmd: cli::SyncCommand) -> Result<()> {
                 anyhow::bail!("source DB not found: {}", peer_path.display());
             }
             print!("  Pulling \"{}\" → \"{}\"… ", from, ag.name);
-            std::io::stdout().flush()?;
+            ui::flush();
             let peer_conn = open_peer_db(&peer_path, &sync_tables)?;
             let r = mp_core::sync::local_sync_pull(&conn, &peer_conn, &sync_tables)?;
             println!("received {}B", r.received);
@@ -5536,13 +5490,13 @@ async fn cmd_sync(config: &Config, cmd: cli::SyncCommand) -> Result<()> {
         cli::SyncCommand::Connect { url, agent: _ } => {
             // Find the config file path from the CLI args (already resolved by main)
             // and update the [sync] cloud_url key.
-            println!("  Cloud sync URL set to: {url}");
-            println!("  Add this to your moneypenny.toml:");
-            println!();
-            println!("    [sync]");
-            println!("    cloud_url = \"{url}\"");
-            println!();
-            println!("  Then run `mp sync now` to trigger an initial sync.");
+            ui::info(format!("Cloud sync URL set to: {url}"));
+            ui::info("Add this to your moneypenny.toml:");
+            ui::blank();
+            ui::hint("[sync]");
+            ui::hint(format!("cloud_url = \"{url}\""));
+            ui::blank();
+            ui::info("Then run `mp sync now` to trigger an initial sync.");
         }
     }
     Ok(())
@@ -5611,25 +5565,18 @@ async fn cmd_db(config: &Config, cmd: cli::DbCommand) -> Result<()> {
                 .map(|i| stmt.column_name(i).unwrap_or("?").to_string())
                 .collect();
 
-            println!();
-            println!("  {}", col_names.join(" | "));
-            println!(
-                "  {}",
-                col_names
-                    .iter()
-                    .map(|n| "-".repeat(n.len()))
-                    .collect::<Vec<_>>()
-                    .join("-+-")
-            );
+            ui::blank();
+            let header_cols: Vec<(&str, usize)> = col_names.iter().map(|n| (n.as_str(), n.len())).collect();
+            ui::table_header(&header_cols);
 
             let mut rows = stmt.query([])?;
             while let Some(row) = rows.next()? {
                 let vals: Vec<String> = (0..col_count)
                     .map(|i| row.get::<_, String>(i).unwrap_or_else(|_| "NULL".into()))
                     .collect();
-                println!("  {}", vals.join(" | "));
+                ui::info(vals.join(" | "));
             }
-            println!();
+            ui::blank();
         }
         cli::DbCommand::Schema { .. } => {
             let mut stmt = conn
@@ -5638,15 +5585,15 @@ async fn cmd_db(config: &Config, cmd: cli::DbCommand) -> Result<()> {
                 .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .collect::<Result<Vec<_>, _>>()?;
 
-            println!();
+            ui::blank();
             for (name, sql) in &tables {
-                println!("  -- {name}");
+                ui::dim(format!("-- {name}"));
                 if let Some(s) = sql {
                     for line in s.lines() {
-                        println!("  {line}");
+                        ui::info(line);
                     }
                 }
-                println!();
+                ui::blank();
             }
         }
     }
@@ -5669,13 +5616,13 @@ async fn cmd_session(config: &Config, cmd: cli::SessionCommand) -> Result<()> {
             );
             let resp = mp_core::operations::execute(&conn, &req)?;
             if !resp.ok {
-                println!("  Session list denied: {}", resp.message);
+                ui::warn(format!("Session list denied: {}", resp.message));
                 return Ok(());
             }
             let rows = resp.data.as_array().cloned().unwrap_or_default();
 
             if rows.is_empty() {
-                println!("  No sessions found for agent '{}'.", ag.name);
+                ui::info(format!("No sessions found for agent '{}'.", ag.name));
                 return Ok(());
             }
 
@@ -5685,9 +5632,9 @@ async fn cmd_session(config: &Config, cmd: cli::SessionCommand) -> Result<()> {
                     .unwrap_or_else(|| ts.to_string())
             };
 
-            println!();
-            println!("  Recent sessions for agent '{}':", ag.name);
-            println!();
+            ui::blank();
+            ui::info(format!("Recent sessions for agent '{}':", ag.name));
+            ui::blank();
             for row in rows {
                 let id = row["id"].as_str().unwrap_or("-");
                 let channel = row["channel"].as_str().unwrap_or("unknown");
@@ -5695,16 +5642,16 @@ async fn cmd_session(config: &Config, cmd: cli::SessionCommand) -> Result<()> {
                 let ended_at = row["ended_at"].as_i64();
                 let message_count = row["message_count"].as_i64().unwrap_or(0);
                 let last_activity = row["last_activity"].as_i64().unwrap_or(started_at);
-                println!("  Session: {}", id);
-                println!("    Channel:      {}", channel);
-                println!("    Started:      {}", fmt_ts(started_at));
-                println!("    Last activity: {}", fmt_ts(last_activity));
-                println!("    Messages:     {}", message_count);
-                println!(
-                    "    Ended:        {}",
+                ui::info(format!("Session: {}", id));
+                ui::hint(format!("Channel:       {}", channel));
+                ui::hint(format!("Started:       {}", fmt_ts(started_at)));
+                ui::hint(format!("Last activity: {}", fmt_ts(last_activity)));
+                ui::hint(format!("Messages:      {}", message_count));
+                ui::hint(format!(
+                    "Ended:         {}",
                     ended_at.map(fmt_ts).unwrap_or_else(|| "active".into())
-                );
-                println!();
+                ));
+                ui::blank();
             }
         }
     }
@@ -5716,18 +5663,16 @@ async fn cmd_session(config: &Config, cmd: cli::SessionCommand) -> Result<()> {
 // =========================================================================
 
 async fn cmd_health(config: &Config) -> Result<()> {
-    println!();
-    println!("  Moneypenny v{}", env!("CARGO_PKG_VERSION"));
-    println!();
+    ui::banner();
 
     let meta_path = config.metadata_db_path();
     if meta_path.exists() {
-        println!(
-            "  Gateway:  data dir exists at {}",
+        ui::success(format!(
+            "Gateway: data dir exists at {}",
             config.data_dir.display()
-        );
+        ));
     } else {
-        println!("  Gateway:  not initialized (run `mp init`)");
+        ui::warn("Gateway: not initialized (run `mp init`)");
     }
 
     for agent in &config.agents {
@@ -5748,21 +5693,21 @@ async fn cmd_health(config: &Config) -> Result<()> {
 
             let metadata = std::fs::metadata(&db_path)?;
             let size_kb = metadata.len() / 1024;
-            println!(
-                "  Agent \"{}\": {size_kb} KB, {fact_count} facts, {session_count} sessions, embedding jobs total={} (pending={}, retry={}, processing={}, dead={})",
+            ui::info(format!(
+                "Agent \"{}\": {size_kb} KB, {fact_count} facts, {session_count} sessions, embedding jobs total={} (pending={}, retry={}, processing={}, dead={})",
                 agent.name,
                 embed_queue.total,
                 embed_queue.pending,
                 embed_queue.retry,
                 embed_queue.processing,
                 embed_queue.dead,
-            );
+            ));
         } else {
-            println!("  Agent \"{}\": not initialized", agent.name);
+            ui::warn(format!("Agent \"{}\": not initialized", agent.name));
         }
     }
 
-    println!();
+    ui::blank();
     Ok(())
 }
 
