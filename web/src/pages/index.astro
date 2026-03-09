@@ -548,13 +548,67 @@ const features = [
 </script>
 
 <style is:global>
-  html.theme-light body {
-    filter: invert(1) hue-rotate(180deg);
+  :root {
+    --mp-bg: #09090b;
+    --mp-surface: rgba(24, 24, 27, 0.5);
+    --mp-card: rgba(24, 24, 27, 0.3);
+    --mp-border: rgba(39, 39, 42, 0.8);
+    --mp-text: #fafafa;
+    --mp-muted: #a1a1aa;
+    --mp-subtle: #71717a;
+    --mp-primary-bg: #fafafa;
+    --mp-primary-text: #09090b;
+    --mp-primary-hover: #e4e4e7;
   }
 
-  html.theme-light img,
-  html.theme-light video,
-  html.theme-light iframe {
-    filter: invert(1) hue-rotate(180deg);
+  html.theme-light {
+    --mp-bg: #f8fafc;
+    --mp-surface: rgba(255, 255, 255, 0.92);
+    --mp-card: rgba(255, 255, 255, 0.96);
+    --mp-border: rgba(212, 212, 216, 0.85);
+    --mp-text: #111827;
+    --mp-muted: #52525b;
+    --mp-subtle: #71717a;
+    --mp-primary-bg: #18181b;
+    --mp-primary-text: #f8fafc;
+    --mp-primary-hover: #27272a;
+  }
+
+  html body {
+    background: var(--mp-bg);
+    color: var(--mp-text);
+  }
+
+  html [class*="bg-zinc-900"],
+  html [class*="bg-[#09090b]"] {
+    background-color: var(--mp-surface) !important;
+  }
+
+  html [class*="border-zinc-8"] {
+    border-color: var(--mp-border) !important;
+  }
+
+  html [class*="text-zinc-50"] {
+    color: var(--mp-text) !important;
+  }
+
+  html [class*="text-zinc-400"] {
+    color: var(--mp-muted) !important;
+  }
+
+  html [class*="text-zinc-500"] {
+    color: var(--mp-subtle) !important;
+  }
+
+  html [class*="bg-zinc-50"] {
+    background-color: var(--mp-primary-bg) !important;
+  }
+
+  html [class*="text-zinc-950"] {
+    color: var(--mp-primary-text) !important;
+  }
+
+  html [class*="hover:bg-zinc-200"]:hover {
+    background-color: var(--mp-primary-hover) !important;
   }
 </style>

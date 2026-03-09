@@ -3280,6 +3280,14 @@ fn canonical_operation_catalog() -> &'static [(&'static str, &'static str)] {
             "embedding.backfill.enqueue",
             "Moneypenny operation: enqueue embedding backfill for a model",
         ),
+        (
+            "embedding.process",
+            "Moneypenny operation: process queued embedding jobs now",
+        ),
+        (
+            "embedding.backfill.process",
+            "Moneypenny operation: enqueue drifted rows and process embedding backlog now",
+        ),
     ]
 }
 
@@ -3384,10 +3392,12 @@ fn build_sidecar_request_from_mcp_call(
     )
 }
 
-fn handle_sidecar_mcp_request(
+async fn handle_sidecar_mcp_request(
     conn: &rusqlite::Connection,
     input: &serde_json::Value,
     default_agent_id: &str,
+    embed_provider: Option<&dyn EmbeddingProvider>,
+    embedding_model_id: &str,
 ) -> anyhow::Result<Option<serde_json::Value>> {
     let method = match input.get("method").and_then(serde_json::Value::as_str) {
         Some(m) => m,
@@ -3424,19 +3434,22 @@ fn handle_sidecar_mcp_request(
                     )));
                 }
             };
-            let op_resp = match mp_core::operations::execute(conn, &req) {
-                Ok(resp) => resp,
-                Err(e) => {
-                    let err = sidecar_error_response("sidecar_execute_error", e.to_string());
-                    return Ok(Some(jsonrpc_result(
-                        id,
-                        serde_json::json!({
-                            "content": [{ "type": "text", "text": err.to_string() }],
-                            "isError": true
-                        }),
-                    )));
-                }
-            };
+            let op_resp =
+                match execute_sidecar_operation(conn, &req, embed_provider, embedding_model_id)
+                    .await
+                {
+                    Ok(resp) => resp,
+                    Err(e) => {
+                        let err = sidecar_error_response("sidecar_execute_error", e.to_string());
+                        return Ok(Some(jsonrpc_result(
+                            id,
+                            serde_json::json!({
+                                "content": [{ "type": "text", "text": err.to_string() }],
+                                "isError": true
+                            }),
+                        )));
+                    }
+                };
             jsonrpc_result(
                 id,
                 serde_json::json!({
@@ -3453,6 +3466,121 @@ fn handle_sidecar_mcp_request(
     };
 
     Ok(Some(response))
+}
+
+async fn execute_sidecar_operation(
+    conn: &rusqlite::Connection,
+    req: &mp_core::operations::OperationRequest,
+    embed_provider: Option<&dyn EmbeddingProvider>,
+    embedding_model_id: &str,
+) -> anyhow::Result<mp_core::operations::OperationResponse> {
+    if req.op == "embedding.process" || req.op == "embedding.backfill.process" {
+        return execute_embedding_process_operation(conn, req, embed_provider, embedding_model_id)
+            .await;
+    }
+    mp_core::operations::execute(conn, req)
+}
+
+async fn execute_embedding_process_operation(
+    conn: &rusqlite::Connection,
+    req: &mp_core::operations::OperationRequest,
+    embed_provider: Option<&dyn EmbeddingProvider>,
+    default_model_id: &str,
+) -> anyhow::Result<mp_core::operations::OperationResponse> {
+    let Some(embed) = embed_provider else {
+        return Ok(mp_core::operations::OperationResponse {
+            ok: false,
+            code: "embedding_provider_unavailable".into(),
+            message: "embedding provider is not configured or failed to initialize".into(),
+            data: serde_json::json!({}),
+            policy: None,
+            audit: mp_core::operations::AuditMeta { recorded: false },
+        });
+    };
+
+    let agent_id = req.args["agent_id"]
+        .as_str()
+        .unwrap_or(&req.actor.agent_id)
+        .to_string();
+    let model_id = req.args["model_id"]
+        .as_str()
+        .unwrap_or(default_model_id)
+        .to_string();
+    let limit_per_target = req.args["limit"].as_u64().unwrap_or(10_000) as usize;
+    let max_batches = req.args["max_batches"].as_u64().unwrap_or(200) as usize;
+    let batch_size = req.args["batch_size"].as_u64().unwrap_or(128) as usize;
+    let retry_base_seconds = req.args["retry_base_seconds"].as_i64().unwrap_or(5);
+    let max_attempts = req.args["max_attempts"].as_i64().unwrap_or(8);
+    let enqueue_drift = req.op == "embedding.backfill.process"
+        || req.args["enqueue_drift"].as_bool().unwrap_or(false);
+
+    let mut total_queued = 0usize;
+    if enqueue_drift {
+        total_queued = mp_core::store::embedding::enqueue_drift_jobs(
+            conn,
+            &agent_id,
+            &model_id,
+            limit_per_target,
+        )?;
+    }
+
+    let mut total_claimed = 0usize;
+    let mut total_embedded = 0usize;
+    let mut total_failed = 0usize;
+    let mut total_skipped = 0usize;
+    let mut rounds = 0usize;
+
+    loop {
+        rounds += 1;
+        let stats = mp_core::store::embedding::process_embedding_jobs(
+            conn,
+            &agent_id,
+            &model_id,
+            batch_size.max(1),
+            retry_base_seconds.max(1),
+            max_attempts.max(1),
+            |content| async move {
+                let vec = embed.embed(&content).await?;
+                Ok::<Vec<u8>, anyhow::Error>(mp_llm::f32_slice_to_blob(&vec))
+            },
+        )
+        .await?;
+        total_claimed += stats.claimed;
+        total_embedded += stats.embedded;
+        total_failed += stats.failed;
+        total_skipped += stats.skipped;
+
+        if stats.claimed == 0 || rounds >= max_batches.max(1) {
+            break;
+        }
+    }
+
+    let queue = mp_core::store::embedding::queue_stats(conn)?;
+    Ok(mp_core::operations::OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "embedding queue processed".into(),
+        data: serde_json::json!({
+            "agent_id": agent_id,
+            "model_id": model_id,
+            "enqueue_drift": enqueue_drift,
+            "queued": total_queued,
+            "rounds": rounds,
+            "claimed": total_claimed,
+            "embedded": total_embedded,
+            "failed": total_failed,
+            "skipped": total_skipped,
+            "queue": {
+                "total": queue.total,
+                "pending": queue.pending,
+                "retry": queue.retry,
+                "processing": queue.processing,
+                "dead": queue.dead,
+            }
+        }),
+        policy: None,
+        audit: mp_core::operations::AuditMeta { recorded: true },
+    })
 }
 
 fn build_sidecar_request(
@@ -3503,6 +3631,8 @@ fn build_sidecar_request(
 async fn cmd_sidecar(config: &Config, agent: Option<String>) -> Result<()> {
     let ag = resolve_agent(config, agent.as_deref())?;
     let conn = open_agent_db(config, &ag.name)?;
+    let embed_provider = build_embedding_provider(config, ag).ok();
+    let sidecar_embedding_model_id = embedding_model_id(ag);
 
     let stdin = tokio::io::stdin();
     let reader = tokio::io::BufReader::new(stdin);
@@ -3521,7 +3651,15 @@ async fn cmd_sidecar(config: &Config, agent: Option<String>) -> Result<()> {
             }
         };
 
-        if let Some(mcp_response) = handle_sidecar_mcp_request(&conn, &parsed, &ag.name)? {
+        if let Some(mcp_response) = handle_sidecar_mcp_request(
+            &conn,
+            &parsed,
+            &ag.name,
+            embed_provider.as_deref(),
+            &sidecar_embedding_model_id,
+        )
+        .await?
+        {
             tokio::io::AsyncWriteExt::write_all(
                 &mut stdout,
                 format!("{mcp_response}\n").as_bytes(),
@@ -3542,7 +3680,14 @@ async fn cmd_sidecar(config: &Config, agent: Option<String>) -> Result<()> {
             }
         };
 
-        let response = match mp_core::operations::execute(&conn, &request) {
+        let response = match execute_sidecar_operation(
+            &conn,
+            &request,
+            embed_provider.as_deref(),
+            &sidecar_embedding_model_id,
+        )
+        .await
+        {
             Ok(resp) => serde_json::to_value(resp)
                 .unwrap_or_else(|e| sidecar_error_response("serialization_error", e.to_string())),
             Err(e) => sidecar_error_response("sidecar_execute_error", e.to_string()),
