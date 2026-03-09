@@ -51,7 +51,7 @@ pub fn tools_list() -> Value {
         }),
         json!({
             "name": TOOL_EXECUTE,
-            "description": "Moneypenny: advanced fallback. Use only for operations not yet expressible in MPQ.",
+            "description": "Moneypenny: direct operation call. Prefer moneypenny.query (MPQ) for discoverability. Use EXEC in MPQ or this tool to call any canonical operation by name.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -85,7 +85,7 @@ pub fn capabilities(domain_filter: Option<&str>) -> Value {
         card(
             "knowledge",
             TOOL_QUERY,
-            &["INGEST knowledge", "SEARCH knowledge", "LIST knowledge"],
+            &["INGEST \"content or file://path\" AS \"title\"", "SEARCH knowledge", "EXEC \"knowledge.list\" {}"],
             "Ingest and query documents/chunks.",
         ),
         card(
@@ -109,8 +109,8 @@ pub fn capabilities(domain_filter: Option<&str>) -> Value {
         card(
             "ingest",
             TOOL_QUERY,
-            &["INGEST events"],
-            "External event ingestion.",
+            &["INGEST EVENTS \"cursor\"", "INGEST EVENTS \"cursor\" FROM \"/path/to/file.jsonl\"", "EXEC \"ingest.status\" {\"limit\": 5}"],
+            "External event ingestion (Cursor, Claude Code, custom JSONL).",
         ),
         card(
             "session",
@@ -143,7 +143,7 @@ pub fn capabilities(domain_filter: Option<&str>) -> Value {
 
     json!({
         "domains": filtered,
-        "hint": "All operations are expressible via moneypenny.query. Use moneypenny.execute only for advanced ops not yet covered by MPQ."
+        "hint": "All operations are expressible via moneypenny.query using EXEC \"op.name\" {args}. Domain-specific syntax (SEARCH, INSERT, etc.) is available for common operations."
     })
 }
 

@@ -41,6 +41,7 @@ pub enum Kw {
     Config, Skill, Promote, Tool, Language, Body,
     Embedding, Status, Retry, Dead, Backfill, Process,
     Session, Resolve,
+    Exec, Events,
 }
 
 impl Kw {
@@ -104,6 +105,8 @@ impl Kw {
             "PROCESS" => Some(Kw::Process),
             "SESSION" => Some(Kw::Session),
             "RESOLVE" => Some(Kw::Resolve),
+            "EXEC" => Some(Kw::Exec),
+            "EVENTS" => Some(Kw::Events),
             _ => None,
         }
     }
@@ -132,6 +135,7 @@ impl fmt::Display for Kw {
             Kw::Status => "STATUS", Kw::Retry => "RETRY", Kw::Dead => "DEAD",
             Kw::Backfill => "BACKFILL", Kw::Process => "PROCESS",
             Kw::Session => "SESSION", Kw::Resolve => "RESOLVE",
+            Kw::Exec => "EXEC", Kw::Events => "EVENTS",
         };
         write!(f, "{s}")
     }
@@ -482,5 +486,21 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.message.contains("unterminated"));
+    }
+
+    #[test]
+    fn lex_exec_keyword() {
+        let tokens = lex(r#"EXEC "op.name" {"key": "val"}"#).unwrap();
+        assert!(matches!(tokens[0].token, Token::Keyword(Kw::Exec)));
+        assert!(matches!(tokens[1].token, Token::StringLit(ref s) if s == "op.name"));
+        assert!(matches!(tokens[2].token, Token::JsonBlob(_)));
+    }
+
+    #[test]
+    fn lex_events_keyword() {
+        let tokens = lex(r#"INGEST EVENTS "cursor""#).unwrap();
+        assert!(matches!(tokens[0].token, Token::Keyword(Kw::Ingest)));
+        assert!(matches!(tokens[1].token, Token::Keyword(Kw::Events)));
+        assert!(matches!(tokens[2].token, Token::StringLit(ref s) if s == "cursor"));
     }
 }

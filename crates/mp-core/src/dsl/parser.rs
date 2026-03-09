@@ -342,12 +342,16 @@ fn parse_head(p: &mut Parser) -> Result<Head, ParseError> {
             p.advance();
             parse_embedding_head(p)
         }
+        Some(Token::Keyword(Kw::Exec)) => {
+            p.advance();
+            parse_exec_head(p)
+        }
         other => Err(ParseError {
             position: p.current_pos(),
             expected: vec![
                 "SEARCH", "INSERT", "UPDATE", "DELETE", "INGEST", "CREATE",
                 "EVALUATE", "EXPLAIN", "RUN", "PAUSE", "RESUME", "LIST",
-                "HISTORY", "CONFIG", "RESOLVE", "PROMOTE", "EMBEDDING",
+                "HISTORY", "CONFIG", "RESOLVE", "PROMOTE", "EMBEDDING", "EXEC",
             ]
             .into_iter()
             .map(String::from)
@@ -539,6 +543,17 @@ fn parse_delete_head(p: &mut Parser) -> Result<Head, ParseError> {
 // ── INGEST ──
 
 fn parse_ingest_head(p: &mut Parser) -> Result<Head, ParseError> {
+    // INGEST EVENTS "source" [FROM "path"]
+    if p.match_keyword(Kw::Events) {
+        let source = p.expect_string()?;
+        let file_path = if p.match_keyword(Kw::From) {
+            Some(p.expect_string()?)
+        } else {
+            None
+        };
+        return Ok(Head::IngestEvents(IngestEventsHead { source, file_path }));
+    }
+
     let url = p.expect_string()?;
     let name = if p.match_keyword(Kw::As) {
         Some(p.expect_string()?)
@@ -546,6 +561,25 @@ fn parse_ingest_head(p: &mut Parser) -> Result<Head, ParseError> {
         None
     };
     Ok(Head::Ingest(IngestHead { url, name }))
+}
+
+// ── EXEC ──
+
+fn parse_exec_head(p: &mut Parser) -> Result<Head, ParseError> {
+    let op = p.expect_string()?;
+    let args = match p.peek().cloned() {
+        Some(Token::JsonBlob(blob)) => {
+            p.advance();
+            serde_json::from_str(&blob).map_err(|e| ParseError {
+                position: p.current_pos(),
+                expected: vec!["valid JSON object".into()],
+                got: format!("invalid JSON: {e}"),
+                hint: Some("EXEC args must be a valid JSON object, e.g. {\"key\": \"value\"}".into()),
+            })?
+        }
+        _ => serde_json::json!({}),
+    };
+    Ok(Head::Exec(ExecHead { op, args }))
 }
 
 // ── CREATE dispatch ──
@@ -1206,6 +1240,86 @@ mod tests {
         match &prog.statements[0].head {
             Head::Search(s) => assert_eq!(s.mode, SearchMode::Fts),
             _ => panic!("expected Search"),
+        }
+    }
+
+    #[test]
+    fn parse_exec_with_args() {
+        let prog = parse_expr(r#"EXEC "ingest.events" {"source": "cursor", "file_path": "/tmp/test.jsonl"}"#).unwrap();
+        match &prog.statements[0].head {
+            Head::Exec(e) => {
+                assert_eq!(e.op, "ingest.events");
+                assert_eq!(e.args["source"], "cursor");
+                assert_eq!(e.args["file_path"], "/tmp/test.jsonl");
+            }
+            _ => panic!("expected Exec"),
+        }
+    }
+
+    #[test]
+    fn parse_exec_no_args() {
+        let prog = parse_expr(r#"EXEC "embedding.status""#).unwrap();
+        match &prog.statements[0].head {
+            Head::Exec(e) => {
+                assert_eq!(e.op, "embedding.status");
+                assert!(e.args.as_object().unwrap().is_empty());
+            }
+            _ => panic!("expected Exec"),
+        }
+    }
+
+    #[test]
+    fn parse_exec_in_multi_statement() {
+        let prog = parse_expr(r#"EXEC "ingest.status" {"limit": 5}; SEARCH facts | TAKE 3"#).unwrap();
+        assert_eq!(prog.statements.len(), 2);
+        assert!(matches!(prog.statements[0].head, Head::Exec(_)));
+        assert!(matches!(prog.statements[1].head, Head::Search(_)));
+    }
+
+    #[test]
+    fn parse_ingest_events_basic() {
+        let prog = parse_expr(r#"INGEST EVENTS "cursor""#).unwrap();
+        match &prog.statements[0].head {
+            Head::IngestEvents(ie) => {
+                assert_eq!(ie.source, "cursor");
+                assert!(ie.file_path.is_none());
+            }
+            _ => panic!("expected IngestEvents"),
+        }
+    }
+
+    #[test]
+    fn parse_ingest_events_with_path() {
+        let prog = parse_expr(r#"INGEST EVENTS "cursor" FROM "/tmp/events.jsonl""#).unwrap();
+        match &prog.statements[0].head {
+            Head::IngestEvents(ie) => {
+                assert_eq!(ie.source, "cursor");
+                assert_eq!(ie.file_path.as_deref(), Some("/tmp/events.jsonl"));
+            }
+            _ => panic!("expected IngestEvents"),
+        }
+    }
+
+    #[test]
+    fn parse_ingest_content_inline() {
+        let prog = parse_expr(r##"INGEST "My Document content here" AS "my-doc""##).unwrap();
+        match &prog.statements[0].head {
+            Head::Ingest(i) => {
+                assert!(i.url.starts_with("My Document"));
+                assert_eq!(i.name.as_deref(), Some("my-doc"));
+            }
+            _ => panic!("expected Ingest"),
+        }
+    }
+
+    #[test]
+    fn parse_ingest_file_uri() {
+        let prog = parse_expr(r#"INGEST "file:///tmp/doc.md""#).unwrap();
+        match &prog.statements[0].head {
+            Head::Ingest(i) => {
+                assert_eq!(i.url, "file:///tmp/doc.md");
+            }
+            _ => panic!("expected Ingest"),
         }
     }
 }

@@ -20,7 +20,9 @@ SEARCH <store> [WHERE <filters>] [SINCE <duration>] [| SORT field ASC|DESC] [| T
 INSERT INTO facts ("content", key=value ...)
 UPDATE facts SET key=value WHERE id = "id"
 DELETE FROM facts WHERE <filters>
-INGEST "url"
+INGEST "content_or_file_uri" [AS "title"]
+INGEST EVENTS "source" [FROM "file_path"]
+EXEC "op.name" {json_args}
 CREATE POLICY allow|deny|audit <action> ON <resource> [FOR AGENT "id"] [MESSAGE "reason"]
 EVALUATE POLICY ON ("actor", "action", "resource")
 CREATE JOB "name" SCHEDULE "cron" [TYPE type]
@@ -34,6 +36,12 @@ Durations: 7d, 24h, 30m
 Pipeline: chain stages with |
 Multi-statement: separate with ;
 
+EXEC calls any canonical operation by name:
+  EXEC "ingest.events" {"source": "cursor"}
+  EXEC "knowledge.ingest" {"content": "doc text", "title": "My Doc"}
+  EXEC "ingest.status" {"limit": 5}
+  EXEC "embedding.process" {}
+
 Examples:
   SEARCH facts WHERE topic = "auth" AND confidence > 0.7 SINCE 7d | SORT confidence DESC | TAKE 10
   INSERT INTO facts ("Redis is preferred for caching", topic="infrastructure", confidence=0.9)
@@ -44,7 +52,8 @@ Examples:
   CREATE JOB "digest" SCHEDULE "0 9 * * *" TYPE prompt
   SEARCH audit WHERE action = "delete" SINCE 24h | TAKE 20
   SEARCH activity | TAKE 50
-  SEARCH activity "shell" SINCE 24h"#;
+  INGEST EVENTS "cursor"
+  INGEST EVENTS "cursor" FROM "/tmp/sessions.jsonl""#;
 
 pub fn tool_definition() -> serde_json::Value {
     json!({
@@ -403,6 +412,100 @@ mod tests {
             )
             .unwrap();
         assert!(per_stmt_count >= 1, "per-statement policy decision should be audited");
+    }
+
+    #[test]
+    fn exec_calls_canonical_operation() {
+        let conn = setup();
+        let resp = run(
+            &conn,
+            r#"EXEC "job.list" {}"#,
+            false,
+            &ctx("agent:test"),
+        );
+        assert!(resp.ok, "EXEC job.list should succeed: {}", resp.message);
+    }
+
+    #[test]
+    fn exec_unknown_op_fails_gracefully() {
+        let conn = setup();
+        let resp = run(
+            &conn,
+            r#"EXEC "nonexistent.op" {}"#,
+            false,
+            &ctx("agent:test"),
+        );
+        assert!(!resp.ok);
+        assert!(resp.message.contains("unknown operation") || resp.data.to_string().contains("unknown"));
+    }
+
+    #[test]
+    fn exec_knowledge_ingest_with_content() {
+        let conn = setup();
+        let resp = run(
+            &conn,
+            r##"EXEC "knowledge.ingest" {"content": "Test doc content.", "title": "Test"}"##,
+            false,
+            &ctx("agent:test"),
+        );
+        assert!(resp.ok, "EXEC knowledge.ingest should succeed: {}", resp.message);
+    }
+
+    #[test]
+    fn exec_dry_run_returns_plan() {
+        let conn = setup();
+        let resp = run(
+            &conn,
+            r#"EXEC "job.list" {}"#,
+            true,
+            &ctx("agent:test"),
+        );
+        assert!(resp.ok);
+        assert_eq!(resp.code, "dry_run");
+    }
+
+    #[test]
+    fn exec_policy_deny() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, action_pattern, resource_pattern, message, created_at)
+             VALUES ('block-exec', 'Block all EXEC', 100, 'deny', 'exec', 'operation', 'EXEC blocked', 1)",
+            [],
+        ).unwrap();
+
+        let resp = run(
+            &conn,
+            r#"EXEC "job.list" {}"#,
+            false,
+            &ctx("agent:test"),
+        );
+        assert!(!resp.ok);
+        assert_eq!(resp.code, "policy_denied");
+    }
+
+    #[test]
+    fn ingest_inline_content() {
+        let conn = setup();
+        let resp = run(
+            &conn,
+            r##"INGEST "Hello World, this is inline content." AS "inline-doc""##,
+            false,
+            &ctx("agent:test"),
+        );
+        assert!(resp.ok, "INGEST inline should succeed: {}", resp.message);
+    }
+
+    #[test]
+    fn ingest_http_url_returns_not_supported() {
+        let conn = setup();
+        let resp = run(
+            &conn,
+            r#"INGEST "https://example.com/doc""#,
+            false,
+            &ctx("agent:test"),
+        );
+        assert!(!resp.ok);
+        assert_eq!(resp.code, "not_supported");
     }
 
     #[test]

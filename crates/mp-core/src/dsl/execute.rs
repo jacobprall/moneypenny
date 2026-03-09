@@ -179,6 +179,8 @@ fn head_to_policy_tuple(head: &Head) -> (&'static str, &'static str) {
         Head::EmbeddingStatus => ("status", "embedding"),
         Head::EmbeddingRetryDead => ("retry", "embedding"),
         Head::EmbeddingBackfill => ("backfill", "embedding"),
+        Head::Exec(_) => ("exec", "operation"),
+        Head::IngestEvents(_) => ("ingest", "events"),
     }
 }
 
@@ -228,9 +230,29 @@ fn execute_head(
         }
         Head::Delete(d) => execute_delete(conn, d, ctx, raw),
         Head::Ingest(i) => {
-            let mut args = json!({"url": i.url});
+            let (content, path) = if i.url.starts_with("file://") {
+                let file_path = i.url.strip_prefix("file://").unwrap_or(&i.url);
+                let text = std::fs::read_to_string(file_path)
+                    .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", file_path))?;
+                (text, Some(file_path.to_string()))
+            } else if i.url.starts_with("http://") || i.url.starts_with("https://") {
+                return Ok(StatementResult {
+                    ok: false,
+                    code: "not_supported".into(),
+                    message: "HTTP URL fetch is not supported in MPQ INGEST. Use the CLI (mp ingest --url) or EXEC \"knowledge.ingest\" with pre-fetched content.".into(),
+                    data: json!({"url": i.url}),
+                    raw: raw.to_string(),
+                    policy: None,
+                });
+            } else {
+                (i.url.clone(), None)
+            };
+            let mut args = json!({"content": content});
+            if let Some(p) = path {
+                args["path"] = json!(p);
+            }
             if let Some(ref name) = i.name {
-                args["name"] = json!(name);
+                args["title"] = json!(name);
             }
             let op_req = build_op_request(ctx, "knowledge.ingest", args);
             dispatch_and_wrap(conn, &op_req, raw)
@@ -365,6 +387,18 @@ fn execute_head(
         }
         Head::EmbeddingBackfill => {
             let op_req = build_op_request(ctx, "embedding.backfill.enqueue", json!({}));
+            dispatch_and_wrap(conn, &op_req, raw)
+        }
+        Head::Exec(e) => {
+            let op_req = build_op_request(ctx, &e.op, e.args.clone());
+            dispatch_and_wrap(conn, &op_req, raw)
+        }
+        Head::IngestEvents(ie) => {
+            let mut args = json!({"source": ie.source});
+            if let Some(ref fp) = ie.file_path {
+                args["file_path"] = json!(fp);
+            }
+            let op_req = build_op_request(ctx, "ingest.events", args);
             dispatch_and_wrap(conn, &op_req, raw)
         }
     }

@@ -4161,16 +4161,6 @@ async fn handle_sidecar_mcp_request(
                 } => {
                     if fallback && domain_tools::covered_ops().contains(&request.op.as_str()) {
                         record_sidecar_tool_event(&tool, false, true, false);
-                        return Ok(Some(jsonrpc_result(
-                            id,
-                            serde_json::json!({
-                                "content": [{
-                                    "type": "text",
-                                    "text": format!("moneypenny.execute blocked for covered op '{}'. Use the domain tool action instead.", request.op)
-                                }],
-                                "isError": true
-                            }),
-                        )));
                     }
 
                     let op_resp = match execute_sidecar_operation(

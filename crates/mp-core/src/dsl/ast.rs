@@ -43,6 +43,8 @@ pub enum Head {
     EmbeddingStatus,
     EmbeddingRetryDead,
     EmbeddingBackfill,
+    Exec(ExecHead),
+    IngestEvents(IngestEventsHead),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +79,18 @@ pub struct DeleteHead {
 pub struct IngestHead {
     pub url: String,
     pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecHead {
+    pub op: String,
+    pub args: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IngestEventsHead {
+    pub source: String,
+    pub file_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
