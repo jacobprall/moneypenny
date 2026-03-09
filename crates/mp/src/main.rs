@@ -3407,7 +3407,7 @@ async fn handle_sidecar_mcp_request(
         None => return Ok(None),
     };
     let id = input.get("id").cloned();
-    if method == "notifications/initialized" && id.is_none() {
+    if id.is_none() {
         return Ok(None);
     }
 
@@ -3768,6 +3768,12 @@ async fn cmd_sidecar(config: &Config, agent: Option<String>) -> Result<()> {
             )
             .await?;
             tokio::io::AsyncWriteExt::flush(&mut stdout).await?;
+            continue;
+        }
+
+        // JSON-RPC notifications (method present, no id) were already handled
+        // above — don't fall through to the sidecar-op path.
+        if parsed.get("method").is_some() && parsed.get("id").is_none() {
             continue;
         }
 
