@@ -183,8 +183,8 @@ Filters appear after `WHERE` in SEARCH, UPDATE, and DELETE expressions.
 - `LIKE` (SQL LIKE with `%` wildcards)
 
 ### Logical
-- `AND`, `OR`, `NOT`
-- No parenthesized grouping in v1 (flat filter chains)
+- `AND` — all conditions joined by AND (flat filter chains)
+- No `OR`, `NOT`, or parenthesized grouping in v1 — these come back as a package deal in v2
 
 ### Temporal (SEARCH only)
 - `SINCE <duration>` — results newer than duration
@@ -252,7 +252,7 @@ CREATE AGENT "name" [CONFIG key=value]
 SEARCH audit WHERE <filters> [| TAKE n]
 
 Stores: facts, knowledge, log, audit
-Filters: field = value, field > value, field LIKE "%pattern%", AND, OR, NOT
+Filters: field = value, field > value, field LIKE "%pattern%", AND
 Durations: 7d, 24h, 30m
 Pipeline: chain stages with |
 Multi-statement: separate with ;
@@ -364,74 +364,57 @@ input: &str
   → Program { statements: Vec<Statement> }
 ```
 
-### AST Types (sketch)
+### AST Types (implemented)
 
 ```rust
 pub struct Program {
     pub statements: Vec<Statement>,
+    pub raw: String,
 }
 
 pub struct Statement {
-    pub verb: Verb,
-    pub stages: Vec<Stage>,
-    pub raw: String,          // original expression for audit
+    pub head: Head,                // verb-specific payload
+    pub pipeline: Vec<PipeStage>,  // post-query stages
+    pub raw: String,               // original expression for audit + policy sql_content
 }
 
-pub enum Verb {
-    Search, Insert, Update, Delete,
-    Ingest,
-    CreatePolicy, EvaluatePolicy, ExplainPolicy,
-    CreateJob, RunJob, PauseJob, ResumeJob, ListJobs, HistoryJob,
-    CreateAgent, DeleteAgent, ConfigAgent,
-    ResolveSession, ListSessions,
-    CreateSkill, PromoteSkill,
-    CreateTool, ListTools, DeleteTool,
+pub enum Head {
+    Search(SearchHead), Insert(InsertHead), Update(UpdateHead), Delete(DeleteHead),
+    Ingest(IngestHead),
+    CreatePolicy(CreatePolicyHead), EvaluatePolicy(EvalPolicyHead), ExplainPolicy(EvalPolicyHead),
+    CreateJob(CreateJobHead), RunJob(StringArg), PauseJob(StringArg), ResumeJob(StringArg),
+    ListJobs, HistoryJob(StringArg),
+    CreateAgent(CreateAgentHead), DeleteAgent(StringArg), ConfigAgent(ConfigAgentHead),
+    ResolveSession(OptionalStringArg), ListSessions,
+    CreateSkill(StringArg), PromoteSkill(StringArg),
+    CreateTool(CreateToolHead), ListTools, DeleteTool(StringArg),
     EmbeddingStatus, EmbeddingRetryDead, EmbeddingBackfill,
 }
 
-pub enum Stage {
-    Search { store: Store, query: Option<String>, filters: Vec<Filter>, mode: SearchMode, since: Option<Duration>, before: Option<Duration> },
+pub enum PipeStage {
     Sort { field: String, order: SortOrder },
-    Take { n: usize },
-    Offset { n: usize },
+    Take(usize),
+    Offset(usize),
     Count,
-    Insert { store: Store, content: String, fields: Vec<(String, Literal)> },
-    Update { store: Store, assignments: Vec<(String, Literal)>, filters: Vec<Filter> },
-    Delete { store: Store, filters: Vec<Filter> },
-    Ingest { url: String, name: Option<String> },
-    CreatePolicy { effect: String, action: String, resource: String, agent: Option<String>, message: Option<String> },
-    EvaluatePolicy { actor: String, action: String, resource: String },
-    ExplainPolicy { actor: String, action: String, resource: String },
-    JobOp { op: JobOp, name: String, schedule: Option<String>, job_type: Option<String>, payload: Option<String> },
-    AgentOp { op: AgentOp, name: String, config: Vec<(String, Literal)> },
-    SessionOp { op: SessionOp, id: Option<String> },
-    SkillOp { op: SkillOp, content_or_id: String },
-    ToolOp { op: ToolOp, name: String, language: Option<String>, body: Option<String> },
-    EmbeddingOp { op: EmbeddingOp },
+    Process,
 }
 
-pub enum Filter {
+// Flat AND-joined conditions — no recursion, no precedence
+pub enum Condition {
     Cmp { field: String, op: CmpOp, value: Literal },
     Like { field: String, pattern: String },
-    And(Box<Filter>, Box<Filter>),
-    Or(Box<Filter>, Box<Filter>),
-    Not(Box<Filter>),
     Scope(String),
     Agent(String),
+    Since(DurationLit),
+    Before(DurationLit),
 }
 
-pub enum Literal {
-    Str(String),
-    Int(i64),
-    Float(f64),
-    Bool(bool),
-    Duration(Duration),
-}
-
+pub enum Literal { Str(String), Int(i64), Float(f64), Bool(bool) }
 pub enum SearchMode { Fts, Vector, Hybrid }
 pub enum SortOrder { Asc, Desc }
 pub enum CmpOp { Eq, Ne, Gt, Lt, Ge, Le }
 pub enum Store { Facts, Knowledge, Log, Audit }
+pub struct DurationLit { pub amount: u64, pub unit: DurationUnit }
 ```
 
 ### Execution
@@ -443,40 +426,51 @@ pub enum Store { Facts, Knowledge, Log, Audit }
 
 ### Policy Integration
 
-1. **Rate-limit**: existing behavioral rules apply to the `moneypenny.query` tool.
-2. **Expression-level**: the raw MPQ string is passed as `sql_content` on `PolicyRequest`. Existing `sql_pattern` regex policies match against it.
-3. **Per-operation**: mutations dispatch through `dispatch_operation` which runs its own policy check.
+Two-layer enforcement, no new policy infrastructure:
 
-No new policy infrastructure needed for v1. The existing `sql_pattern` field was designed for exactly this.
+| Layer | action | resource | sql_content | When |
+|-------|--------|----------|-------------|------|
+| **Top-level** | `"query"` | `"mpq"` | full expression | Before any execution. `sql_pattern` regex matches the whole expression (e.g. deny expressions containing `DELETE`). |
+| **Per-statement** | verb-specific | store-specific | individual statement | Before each statement executes. `head_to_policy_tuple()` maps verb → `(action, resource)` so existing policies fire granularly. |
+
+Verb → policy mapping examples:
+- `SEARCH facts` → `("search", "memory")`
+- `DELETE FROM facts` → `("delete", "fact")`
+- `CREATE POLICY` → `("create", "policy")`
+- `INGEST` → `("ingest", "knowledge")`
+
+Both layers pass `session_id` and `trace_id` via `PolicyAuditContext` for audit trail linkage.
+
+Behavioral rules (rate_limit, retry_loop, token_budget, time_window) apply at both layers.
 
 ### Audit
 
-One `pipeline.execute` audit record per `moneypenny.query` call containing:
-- The raw MPQ expression
-- Statement count
-- Result summary (rows affected/returned per statement)
-- Policy decision
+Every `moneypenny.query` call generates:
+1. **Top-level audit record** — `policy_audit` row with `action=query, resource=mpq`
+2. **Per-statement audit records** — one `policy_audit` row per statement with verb-specific `action`/`resource`
+3. **Per-operation audit records** — mutations dispatched through `operations::execute` generate their own audit via existing paths
 
-Mutations additionally generate per-operation audit records through existing dispatch path.
+All audit records carry `session_id` and `correlation_id` (trace_id) for cross-referencing.
 
 
 ## Phasing
 
-### v1 (MVP)
+### v1 (MVP) ✅ Implemented
 - Full verb set (all current operations expressible)
 - SEARCH with FTS5, vector, and hybrid modes
-- Flat filters (AND/OR/NOT, no parens)
-- Pipeline stages: SORT, TAKE, OFFSET, COUNT
+- Flat filters (AND-only, no OR/NOT/parens)
+- Pipeline stages: SORT, TAKE, OFFSET, COUNT, PROCESS
 - Multi-statement with `;`
 - Single transaction per call
 - `dry_run` mode
 - Structured error responses with hints
-- Policy via `sql_content` pattern matching
-- Hand-rolled parser in `mp-core/src/dsl/`
-- Domain tools removed from MCP surface
+- Two-layer policy: top-level `sql_content` + per-statement verb-specific checks
+- Audit context with session/trace propagation
+- Hand-rolled recursive descent parser in `mp-core/src/dsl/`
+- `moneypenny.query` registered alongside domain tools (domain tools retained for backward compat)
 
 ### v2
-- Parenthesized filter grouping
+- OR, NOT, and parenthesized filter grouping
 - Pipeline mutation stages: DELETE, SUMMARIZE INTO, TAG
 - `explain` mode (execute with per-stage diagnostics)
 - Plan-level policy: new `pipeline` rule type for AST-level checks
