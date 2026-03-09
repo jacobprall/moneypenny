@@ -13,7 +13,7 @@ Works with **Claude Code**, **Cortex Code CLI**, and **OpenClaw**.
 ### From source (requires Rust toolchain)
 
 ```bash
-git clone --recurse-submodules https://github.com/nicholasgasior/moneypenny.git
+git clone --recurse-submodules https://github.com/jacobprall/moneypenny.git
 cd moneypenny
 cargo build --release
 ```

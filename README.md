@@ -12,8 +12,9 @@ It runs as a standalone agent runtime (CLI, HTTP, Slack, Discord, Telegram) or a
 
 ```bash
 git clone --recurse-submodules https://github.com/jacobprall/moneypenny.git
-cd moneypenny && cargo build
-cp target/debug/mp /usr/local/bin/mp
+cd moneypenny
+cargo build --release
+cp target/release/mp /usr/local/bin/mp
 ```
 
 Then in any project:

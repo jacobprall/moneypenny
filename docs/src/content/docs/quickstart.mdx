@@ -15,7 +15,13 @@ import { Aside, Card, CardGrid, LinkCard, Tabs, TabItem } from '@astrojs/starlig
 ```bash
 git clone --recurse-submodules https://github.com/jacobprall/moneypenny.git
 cd moneypenny
-cargo build
+cargo build --release
+```
+
+Put the binary on your PATH:
+
+```bash
+cp target/release/mp /usr/local/bin/mp
 ```
 
 Or use the setup script, which also downloads the local embedding model:
