@@ -266,14 +266,34 @@ impl Config {
         Ok(config)
     }
 
-    /// Allow environment variables to override key paths for containerized
-    /// deployments where the TOML is baked in but paths vary at runtime.
+    /// Allow environment variables to override config for containerized
+    /// deployments (Fly secrets, Docker env, etc.).
     fn apply_env_overrides(&mut self) {
         if let Ok(val) = std::env::var("MP_DATA_DIR") {
             self.data_dir = PathBuf::from(val);
         }
         if let Ok(val) = std::env::var("MP_MODELS_DIR") {
             self.models_dir = Some(PathBuf::from(val));
+        }
+        // BYOK: tenant sets their LLM key as a Fly secret / env var.
+        if let Ok(val) = std::env::var("ANTHROPIC_API_KEY") {
+            for agent in &mut self.agents {
+                if agent.llm.provider == "anthropic" && agent.llm.api_key.is_none() {
+                    agent.llm.api_key = Some(val.clone());
+                }
+            }
+        }
+        if let Ok(val) = std::env::var("OPENAI_API_KEY") {
+            for agent in &mut self.agents {
+                if agent.llm.provider == "http" && agent.llm.api_key.is_none() {
+                    agent.llm.api_key = Some(val.clone());
+                }
+            }
+        }
+        if let Ok(val) = std::env::var("SQLITE_CLOUD_URL") {
+            if self.sync.cloud_url.is_none() {
+                self.sync.cloud_url = Some(val);
+            }
         }
     }
 

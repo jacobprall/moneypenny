@@ -1,6 +1,8 @@
 ---
 import Base from "../layouts/Base.astro";
 
+const user = Astro.locals.user;
+
 const features = [
   {
     title: "Persistent Memory",
@@ -53,15 +55,26 @@ const features = [
           >Docs</a
         >
         <a
+          href="/pricing"
+          class="text-[13px] text-zinc-400 transition-colors hover:text-zinc-50"
+          >Pricing</a
+        >
+        <a
           href="https://github.com/jacobprall/moneypenny"
           class="text-[13px] text-zinc-400 transition-colors hover:text-zinc-50"
           >GitHub</a
         >
-        <a
-          href="#waitlist"
-          class="rounded-md bg-zinc-50 px-3.5 py-1.5 text-[13px] font-medium text-zinc-950 transition-colors hover:bg-zinc-200"
-          >Join Waitlist</a
-        >
+        {user ? (
+          <a
+            href="/dashboard"
+            class="rounded-md bg-zinc-50 px-3.5 py-1.5 text-[13px] font-medium text-zinc-950 transition-colors hover:bg-zinc-200"
+            >Dashboard</a>
+        ) : (
+          <a
+            href="/login"
+            class="rounded-md bg-zinc-50 px-3.5 py-1.5 text-[13px] font-medium text-zinc-950 transition-colors hover:bg-zinc-200"
+            >Sign In</a>
+        )}
       </div>
     </div>
   </nav>
@@ -72,7 +85,7 @@ const features = [
       <div class="animate-fade-up">
         <a
           href="https://github.com/jacobprall/moneypenny"
-          class="mb-8 inline-flex items-center gap-2 rounded-full border border-zinc-800 px-3 py-1 text-[13px] text-zinc-500 transition-colors hover:border-zinc-700 hover:text-zinc-400"
+          class="mb-8 inline-flex items-center gap-2 rounded-full border border-zinc-800 px-3 py-1 text-[13px] text-zinc-400 transition-colors hover:border-zinc-700 hover:text-zinc-300"
         >
           Open source &middot; Apache-2.0
           <svg
@@ -108,14 +121,14 @@ const features = [
         class="animate-fade-up animate-delay-300 mt-10 flex items-center justify-center gap-3"
       >
         <a
-          href="/docs/"
+          href="/pricing"
           class="rounded-md bg-zinc-50 px-5 py-2.5 text-sm font-medium text-zinc-950 transition-colors hover:bg-zinc-200"
-          >Read the Docs</a
+          >Get Started</a
         >
         <a
-          href="#waitlist"
+          href="/docs/"
           class="rounded-md border border-zinc-800 px-5 py-2.5 text-sm font-medium text-zinc-400 transition-colors hover:border-zinc-700 hover:text-zinc-50"
-          >Join the Waitlist</a
+          >Read the Docs</a
         >
       </div>
     </div>
@@ -138,13 +151,13 @@ const features = [
           <div class="space-y-4">
             <div>
               <p>
-                <span class="text-zinc-600">$</span>
+                <span class="text-zinc-500">$</span>
                 <span class="text-zinc-300"> mp chat</span>
               </p>
             </div>
             <div>
               <p class="text-zinc-400">
-                <span class="text-zinc-500">&gt;</span> What happened with the
+                <span class="text-zinc-400">&gt;</span> What happened with the
                 Newark launch and how is it affecting pick times?
               </p>
               <div class="mt-2 border-l-2 border-zinc-800 pl-3 text-zinc-400">
@@ -156,10 +169,10 @@ const features = [
             </div>
             <div>
               <p class="text-zinc-400">
-                <span class="text-zinc-500">&gt;</span> Delete all the old facts
+                <span class="text-zinc-400">&gt;</span> Delete all the old facts
                 from the database
               </p>
-              <div class="mt-2 border-l-2 border-red-900/50 pl-3 text-zinc-500">
+              <div class="mt-2 border-l-2 border-red-900/50 pl-3 text-zinc-400">
                 <span class="text-red-400/80">Policy denied:</span> DELETE without
                 WHERE clause blocked. I can help you archive specific facts by date
                 range or topic instead.
@@ -167,7 +180,7 @@ const features = [
             </div>
             <div>
               <p class="text-zinc-400">
-                <span class="text-zinc-500">&gt;</span> Show me every policy
+                <span class="text-zinc-400">&gt;</span> Show me every policy
                 violation this week
               </p>
               <div class="mt-2 border-l-2 border-zinc-800 pl-3 text-zinc-400">
@@ -179,7 +192,7 @@ const features = [
           </div>
         </div>
       </div>
-      <p class="mt-4 text-center text-[13px] text-zinc-600">
+      <p class="mt-4 text-center text-[13px] text-zinc-500">
         Memory retrieval, policy enforcement, and queryable audit — in a single
         session.
       </p>
@@ -192,7 +205,7 @@ const features = [
       <div class="grid gap-16 lg:grid-cols-2 lg:gap-20">
         <!-- Problem -->
         <div>
-          <p class="text-[13px] font-medium uppercase tracking-wider text-zinc-600">
+          <p class="text-[13px] font-medium uppercase tracking-wider text-zinc-500">
             The problem
           </p>
           <h2 class="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">
@@ -221,7 +234,7 @@ const features = [
 
         <!-- Solution -->
         <div>
-          <p class="text-[13px] font-medium uppercase tracking-wider text-zinc-600">
+          <p class="text-[13px] font-medium uppercase tracking-wider text-zinc-500">
             The solution
           </p>
           <h2 class="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">
@@ -249,7 +262,7 @@ const features = [
               ].map(([title, desc]) => (
                 <div class="rounded-md border border-zinc-800 bg-zinc-900/30 px-4 py-3">
                   <p class="text-[14px] font-medium text-zinc-200">{title}</p>
-                  <p class="mt-1 text-[13px] leading-relaxed text-zinc-500">
+                  <p class="mt-1 text-[13px] leading-relaxed text-zinc-400">
                     {desc}
                   </p>
                 </div>
@@ -281,7 +294,7 @@ const features = [
           features.map((f) => (
             <div class="bg-[#09090b] p-6">
               <h3 class="text-[15px] font-semibold">{f.title}</h3>
-              <p class="mt-2 text-[13px] leading-relaxed text-zinc-500">
+              <p class="mt-2 text-[13px] leading-relaxed text-zinc-400">
                 {f.description}
               </p>
             </div>
@@ -296,7 +309,7 @@ const features = [
     <div class="mx-auto max-w-5xl px-6">
       <div class="grid items-start gap-12 lg:grid-cols-2 lg:gap-20">
         <div>
-          <p class="text-[13px] font-medium uppercase tracking-wider text-zinc-600">
+          <p class="text-[13px] font-medium uppercase tracking-wider text-zinc-500">
             Architecture
           </p>
           <h2 class="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">
@@ -322,7 +335,7 @@ const features = [
         </div>
 
         <div>
-          <p class="mb-3 text-[13px] font-medium uppercase tracking-wider text-zinc-600">
+          <p class="mb-3 text-[13px] font-medium uppercase tracking-wider text-zinc-500">
             Turn lifecycle
           </p>
           <div
@@ -356,12 +369,12 @@ const features = [
                 ],
               ].map(([title, desc], i) => (
                 <div class="flex items-start gap-4 bg-[#09090b] px-5 py-3.5">
-                  <span class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-[11px] font-medium text-zinc-600">
+                  <span class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-[11px] font-medium text-zinc-500">
                     {i + 1}
                   </span>
                   <div>
                     <p class="text-[14px] font-medium text-zinc-300">{title}</p>
-                    <p class="text-[13px] text-zinc-600">{desc}</p>
+                    <p class="text-[13px] text-zinc-500">{desc}</p>
                   </div>
                 </div>
               ))
@@ -389,7 +402,7 @@ const features = [
             name="email"
             required
             placeholder="you@company.com"
-            class="h-10 flex-1 rounded-md border border-zinc-800 bg-zinc-900 px-3.5 text-sm text-zinc-50 placeholder:text-zinc-600 focus:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-zinc-700"
+            class="h-10 flex-1 rounded-md border border-zinc-800 bg-zinc-900 px-3.5 text-sm text-zinc-50 placeholder:text-zinc-500 focus:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-zinc-700"
           />
           <button
             type="submit"
@@ -418,18 +431,18 @@ const features = [
     <div
       class="mx-auto flex max-w-5xl flex-col items-center justify-between gap-4 px-6 sm:flex-row"
     >
-      <p class="text-[13px] text-zinc-600">
+      <p class="text-[13px] text-zinc-500">
         &copy; {new Date().getFullYear()} Moneypenny &middot; Apache-2.0
       </p>
       <div class="flex gap-5">
         <a
           href="/docs/"
-          class="text-[13px] text-zinc-600 transition-colors hover:text-zinc-400"
+          class="text-[13px] text-zinc-500 transition-colors hover:text-zinc-300"
           >Docs</a
         >
         <a
           href="https://github.com/jacobprall/moneypenny"
-          class="text-[13px] text-zinc-600 transition-colors hover:text-zinc-400"
+          class="text-[13px] text-zinc-500 transition-colors hover:text-zinc-300"
           >GitHub</a
         >
       </div>

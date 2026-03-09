@@ -1,0 +1,16 @@
+---
+import { createSupabaseServer } from "../../lib/supabase";
+
+const code = Astro.url.searchParams.get("code");
+const redirect = Astro.url.searchParams.get("redirect") ?? "/dashboard";
+
+if (code) {
+  const supabase = createSupabaseServer(
+    Astro.cookies,
+    Astro.request.headers.get("cookie") ?? ""
+  );
+  await supabase.auth.exchangeCodeForSession(code);
+}
+
+return Astro.redirect(redirect);
+---
