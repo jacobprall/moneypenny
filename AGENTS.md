@@ -51,7 +51,7 @@ Each domain tool takes an `action` string and an `input` object:
 
 | Action | Input | Description |
 |--------|-------|-------------|
-| `ingest` | `{content, title?, path?}` | Add a document |
+| `ingest` | `{path?, content?, title?}` | Add a document — pass `path` as an HTTP URL to fetch a webpage, or provide `content` directly |
 | `search` | `{query, limit?}` | Search ingested documents |
 | `list` | `{}` | List all documents |
 

@@ -6,11 +6,11 @@ Persistent memory, policy governance, and audit for AI agents — in a single SQ
 
 Moneypenny sits between your agent and its LLM. After every turn it extracts and compresses knowledge into structured facts, enforces policy on every tool call, logs an auditable decision trail, and syncs state across agents via CRDTs. The entire agent state lives in one portable SQLite database. No Postgres, no Redis — just SQLite.
 
-It runs as a standalone agent runtime (CLI, HTTP, Slack, Discord, Telegram) or as a sidecar that plugs into **Cursor** via MCP. One command to connect.
+It runs as a standalone agent runtime (CLI, HTTP, Slack, Discord, Telegram) or as a sidecar that plugs into **Cursor** or **Claude Code** via MCP. One command to connect.
 
 ## For Agents
 
-If you are a coding agent (Cursor, Claude Code, etc.) and your user wants to set up Moneypenny, run the following:
+If you are a coding agent and your user wants to set up Moneypenny, run the following:
 
 ```bash
 # 1. Clone and build (~5 min first time, requires Rust toolchain)
@@ -20,19 +20,25 @@ cargo build --release
 
 # 2. Initialize the agent database
 ./target/release/mp init
-
-# 3. Register MCP server, hooks, and agent rules with Cursor
-./target/release/mp setup cursor --local
 ```
 
-Then restart Cursor (or reload the window). Moneypenny registers 3 MCP tools: `moneypenny.query` (the primary interface — every operation is an MPQ expression), `moneypenny.capabilities` (domain discovery), and `moneypenny.execute` (advanced fallback).
+Then register as an MCP server. **Run only the command that matches your environment:**
+
+- **If you are Claude Code** (claude, claude-code, Anthropic CLI agent):
+  ```bash
+  ./target/release/mp setup claude-code
+  ```
+  The server is available immediately. This writes `.mcp.json` and `CLAUDE.md`. No restart needed.
+
+- **If you are Cursor** (or another editor that reads `.cursor/`):
+  ```bash
+  ./target/release/mp setup cursor --local
+  ```
+  Tell the user to restart Cursor (or reload the window). This writes `.cursor/mcp.json`, `.cursor/hooks.json`, and `.cursor/rules/moneypenny.mdc`.
+
+Moneypenny registers 3 MCP tools: `moneypenny.query` (the primary interface — every operation is an MPQ expression), `moneypenny.capabilities` (domain discovery), and `moneypenny.execute` (advanced fallback).
 
 To verify the connection works, call `moneypenny.query` with expression `SEARCH facts WHERE topic = "test" | TAKE 5`.
-
-**What `mp setup cursor --local` configures:**
-- `.cursor/mcp.json` — MCP server pointing to the local binary
-- `.cursor/hooks.json` — audit + policy enforcement on every tool call, shell command, file edit
-- `.cursor/rules/moneypenny.mdc` — agent instructions so Cursor knows how to use Moneypenny
 
 All state lives in a single SQLite database at `mp-data/main.db`. If you rebuild `mp`, Cursor picks up changes on next restart.
 
@@ -125,7 +131,7 @@ mp db query "SELECT pointer, confidence FROM facts WHERE status='active' ORDER B
 
 ## How It Works
 
-**Database as runtime.** Inference, memory, search, sync, policy, and tools share the same transactional boundary inside SQLite. The orchestrator is a thin loop; the intelligence — compression, budgeting, extraction, governance — sits between the database and the LLM.
+**Database as runtime.** The database is the runtime, not just the storage layer. Policy evaluation, fact extraction, knowledge search, tool governance, and audit logging all execute inside SQLite. The orchestrator is a thin async loop; the intelligence — compression, budgeting, extraction, governance — lives at the data boundary, not in application code that happens to persist.
 
 **Four memory stores, one search layer.** Facts (long-term knowledge), conversation log, ingested documents, and session scratch feed into a single hybrid retrieval layer (vector similarity + full-text, fused via Reciprocal Rank Fusion, deduplicated with MMR diversity ranking). Token budgeting allocates context across stores by query, session depth, and task.
 
@@ -247,6 +253,28 @@ mp ingest --cursor=my-project-slug       # scoped to one project
 ```
 
 Content-hash deduplication makes re-runs safe.
+
+## Claude Code Integration
+
+One command registers Moneypenny as an MCP server and writes agent instructions:
+
+```bash
+mp setup claude-code
+```
+
+This writes two files:
+- **`.mcp.json`** — MCP server config at the project root (committable to git for team sharing)
+- **`CLAUDE.md`** — agent instructions so Claude Code knows how to use Moneypenny
+
+To register for all projects instead of just this one:
+
+```bash
+mp setup claude-code --scope user
+```
+
+This writes to `~/.claude.json` instead. The server is available immediately — no restart needed.
+
+Knowledge persists across Cursor, Claude Code, and terminal sessions — they all share the same agent database.
 
 ## Configuration
 
