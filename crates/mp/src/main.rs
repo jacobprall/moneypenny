@@ -3910,6 +3910,7 @@ mod tests {
         let result = mcp_tools_list_result();
         let tools = result["tools"].as_array().cloned().unwrap_or_default();
         assert!(!tools.is_empty());
+        assert!(tools.iter().any(|t| t["name"] == "moneypenny.query"));
         assert!(tools.iter().any(|t| t["name"] == "moneypenny.memory"));
         assert!(tools.iter().any(|t| t["name"] == "moneypenny.jobs"));
         assert!(tools.iter().any(|t| t["name"] == "moneypenny.capabilities"));

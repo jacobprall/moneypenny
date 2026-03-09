@@ -449,8 +449,9 @@ mod tests {
         let tokens = lex(r#"INSERT INTO facts ("Redis is preferred", topic="infra", confidence=0.9)"#).unwrap();
         assert!(matches!(tokens[0].token, Token::Keyword(Kw::Insert)));
         assert!(matches!(tokens[1].token, Token::Keyword(Kw::Into)));
-        assert!(matches!(tokens[5].token, Token::StringLit(ref s) if s == "Redis is preferred"));
-        assert!(matches!(tokens[9].token, Token::FloatLit(n) if (n - 0.9).abs() < f64::EPSILON));
+        // INSERT INTO facts ( "Redis is preferred" , topic = "infra" , confidence = 0.9 )
+        assert!(matches!(tokens[4].token, Token::StringLit(ref s) if s == "Redis is preferred"));
+        assert!(matches!(tokens[12].token, Token::FloatLit(n) if (n - 0.9).abs() < f64::EPSILON));
     }
 
     #[test]

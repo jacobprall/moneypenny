@@ -647,7 +647,8 @@ mod tests {
     fn tools_list_exposes_compact_surface() {
         let list = tools_list();
         let tools = list["tools"].as_array().cloned().unwrap_or_default();
-        assert_eq!(tools.len(), 12, "expected compact MCP surface");
+        assert_eq!(tools.len(), 13, "expected compact MCP surface (12 domain + 1 MPQ)");
+        assert!(tools.iter().any(|t| t["name"] == TOOL_QUERY));
         assert!(tools.iter().any(|t| t["name"] == TOOL_MEMORY));
         assert!(tools.iter().any(|t| t["name"] == TOOL_CAPABILITIES));
         assert!(tools.iter().any(|t| t["name"] == TOOL_EXECUTE));

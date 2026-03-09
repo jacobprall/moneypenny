@@ -4,6 +4,7 @@ use super::parser::ParseError;
 const MAX_TAKE: usize = 500;
 const DEFAULT_TAKE: usize = 50;
 
+#[derive(Debug)]
 pub struct ValidationResult {
     pub program: Program,
     pub applied_defaults: Vec<String>,

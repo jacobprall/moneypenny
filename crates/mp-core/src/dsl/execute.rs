@@ -4,8 +4,9 @@ use std::time::Instant;
 
 use super::ast::*;
 use crate::operations::{
-    ActorContext, AuditMeta, OperationContext, OperationRequest, OperationResponse,
+    ActorContext, AuditMeta, OperationContext, OperationRequest, OperationResponse, PolicyMeta,
 };
+use crate::policy::{self, Effect, PolicyAuditContext, PolicyDecision, PolicyRequest};
 
 pub struct ExecuteContext {
     pub agent_id: String,
@@ -25,6 +26,7 @@ pub struct StatementResult {
     pub message: String,
     pub data: serde_json::Value,
     pub raw: String,
+    pub policy: Option<PolicyMeta>,
 }
 
 pub fn execute_program(
@@ -94,7 +96,40 @@ fn execute_statement(
     stmt: &Statement,
     ctx: &ExecuteContext,
 ) -> anyhow::Result<StatementResult> {
+    // Per-statement policy check before execution
+    let (action, resource) = head_to_policy_tuple(&stmt.head);
+    let decision = check_statement_policy(conn, ctx, action, resource, &stmt.raw)?;
+
+    if matches!(decision.effect, Effect::Deny) {
+        return Ok(StatementResult {
+            ok: false,
+            code: "policy_denied".into(),
+            message: decision
+                .reason
+                .unwrap_or_else(|| "denied by policy".into()),
+            data: json!({"policy_id": decision.policy_id, "statement": stmt.raw}),
+            raw: stmt.raw.clone(),
+            policy: Some(PolicyMeta {
+                effect: "deny".into(),
+                policy_id: decision.policy_id,
+                reason: None,
+            }),
+        });
+    }
+
+    let policy_meta = Some(PolicyMeta {
+        effect: match decision.effect {
+            Effect::Allow => "allow",
+            Effect::Audit => "audit",
+            Effect::Deny => "deny",
+        }
+        .into(),
+        policy_id: decision.policy_id,
+        reason: decision.reason,
+    });
+
     let mut result = execute_head(conn, &stmt.head, ctx, &stmt.raw)?;
+    result.policy = policy_meta;
     if !result.ok {
         return Ok(result);
     }
@@ -104,6 +139,74 @@ fn execute_statement(
     }
 
     Ok(result)
+}
+
+/// Map a parsed Head to the (action, resource) tuple for policy evaluation.
+fn head_to_policy_tuple(head: &Head) -> (&'static str, &'static str) {
+    match head {
+        Head::Search(s) => match s.store {
+            Store::Facts => ("search", "memory"),
+            Store::Knowledge => ("search", "knowledge"),
+            Store::Log => ("search", "log"),
+            Store::Audit => ("search", "audit"),
+        },
+        Head::Insert(ins) => match ins.store {
+            Store::Facts => ("add", "fact"),
+            _ => ("add", "memory"),
+        },
+        Head::Update(_) => ("update", "fact"),
+        Head::Delete(_) => ("delete", "fact"),
+        Head::Ingest(_) => ("ingest", "knowledge"),
+        Head::CreatePolicy(_) => ("create", "policy"),
+        Head::EvaluatePolicy(_) | Head::ExplainPolicy(_) => ("evaluate", "policy"),
+        Head::CreateJob(_) => ("create", "job"),
+        Head::RunJob(_) => ("run", "job"),
+        Head::PauseJob(_) => ("pause", "job"),
+        Head::ResumeJob(_) => ("resume", "job"),
+        Head::ListJobs => ("list", "job"),
+        Head::HistoryJob(_) => ("history", "job"),
+        Head::CreateAgent(_) => ("create", "agent"),
+        Head::DeleteAgent(_) => ("delete", "agent"),
+        Head::ConfigAgent(_) => ("config", "agent"),
+        Head::ResolveSession(_) => ("resolve", "session"),
+        Head::ListSessions => ("list", "session"),
+        Head::CreateSkill(_) => ("create", "skill"),
+        Head::PromoteSkill(_) => ("promote", "skill"),
+        Head::CreateTool(_) => ("create", "tool"),
+        Head::ListTools => ("list", "tool"),
+        Head::DeleteTool(_) => ("delete", "tool"),
+        Head::EmbeddingStatus => ("status", "embedding"),
+        Head::EmbeddingRetryDead => ("retry", "embedding"),
+        Head::EmbeddingBackfill => ("backfill", "embedding"),
+    }
+}
+
+fn check_statement_policy(
+    conn: &Connection,
+    ctx: &ExecuteContext,
+    action: &str,
+    resource: &str,
+    raw_statement: &str,
+) -> anyhow::Result<PolicyDecision> {
+    let audit_ctx = PolicyAuditContext {
+        session_id: ctx.session_id.as_deref(),
+        correlation_id: ctx.trace_id.as_deref(),
+        idempotency_key: None,
+        idempotency_state: None,
+    };
+
+    policy::evaluate_with_audit(
+        conn,
+        &PolicyRequest {
+            actor: &ctx.agent_id,
+            action,
+            resource,
+            sql_content: Some(raw_statement),
+            channel: ctx.channel.as_deref(),
+            arguments: None,
+        },
+        &audit_ctx,
+    )
 }
 
 fn execute_head(
@@ -298,6 +401,7 @@ fn execute_search(
         message: format!("{} results", results.len()),
         data: json!({"rows": results}),
         raw: String::new(),
+        policy: None,
     })
 }
 
@@ -488,6 +592,7 @@ fn execute_delete(
         message: format!("{deleted} fact(s) deleted"),
         data: json!({"deleted": deleted}),
         raw: raw.to_string(),
+        policy: None,
     })
 }
 
@@ -584,6 +689,7 @@ fn dispatch_and_wrap(
         message: resp.message,
         data: resp.data,
         raw: String::new(),
+        policy: None,
     })
 }
 

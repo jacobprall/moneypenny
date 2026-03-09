@@ -92,8 +92,15 @@ pub fn run(
         Err(e) => return parse_error_response(e),
     };
 
-    // 4. Policy check: pass the raw expression through existing sql_content path
-    match crate::policy::evaluate(
+    // 4. Top-level policy check: coarse gate on the full expression.
+    //    Per-statement checks (verb-specific action/resource) happen in execute.rs.
+    let audit_ctx = crate::policy::PolicyAuditContext {
+        session_id: ctx.session_id.as_deref(),
+        correlation_id: ctx.trace_id.as_deref(),
+        idempotency_key: None,
+        idempotency_state: None,
+    };
+    match crate::policy::evaluate_with_audit(
         conn,
         &crate::policy::PolicyRequest {
             actor: &ctx.agent_id,
@@ -103,6 +110,7 @@ pub fn run(
             channel: ctx.channel.as_deref(),
             arguments: None,
         },
+        &audit_ctx,
     ) {
         Ok(decision) => {
             if matches!(decision.effect, crate::policy::Effect::Deny) {
@@ -208,5 +216,230 @@ fn parse_error_response(e: ParseError) -> OperationResponse {
         }),
         policy: None,
         audit: crate::operations::AuditMeta { recorded: false },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{db, schema};
+
+    fn setup() -> Connection {
+        let conn = db::open_memory().unwrap();
+        schema::init_agent_db(&conn).unwrap();
+        conn
+    }
+
+    fn ctx(agent: &str) -> ExecuteContext {
+        ExecuteContext {
+            agent_id: agent.to_string(),
+            channel: None,
+            session_id: Some("test-session".into()),
+            trace_id: Some("test-trace".into()),
+        }
+    }
+
+    // ── Top-level MPQ policy: sql_pattern on full expression ──
+
+    #[test]
+    fn top_level_deny_via_sql_pattern() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, action_pattern, resource_pattern, sql_pattern, message, created_at)
+             VALUES ('block-delete', 'Block DELETE via MPQ', 100, 'deny', 'query', 'mpq', 'DELETE', 'DELETE operations blocked', 1)",
+            [],
+        ).unwrap();
+
+        let resp = run(&conn, "DELETE FROM facts WHERE id = \"abc\"", false, &ctx("agent:junior"));
+        assert!(!resp.ok);
+        assert_eq!(resp.code, "policy_denied");
+        assert!(resp.message.contains("DELETE operations blocked"));
+    }
+
+    #[test]
+    fn top_level_allows_when_no_deny_pattern() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, action_pattern, resource_pattern, sql_pattern, message, created_at)
+             VALUES ('block-delete', 'Block DELETE via MPQ', 100, 'deny', 'query', 'mpq', 'DELETE', 'No deletes', 1)",
+            [],
+        ).unwrap();
+
+        let resp = run(&conn, "SEARCH facts | TAKE 5", false, &ctx("agent:junior"));
+        assert!(resp.ok, "SEARCH should not be blocked by DELETE sql_pattern");
+    }
+
+    // ── Per-statement policy: verb-level action/resource matching ──
+
+    #[test]
+    fn per_statement_deny_delete_on_fact() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, action_pattern, resource_pattern, actor_pattern, message, created_at)
+             VALUES ('no-delete', 'No fact deletion for junior', 100, 'deny', 'delete', 'fact', 'agent:junior', 'Junior agents cannot delete facts', 1)",
+            [],
+        ).unwrap();
+
+        let resp = run(&conn, "DELETE FROM facts WHERE id = \"abc\"", false, &ctx("agent:junior"));
+        assert!(!resp.ok);
+        assert!(resp.message.contains("Junior agents cannot delete"));
+    }
+
+    #[test]
+    fn per_statement_deny_does_not_affect_other_agents() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, action_pattern, resource_pattern, actor_pattern, message, created_at)
+             VALUES ('no-delete', 'No fact deletion for junior', 100, 'deny', 'delete', 'fact', 'agent:junior', 'Juniors cannot delete', 1)",
+            [],
+        ).unwrap();
+
+        // Senior agent should not be blocked
+        let resp = run(&conn, "DELETE FROM facts WHERE id = \"abc\"", false, &ctx("agent:senior"));
+        // This will fail at execution (no fact with that id), but should NOT be policy_denied
+        assert_ne!(resp.code, "policy_denied");
+    }
+
+    #[test]
+    fn per_statement_deny_search_for_specific_agent() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, action_pattern, resource_pattern, actor_pattern, message, created_at)
+             VALUES ('no-audit-search', 'Block audit search', 100, 'deny', 'search', 'audit', 'agent:restricted', 'Cannot search audit log', 1)",
+            [],
+        ).unwrap();
+
+        let resp = run(&conn, "SEARCH audit SINCE 7d", false, &ctx("agent:restricted"));
+        assert!(!resp.ok);
+        assert!(resp.message.contains("Cannot search audit"));
+    }
+
+    #[test]
+    fn per_statement_deny_policy_creation() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, action_pattern, resource_pattern, message, created_at)
+             VALUES ('no-policy-create', 'Block policy creation', 100, 'deny', 'create', 'policy', 'Policy creation blocked', 1)",
+            [],
+        ).unwrap();
+
+        let resp = run(
+            &conn,
+            r#"CREATE POLICY allow search ON facts"#,
+            false,
+            &ctx("agent:any"),
+        );
+        assert!(!resp.ok);
+        assert!(resp.message.contains("Policy creation blocked"));
+    }
+
+    // ── Multi-statement: first statement blocked, second never runs ──
+
+    #[test]
+    fn multi_statement_stops_on_policy_deny() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, action_pattern, resource_pattern, actor_pattern, message, created_at)
+             VALUES ('no-delete', 'No deletes', 100, 'deny', 'delete', 'fact', '*', 'All deletes blocked', 1)",
+            [],
+        ).unwrap();
+
+        let resp = run(
+            &conn,
+            "DELETE FROM facts WHERE id = \"x\"; SEARCH facts | TAKE 5",
+            false,
+            &ctx("agent:any"),
+        );
+        assert!(!resp.ok);
+        assert!(resp.message.contains("All deletes blocked"));
+    }
+
+    // ── Per-statement sql_content carries individual statement text ──
+
+    #[test]
+    fn per_statement_sql_pattern_on_individual_statement() {
+        let conn = setup();
+        // sql_pattern that only matches "confidence" — should block updates touching confidence
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, action_pattern, resource_pattern, sql_pattern, message, created_at)
+             VALUES ('no-conf-update', 'Block confidence tampering', 100, 'deny', 'update', 'fact', 'confidence', 'Cannot modify confidence directly', 1)",
+            [],
+        ).unwrap();
+
+        let resp = run(
+            &conn,
+            r#"UPDATE facts SET confidence = 1.0 WHERE id = "abc""#,
+            false,
+            &ctx("agent:any"),
+        );
+        assert!(!resp.ok);
+        assert!(resp.message.contains("Cannot modify confidence"));
+    }
+
+    // ── Audit trail records policy decisions for MPQ ──
+
+    #[test]
+    fn policy_decisions_are_audited() {
+        let conn = setup();
+
+        run(&conn, "SEARCH facts | TAKE 5", false, &ctx("agent:test"));
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM policy_audit WHERE action = 'query' AND resource = 'mpq'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(count >= 1, "top-level MPQ policy decision should be audited");
+
+        let per_stmt_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM policy_audit WHERE action = 'search' AND resource = 'memory'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(per_stmt_count >= 1, "per-statement policy decision should be audited");
+    }
+
+    #[test]
+    fn audit_includes_session_and_trace() {
+        let conn = setup();
+
+        let c = ExecuteContext {
+            agent_id: "agent:traced".into(),
+            channel: Some("slack:general".into()),
+            session_id: Some("sess-42".into()),
+            trace_id: Some("trace-99".into()),
+        };
+        run(&conn, "SEARCH facts | TAKE 1", false, &c);
+
+        let (session, correlation): (Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT session_id, correlation_id FROM policy_audit WHERE actor = 'agent:traced' LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+
+        assert_eq!(session.as_deref(), Some("sess-42"));
+        assert_eq!(correlation.as_deref(), Some("trace-99"));
+    }
+
+    // ── Dry run still checks top-level policy ──
+
+    #[test]
+    fn dry_run_enforces_top_level_policy() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, action_pattern, resource_pattern, sql_pattern, message, created_at)
+             VALUES ('block-all', 'Block everything', 100, 'deny', 'query', 'mpq', '.*', 'All queries blocked', 1)",
+            [],
+        ).unwrap();
+
+        let resp = run(&conn, "SEARCH facts | TAKE 5", true, &ctx("agent:any"));
+        assert!(!resp.ok);
+        assert_eq!(resp.code, "policy_denied");
     }
 }
