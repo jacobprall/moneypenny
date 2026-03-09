@@ -1,21 +1,23 @@
 use anyhow::Result;
 use serde_json::{Value, json};
 
-pub const TOOL_QUERY: &str = "moneypenny.query";
-pub const TOOL_CAPABILITIES: &str = "moneypenny.capabilities";
+pub const TOOL_FACTS: &str = "moneypenny.facts";
+pub const TOOL_KNOWLEDGE: &str = "moneypenny.knowledge";
+pub const TOOL_POLICY: &str = "moneypenny.policy";
+pub const TOOL_ACTIVITY: &str = "moneypenny.activity";
 pub const TOOL_EXECUTE: &str = "moneypenny.execute";
 
 // Legacy constants — kept so routing still resolves old tool calls gracefully.
-pub const TOOL_MEMORY: &str = "moneypenny.memory";
-pub const TOOL_KNOWLEDGE: &str = "moneypenny.knowledge";
-pub const TOOL_POLICY: &str = "moneypenny.policy";
-pub const TOOL_JOBS: &str = "moneypenny.jobs";
-pub const TOOL_AUDIT: &str = "moneypenny.audit";
-pub const TOOL_INGEST: &str = "moneypenny.ingest";
-pub const TOOL_EMBEDDING: &str = "moneypenny.embedding";
-pub const TOOL_SESSION: &str = "moneypenny.session";
-pub const TOOL_AGENT: &str = "moneypenny.agent";
-pub const TOOL_TOOLS: &str = "moneypenny.tools";
+pub const TOOL_QUERY: &str = "moneypenny.query";
+pub const TOOL_CAPABILITIES: &str = "moneypenny.capabilities";
+const TOOL_MEMORY: &str = "moneypenny.memory";
+const TOOL_JOBS: &str = "moneypenny.jobs";
+const TOOL_AUDIT: &str = "moneypenny.audit";
+const TOOL_INGEST: &str = "moneypenny.ingest";
+const TOOL_EMBEDDING: &str = "moneypenny.embedding";
+const TOOL_SESSION: &str = "moneypenny.session";
+const TOOL_AGENT: &str = "moneypenny.agent";
+const TOOL_TOOLS: &str = "moneypenny.tools";
 
 #[derive(Debug, Clone)]
 pub enum RoutedToolCall {
@@ -35,120 +37,145 @@ pub enum RoutedToolCall {
     },
 }
 
+// ── MCP tool definitions ─────────────────────────────────────────────
+
 pub fn tools_list() -> Value {
     let tools = vec![
-        mp_core::dsl::tool_definition(),
-        json!({
-            "name": TOOL_CAPABILITIES,
-            "description": "Moneypenny: capability guide. Returns domain summaries and example MPQ expressions. Use when you need to discover what operations are available.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "domain": { "type": "string", "description": "Optional domain filter (memory|knowledge|policy|jobs|audit|ingest|embedding|session|agent|tools)" }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": TOOL_EXECUTE,
-            "description": "Moneypenny: direct operation call. Prefer moneypenny.query (MPQ) for discoverability. Use EXEC in MPQ or this tool to call any canonical operation by name.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "op": { "type": "string", "description": "Canonical operation name" },
-                    "args": { "type": "object", "default": {} },
-                    "request_id": { "type": "string" },
-                    "idempotency_key": { "type": "string" },
-                    "agent_id": { "type": "string" },
-                    "tenant_id": { "type": "string" },
-                    "user_id": { "type": "string" },
-                    "channel": { "type": "string" },
-                    "session_id": { "type": "string" },
-                    "trace_id": { "type": "string" }
-                },
-                "required": ["op"],
-                "additionalProperties": true
-            }
-        }),
+        tool_facts(),
+        tool_knowledge(),
+        tool_policy(),
+        tool_activity(),
+        tool_execute(),
     ];
     json!({ "tools": tools })
 }
 
-pub fn capabilities(domain_filter: Option<&str>) -> Value {
-    let cards = vec![
-        card(
-            "memory",
-            TOOL_QUERY,
-            &["SEARCH facts", "INSERT facts", "UPDATE facts", "DELETE facts"],
-            "Store and retrieve durable facts.",
-        ),
-        card(
-            "knowledge",
-            TOOL_QUERY,
-            &["INGEST \"content or file://path\" AS \"title\"", "SEARCH knowledge", "EXEC \"knowledge.list\" {}"],
-            "Ingest and query documents/chunks.",
-        ),
-        card(
-            "policy",
-            TOOL_QUERY,
-            &["ADD POLICY", "LIST POLICY", "EVAL POLICY"],
-            "Governance policy authoring and evaluation.",
-        ),
-        card(
-            "jobs",
-            TOOL_QUERY,
-            &["ADD JOB", "LIST JOB", "RUN JOB", "PAUSE JOB", "RESUME JOB"],
-            "Scheduled automation and job lifecycle.",
-        ),
-        card(
-            "audit",
-            TOOL_QUERY,
-            &["SEARCH audit", "LIST audit"],
-            "Queryable governance trail.",
-        ),
-        card(
-            "ingest",
-            TOOL_QUERY,
-            &["INGEST EVENTS \"cursor\"", "INGEST EVENTS \"cursor\" FROM \"/path/to/file.jsonl\"", "EXEC \"ingest.status\" {\"limit\": 5}"],
-            "External event ingestion (Cursor, Claude Code, custom JSONL).",
-        ),
-        card(
-            "session",
-            TOOL_QUERY,
-            &["SESSION RESOLVE", "SESSION LIST"],
-            "Session lookup and routing.",
-        ),
-        card(
-            "agent",
-            TOOL_QUERY,
-            &["AGENT CREATE", "AGENT DELETE", "AGENT CONFIG"],
-            "Agent administration.",
-        ),
-        card(
-            "tools",
-            TOOL_QUERY,
-            &["ADD SKILL", "PROMOTE SKILL", "ADD JS_TOOL", "LIST JS_TOOL", "DELETE JS_TOOL"],
-            "Skill and JS tool management.",
-        ),
-    ];
-
-    let filtered = if let Some(domain) = domain_filter {
-        cards
-            .into_iter()
-            .filter(|c| c["domain"].as_str() == Some(domain))
-            .collect::<Vec<_>>()
-    } else {
-        cards
-    };
-
+fn tool_facts() -> Value {
     json!({
-        "domains": filtered,
-        "hint": "All operations are expressible via moneypenny.query using EXEC \"op.name\" {args}. Domain-specific syntax (SEARCH, INSERT, etc.) is available for common operations."
+        "name": TOOL_FACTS,
+        "description": "Manage durable facts — persistent knowledge the agent remembers across sessions.\n\nActions: search, add, get, update, delete",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["search", "add", "get", "update", "delete"],
+                    "description": "search: hybrid search across facts (and optionally knowledge/logs)\nadd: store a new fact\nget: retrieve a fact by ID\nupdate: update an existing fact\ndelete: remove a fact"
+                },
+                "input": {
+                    "type": "object",
+                    "description": "Action-specific parameters:\n- search: {query, limit?}\n- add: {content, summary?, pointer?, keywords?, confidence?}\n- get: {id}\n- update: {id, content, summary?, pointer?}\n- delete: {id, reason?}",
+                    "default": {}
+                }
+            },
+            "required": ["action"],
+            "additionalProperties": false
+        }
     })
 }
 
+fn tool_knowledge() -> Value {
+    json!({
+        "name": TOOL_KNOWLEDGE,
+        "description": "Ingest and retrieve documents — the agent's long-term reference library.\n\nActions: ingest, search, list",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["ingest", "search", "list"],
+                    "description": "ingest: add a document (provide content directly, or pass a URL or file:// path to fetch automatically)\nsearch: hybrid search across ingested documents\nlist: list all ingested documents"
+                },
+                "input": {
+                    "type": "object",
+                    "description": "Action-specific parameters:\n- ingest: {path?, content?, title?} — pass path as an HTTP/HTTPS URL to fetch and ingest a webpage, or provide content directly\n- search: {query, limit?}\n- list: {}",
+                    "default": {}
+                }
+            },
+            "required": ["action"],
+            "additionalProperties": false
+        }
+    })
+}
+
+fn tool_policy() -> Value {
+    json!({
+        "name": TOOL_POLICY,
+        "description": "Governance policies — control what agents can and cannot do.\n\nActions: add, list, disable, evaluate",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["add", "list", "disable", "evaluate"],
+                    "description": "add: create a new policy rule\nlist: list all policies (with optional filters)\ndisable: disable a policy by ID\nevaluate: test whether an action would be allowed"
+                },
+                "input": {
+                    "type": "object",
+                    "description": "Action-specific parameters:\n- add: {name, effect?, priority?, actor_pattern?, action_pattern?, resource_pattern?, sql_pattern?, argument_pattern?, message?}\n- list: {enabled?, effect?, limit?}\n- disable: {id}\n- evaluate: {actor, action, resource}",
+                    "default": {}
+                }
+            },
+            "required": ["action"],
+            "additionalProperties": false
+        }
+    })
+}
+
+fn tool_activity() -> Value {
+    json!({
+        "name": TOOL_ACTIVITY,
+        "description": "Query session history and audit trail — see what happened and why.\n\nActions: query",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["query"],
+                    "description": "query: search session events and policy decisions"
+                },
+                "input": {
+                    "type": "object",
+                    "description": "Parameters:\n- source?: 'events' (session history), 'decisions' (policy audit), or 'all' (default: 'all')\n- event?: filter by event type (e.g. 'beforeShellExecution')\n- action?: filter by action\n- resource?: filter by resource\n- agent_id?: filter by agent\n- conversation_id?: filter by session\n- query?: free-text search\n- limit?: max results (default 50)",
+                    "default": {}
+                }
+            },
+            "required": ["action"],
+            "additionalProperties": false
+        }
+    })
+}
+
+fn tool_execute() -> Value {
+    json!({
+        "name": TOOL_EXECUTE,
+        "description": "Direct operation call — escape hatch for any canonical operation not covered by the domain tools above.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "op": { "type": "string", "description": "Canonical operation name (e.g. 'job.create', 'ingest.events')" },
+                "args": { "type": "object", "default": {} },
+                "request_id": { "type": "string" },
+                "idempotency_key": { "type": "string" },
+                "agent_id": { "type": "string" },
+                "tenant_id": { "type": "string" },
+                "user_id": { "type": "string" },
+                "channel": { "type": "string" },
+                "session_id": { "type": "string" },
+                "trace_id": { "type": "string" }
+            },
+            "required": ["op"],
+            "additionalProperties": true
+        }
+    })
+}
+
+// ── Routing ──────────────────────────────────────────────────────────
+
 pub fn route_tool_call(tool_name: &str, arguments: &Value) -> Result<RoutedToolCall> {
     let normalized = normalize_tool_name(tool_name);
+
+    // Legacy MPQ routing — still supported for backward compat
     if normalized == "query" {
         let expression = arguments
             .get("expression")
@@ -165,12 +192,12 @@ pub fn route_tool_call(tool_name: &str, arguments: &Value) -> Result<RoutedToolC
     }
 
     if normalized == "capabilities" {
-        let domain = arguments.get("domain").and_then(Value::as_str);
         return Ok(RoutedToolCall::Capabilities {
-            payload: capabilities(domain),
+            payload: capabilities(None),
         });
     }
 
+    // Direct execute passthrough
     if normalized == "execute" {
         let op = arguments
             .get("op")
@@ -189,9 +216,7 @@ pub fn route_tool_call(tool_name: &str, arguments: &Value) -> Result<RoutedToolC
         });
     }
 
-    // Legacy domain tool routing — these tools are no longer advertised on the
-    // MCP surface but we still resolve them so in-flight or cached agents don't
-    // crash.  They route through the same OperationRequest path as before.
+    // Domain tool routing
     let input = arguments.get("input").cloned().unwrap_or_else(|| json!({}));
     if !input.is_object() {
         anyhow::bail!("tool input must be an object");
@@ -202,9 +227,12 @@ pub fn route_tool_call(tool_name: &str, arguments: &Value) -> Result<RoutedToolC
         .ok_or_else(|| anyhow::anyhow!("tool call requires string field 'action'"))?;
 
     let (op, args, domain_name) = match normalized.as_str() {
-        "memory" => route_memory(action, input)?,
+        "facts" => route_facts(action, input)?,
         "knowledge" => route_knowledge(action, input)?,
         "policy" => route_policy(action, input)?,
+        "activity" => route_activity(action, input)?,
+        // Legacy domain tools — still resolved
+        "memory" => route_legacy_memory(action, input)?,
         "jobs" => route_jobs(action, input)?,
         "audit" => route_audit(action, input)?,
         "ingest" => route_ingest(action, input)?,
@@ -226,21 +254,31 @@ pub fn route_tool_call(tool_name: &str, arguments: &Value) -> Result<RoutedToolC
 
 pub fn covered_ops() -> &'static [&'static str] {
     &[
+        // facts
         "memory.search",
         "memory.fact.add",
         "memory.fact.update",
         "memory.fact.get",
         "memory.fact.compaction.reset",
         "fact.delete",
+        // knowledge
         "knowledge.ingest",
         "knowledge.search",
         "knowledge.list",
+        // policy
         "policy.add",
+        "policy.list",
+        "policy.disable",
         "policy.evaluate",
         "policy.explain",
         "policy.spec.plan",
         "policy.spec.confirm",
         "policy.spec.apply",
+        // activity
+        "activity.query",
+        "audit.query",
+        "audit.append",
+        // jobs (via execute)
         "job.create",
         "job.list",
         "job.run",
@@ -250,8 +288,7 @@ pub fn covered_ops() -> &'static [&'static str] {
         "job.spec.plan",
         "job.spec.confirm",
         "job.spec.apply",
-        "audit.query",
-        "audit.append",
+        // other (via execute)
         "ingest.events",
         "ingest.status",
         "ingest.replay",
@@ -274,28 +311,44 @@ pub fn covered_ops() -> &'static [&'static str] {
 }
 
 pub fn next_actions(_domain_tool: &str, _action: &str) -> Vec<Value> {
-    // Legacy domain tool chaining is no longer needed — MPQ handles
-    // multi-statement expressions natively via semicolons.
     vec![]
 }
 
-// ── Legacy domain routing (not advertised, still resolved) ───────────
+// ── Capabilities (still used by legacy routing) ──────────────────────
 
-fn route_memory(action: &str, input: Value) -> Result<(String, Value, &'static str)> {
+pub fn capabilities(domain_filter: Option<&str>) -> Value {
+    let cards = vec![
+        card("facts", TOOL_FACTS, &["search", "add", "get", "update", "delete"], "Durable facts — persistent knowledge across sessions."),
+        card("knowledge", TOOL_KNOWLEDGE, &["ingest", "search", "list"], "Document ingestion and retrieval."),
+        card("policy", TOOL_POLICY, &["add", "list", "disable", "evaluate"], "Governance policy management."),
+        card("activity", TOOL_ACTIVITY, &["query"], "Session history and audit trail."),
+        card("execute", TOOL_EXECUTE, &["(any canonical operation)"], "Direct operation call — escape hatch."),
+    ];
+
+    let filtered = if let Some(domain) = domain_filter {
+        cards.into_iter().filter(|c| c["domain"].as_str() == Some(domain)).collect::<Vec<_>>()
+    } else {
+        cards
+    };
+
+    json!({
+        "domains": filtered,
+        "hint": "Use the domain tools (moneypenny.facts, moneypenny.knowledge, moneypenny.policy, moneypenny.activity) for common operations. Use moneypenny.execute for anything else."
+    })
+}
+
+// ── MVP domain routing ───────────────────────────────────────────────
+
+fn route_facts(action: &str, input: Value) -> Result<(String, Value, &'static str)> {
     let op = match action {
         "search" => "memory.search",
         "add" => "memory.fact.add",
-        "update" => "memory.fact.update",
         "get" => "memory.fact.get",
+        "update" => "memory.fact.update",
         "delete" | "forget" => "fact.delete",
-        "reset_compaction" => "memory.fact.compaction.reset",
-        _ => invalid_action(
-            "memory",
-            action,
-            &["search", "add", "update", "get", "delete", "reset_compaction"],
-        )?,
+        _ => invalid_action("facts", action, &["search", "add", "get", "update", "delete"])?,
     };
-    Ok((op.to_string(), input, TOOL_MEMORY))
+    Ok((op.to_string(), input, TOOL_FACTS))
 }
 
 fn route_knowledge(action: &str, input: Value) -> Result<(String, Value, &'static str)> {
@@ -311,18 +364,40 @@ fn route_knowledge(action: &str, input: Value) -> Result<(String, Value, &'stati
 fn route_policy(action: &str, input: Value) -> Result<(String, Value, &'static str)> {
     let op = match action {
         "add" => "policy.add",
+        "list" => "policy.list",
+        "disable" => "policy.disable",
         "evaluate" => "policy.evaluate",
         "explain" => "policy.explain",
-        "spec_plan" => "policy.spec.plan",
-        "spec_confirm" => "policy.spec.confirm",
-        "spec_apply" => "policy.spec.apply",
-        _ => invalid_action(
-            "policy",
-            action,
-            &["add", "evaluate", "explain", "spec_plan", "spec_confirm", "spec_apply"],
-        )?,
+        _ => invalid_action("policy", action, &["add", "list", "disable", "evaluate", "explain"])?,
     };
     Ok((op.to_string(), input, TOOL_POLICY))
+}
+
+fn route_activity(action: &str, input: Value) -> Result<(String, Value, &'static str)> {
+    let op = match action {
+        "query" => "activity.query",
+        _ => invalid_action("activity", action, &["query"])?,
+    };
+    Ok((op.to_string(), input, TOOL_ACTIVITY))
+}
+
+// ── Legacy domain routing (not advertised, still resolved) ───────────
+
+fn route_legacy_memory(action: &str, input: Value) -> Result<(String, Value, &'static str)> {
+    let op = match action {
+        "search" => "memory.search",
+        "add" => "memory.fact.add",
+        "update" => "memory.fact.update",
+        "get" => "memory.fact.get",
+        "delete" | "forget" => "fact.delete",
+        "reset_compaction" => "memory.fact.compaction.reset",
+        _ => invalid_action(
+            "memory",
+            action,
+            &["search", "add", "update", "get", "delete", "reset_compaction"],
+        )?,
+    };
+    Ok((op.to_string(), input, TOOL_MEMORY))
 }
 
 fn route_jobs(action: &str, input: Value) -> Result<(String, Value, &'static str)> {
@@ -415,6 +490,8 @@ fn route_tools(action: &str, input: Value) -> Result<(String, Value, &'static st
     Ok((op.to_string(), input, TOOL_TOOLS))
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────
+
 fn invalid_action(domain: &str, action: &str, allowed: &[&str]) -> Result<&'static str> {
     anyhow::bail!(
         "invalid action '{action}' for domain '{domain}'. allowed actions: {}",
@@ -422,12 +499,12 @@ fn invalid_action(domain: &str, action: &str, allowed: &[&str]) -> Result<&'stat
     )
 }
 
-fn card(domain: &str, tool: &str, examples: &[&str], summary: &str) -> Value {
+fn card(domain: &str, tool: &str, actions: &[&str], summary: &str) -> Value {
     json!({
         "domain": domain,
         "tool": tool,
         "summary": summary,
-        "examples": examples
+        "actions": actions
     })
 }
 
@@ -443,33 +520,81 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tools_list_exposes_mpq_surface() {
+    fn tools_list_exposes_domain_surface() {
         let list = tools_list();
         let tools = list["tools"].as_array().cloned().unwrap_or_default();
-        assert_eq!(tools.len(), 3, "MCP surface: query + capabilities + execute");
-        assert!(tools.iter().any(|t| t["name"] == TOOL_QUERY));
-        assert!(tools.iter().any(|t| t["name"] == TOOL_CAPABILITIES));
+        assert_eq!(tools.len(), 5, "MCP surface: facts + knowledge + policy + activity + execute");
+        assert!(tools.iter().any(|t| t["name"] == TOOL_FACTS));
+        assert!(tools.iter().any(|t| t["name"] == TOOL_KNOWLEDGE));
+        assert!(tools.iter().any(|t| t["name"] == TOOL_POLICY));
+        assert!(tools.iter().any(|t| t["name"] == TOOL_ACTIVITY));
         assert!(tools.iter().any(|t| t["name"] == TOOL_EXECUTE));
+        // DSL/query tool should NOT be on the MCP surface
+        assert!(!tools.iter().any(|t| t["name"] == TOOL_QUERY));
     }
 
     #[test]
-    fn legacy_domain_tools_still_route() {
+    fn route_facts_search() {
         let routed = route_tool_call(
-            TOOL_JOBS,
-            &json!({
-                "action": "resume",
-                "input": { "id": "job-1" }
-            }),
-        )
-        .expect("legacy route should still work");
+            TOOL_FACTS,
+            &json!({"action": "search", "input": {"query": "auth"}}),
+        ).unwrap();
         match routed {
-            RoutedToolCall::Operation {
-                op,
-                execute_fallback,
-                ..
-            } => {
-                assert_eq!(op, "job.resume");
-                assert!(!execute_fallback);
+            RoutedToolCall::Operation { op, domain_tool, action, .. } => {
+                assert_eq!(op, "memory.search");
+                assert_eq!(domain_tool, TOOL_FACTS);
+                assert_eq!(action, "search");
+            }
+            _ => panic!("expected operation"),
+        }
+    }
+
+    #[test]
+    fn route_facts_add() {
+        let routed = route_tool_call(
+            TOOL_FACTS,
+            &json!({"action": "add", "input": {"content": "test fact"}}),
+        ).unwrap();
+        match routed {
+            RoutedToolCall::Operation { op, .. } => assert_eq!(op, "memory.fact.add"),
+            _ => panic!("expected operation"),
+        }
+    }
+
+    #[test]
+    fn route_policy_list() {
+        let routed = route_tool_call(
+            TOOL_POLICY,
+            &json!({"action": "list", "input": {}}),
+        ).unwrap();
+        match routed {
+            RoutedToolCall::Operation { op, .. } => assert_eq!(op, "policy.list"),
+            _ => panic!("expected operation"),
+        }
+    }
+
+    #[test]
+    fn route_policy_disable() {
+        let routed = route_tool_call(
+            TOOL_POLICY,
+            &json!({"action": "disable", "input": {"id": "abc"}}),
+        ).unwrap();
+        match routed {
+            RoutedToolCall::Operation { op, .. } => assert_eq!(op, "policy.disable"),
+            _ => panic!("expected operation"),
+        }
+    }
+
+    #[test]
+    fn route_activity_query() {
+        let routed = route_tool_call(
+            TOOL_ACTIVITY,
+            &json!({"action": "query", "input": {"source": "events", "limit": 10}}),
+        ).unwrap();
+        match routed {
+            RoutedToolCall::Operation { op, domain_tool, .. } => {
+                assert_eq!(op, "activity.query");
+                assert_eq!(domain_tool, TOOL_ACTIVITY);
             }
             _ => panic!("expected operation"),
         }
@@ -479,36 +604,50 @@ mod tests {
     fn route_execute_fallback() {
         let routed = route_tool_call(
             TOOL_EXECUTE,
-            &json!({
-                "op": "ingest.status",
-                "args": { "limit": 3 }
-            }),
-        )
-        .expect("route execute");
+            &json!({"op": "ingest.status", "args": {"limit": 3}}),
+        ).unwrap();
         match routed {
-            RoutedToolCall::Operation {
-                execute_fallback, ..
-            } => assert!(execute_fallback),
+            RoutedToolCall::Operation { execute_fallback, .. } => assert!(execute_fallback),
             _ => panic!("expected operation"),
         }
     }
 
     #[test]
-    fn route_mpq_query() {
+    fn legacy_mpq_query_still_routes() {
         let routed = route_tool_call(
             TOOL_QUERY,
-            &json!({
-                "expression": "SEARCH facts WHERE topic = \"auth\"",
-                "dry_run": false
-            }),
-        )
-        .expect("route mpq");
+            &json!({"expression": "SEARCH facts", "dry_run": false}),
+        ).unwrap();
         match routed {
             RoutedToolCall::MpqQuery { expression, dry_run } => {
-                assert_eq!(expression, "SEARCH facts WHERE topic = \"auth\"");
+                assert_eq!(expression, "SEARCH facts");
                 assert!(!dry_run);
             }
             _ => panic!("expected MpqQuery"),
+        }
+    }
+
+    #[test]
+    fn legacy_memory_tool_still_routes() {
+        let routed = route_tool_call(
+            "moneypenny.memory",
+            &json!({"action": "search", "input": {"query": "test"}}),
+        ).unwrap();
+        match routed {
+            RoutedToolCall::Operation { op, .. } => assert_eq!(op, "memory.search"),
+            _ => panic!("expected operation"),
+        }
+    }
+
+    #[test]
+    fn legacy_jobs_tool_still_routes() {
+        let routed = route_tool_call(
+            "moneypenny.jobs",
+            &json!({"action": "resume", "input": {"id": "job-1"}}),
+        ).unwrap();
+        match routed {
+            RoutedToolCall::Operation { op, .. } => assert_eq!(op, "job.resume"),
+            _ => panic!("expected operation"),
         }
     }
 }

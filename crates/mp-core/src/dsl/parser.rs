@@ -620,6 +620,7 @@ fn parse_create_head(p: &mut Parser) -> Result<Head, ParseError> {
 }
 
 fn parse_create_policy(p: &mut Parser) -> Result<Head, ParseError> {
+    let name = p.expect_string()?;
     let effect_str = p.expect_ident()?;
     let effect = PolicyEffect::from_str(&effect_str).ok_or_else(|| {
         p.error_with_hint(
@@ -647,6 +648,7 @@ fn parse_create_policy(p: &mut Parser) -> Result<Head, ParseError> {
     };
 
     Ok(Head::CreatePolicy(CreatePolicyHead {
+        name,
         effect,
         action,
         resource,
@@ -1121,11 +1123,12 @@ mod tests {
     #[test]
     fn parse_create_policy() {
         let prog = parse_expr(
-            r#"CREATE POLICY deny DELETE ON facts FOR AGENT "junior" MESSAGE "no deletes""#,
+            r#"CREATE POLICY "no-deletes" deny DELETE ON facts FOR AGENT "junior" MESSAGE "no deletes""#,
         )
         .unwrap();
         match &prog.statements[0].head {
             Head::CreatePolicy(cp) => {
+                assert_eq!(cp.name, "no-deletes");
                 assert_eq!(cp.effect, PolicyEffect::Deny);
                 assert_eq!(cp.action, "delete");
                 assert_eq!(cp.agent.as_deref(), Some("junior"));

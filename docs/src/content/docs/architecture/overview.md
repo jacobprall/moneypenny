@@ -105,8 +105,10 @@ session depth, and task requirements.
 
 ## Design Principles
 
-- **ACID over full agent state.** Every turn is a transaction. If the LLM
-  call fails, memory and audit roll back cleanly.
+- **Database as runtime.** Policy evaluation, fact extraction, knowledge
+  search, tool governance, and audit logging all execute inside SQLite.
+  Critical subsystems (extraction, embedding, DSL execution) use their
+  own transactions for internal atomicity.
 - **No external dependencies.** SQLite provides storage, search, sync,
   and compute. No Postgres, Redis, or Docker required.
 - **Policy is authoritative.** Every action passes through the policy engine.

@@ -44,6 +44,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Init => unreachable!(),
         Command::Start => cmd_start(&config, config_path).await,
+        Command::Serve { agent } => cmd_serve(&config, config_path, agent).await,
         Command::Stop => cmd_stop(&config).await,
         Command::Agent(cmd) => cmd_agent(&config, cmd).await,
         Command::Chat { agent, session_id } => cmd_chat(&config, agent, session_id).await,
@@ -109,7 +110,7 @@ async fn main() -> Result<()> {
         Command::Health => cmd_health(&config).await,
         Command::Worker { agent } => cmd_worker(&config, &agent).await,
         Command::Sidecar { agent } => cmd_sidecar(&config, agent).await,
-        Command::Setup(cmd) => cmd_setup(&config, cmd).await,
+        Command::Setup(cmd) => cmd_setup(&config, config_path, cmd).await,
         Command::Hook { event, agent } => cmd_hook(&config, &event, agent).await,
     }
 }
@@ -1391,16 +1392,15 @@ async fn cmd_init(config_path: &str) -> Result<()> {
     ui::blank();
     ui::info("Ready! Next steps:");
     ui::blank();
-    ui::info("Docker (recommended):");
-    ui::hint("docker build -t moneypenny .");
-    ui::hint("mp setup cursor                    # generates Docker-based MCP config");
-    ui::blank();
-    ui::info("Local (alternative):");
-    ui::hint("mp setup cursor --local            # uses local binary instead");
+    ui::hint("mp setup cursor --local            # register MCP server, hooks, and agent rules");
     ui::blank();
     ui::info("Then reload Cursor and ask: \"What Moneypenny tools do you have?\"");
     ui::blank();
-    ui::info("Tip: Set ANTHROPIC_API_KEY in .env for LLM features (mp chat, mp ask).");
+    ui::info("CLI agent:");
+    ui::hint("mp chat                            # interactive terminal chat");
+    ui::hint("mp send main \"remember X\"          # one-shot message");
+    ui::blank();
+    ui::info("Tip: Set ANTHROPIC_API_KEY in .env for LLM features (mp chat, mp send).");
     ui::blank();
 
     Ok(())
@@ -1410,7 +1410,7 @@ async fn cmd_init(config_path: &str) -> Result<()> {
 // Setup (MCP registration for AI coding agents)
 // =========================================================================
 
-async fn cmd_setup(config: &Config, cmd: cli::SetupCommand) -> Result<()> {
+async fn cmd_setup(config: &Config, config_path: &Path, cmd: cli::SetupCommand) -> Result<()> {
     match &cmd {
         cli::SetupCommand::Models => {
             ui::blank();
@@ -1440,6 +1440,92 @@ async fn cmd_setup(config: &Config, cmd: cli::SetupCommand) -> Result<()> {
             ui::blank();
             return Ok(());
         }
+        cli::SetupCommand::ClaudeCode { agent, scope } => {
+            let ag = resolve_agent(config, agent.as_deref())?;
+            let project_dir = std::env::current_dir()?;
+            let data_dir = project_dir.join("mp-data");
+            let config_abs = std::fs::canonicalize(config_path)
+                .unwrap_or_else(|_| project_dir.join(config_path));
+            let mp_binary = std::env::current_exe()?
+                .canonicalize()
+                .unwrap_or_else(|_| std::env::current_exe().unwrap());
+            let mp_bin_str = mp_binary.to_string_lossy().to_string();
+
+            let mcp_entry = serde_json::json!({
+                "command": &mp_bin_str,
+                "args": [
+                    "--config", config_abs.to_string_lossy().as_ref(),
+                    "serve", "--agent", &ag.name
+                ],
+                "type": "stdio"
+            });
+
+            let mcp_path = if scope == "user" {
+                let home = std::env::var("HOME")
+                    .or_else(|_| std::env::var("USERPROFILE"))
+                    .unwrap_or_else(|_| "~".to_string());
+                std::path::PathBuf::from(home).join(".claude.json")
+            } else {
+                project_dir.join(".mcp.json")
+            };
+
+            upsert_json_mcp_config(&mcp_path, "moneypenny", mcp_entry)?;
+
+            let claude_md_path = project_dir.join("CLAUDE.md");
+            let agent_conn = mp_core::db::open(&config.agent_db_path(&ag.name))
+                .ok()
+                .and_then(|c| mp_core::schema::init_agent_db(&c).ok().map(|_| c));
+            let claude_md_content = generate_claude_md(agent_conn.as_ref());
+            if claude_md_path.exists() {
+                let existing = std::fs::read_to_string(&claude_md_path)?;
+                if existing.contains("## Moneypenny") {
+                    // Replace the existing Moneypenny section (from "## Moneypenny" to end
+                    // of file, or to the next top-level heading).
+                    let start = existing.find("## Moneypenny").unwrap();
+                    let before = &existing[..start];
+                    // Find the next "## " heading after the Moneypenny section start.
+                    let after_start = start + "## Moneypenny".len();
+                    let after = existing[after_start..]
+                        .find("\n## ")
+                        .map(|pos| &existing[after_start + pos..])
+                        .unwrap_or("");
+                    std::fs::write(&claude_md_path, format!("{before}{claude_md_content}{after}"))?;
+                    ui::success(format!("Updated Moneypenny instructions in {}", claude_md_path.display()));
+                } else {
+                    std::fs::write(&claude_md_path, format!("{existing}\n\n{claude_md_content}"))?;
+                    ui::success(format!("Appended Moneypenny instructions to {}", claude_md_path.display()));
+                }
+            } else {
+                std::fs::write(&claude_md_path, claude_md_content)?;
+                ui::success(format!("Wrote agent instructions to {}", claude_md_path.display()));
+            }
+
+            std::fs::create_dir_all(&data_dir)?;
+
+            ui::banner();
+            ui::success(format!("Registered MCP server in {}", mcp_path.display()));
+            ui::blank();
+            ui::field("Scope", 9, scope);
+            ui::field("Agent", 9, &ag.name);
+            ui::field("Binary", 9, &mp_bin_str);
+            ui::field("Data", 9, data_dir.display());
+            ui::field("Project", 9, project_dir.display());
+            ui::blank();
+            ui::info("What's configured:");
+            ui::hint("- MCP tools: moneypenny.facts, moneypenny.knowledge, moneypenny.policy, moneypenny.activity, moneypenny.execute");
+            ui::hint("- CLAUDE.md: agent instructions for using Moneypenny");
+            ui::blank();
+            ui::info("Next steps:");
+            ui::hint("1. Start Claude Code in this project directory");
+            ui::hint("2. Ask: \"What Moneypenny tools do you have?\"");
+            ui::blank();
+            ui::info("CLI agent (same database, same agent):");
+            ui::hint("mp chat                            # interactive terminal chat");
+            ui::hint("mp send main \"remember X\"          # one-shot message");
+            ui::blank();
+
+            return Ok(());
+        }
         _ => {}
     }
     let cli::SetupCommand::Cursor { agent, local, image } = &cmd else {
@@ -1448,36 +1534,38 @@ async fn cmd_setup(config: &Config, cmd: cli::SetupCommand) -> Result<()> {
     let ag = resolve_agent(config, agent.as_deref())?;
     let project_dir = std::env::current_dir()?;
     let data_dir = project_dir.join("mp-data");
+    let config_abs = std::fs::canonicalize(config_path)
+        .unwrap_or_else(|_| project_dir.join(config_path));
 
     let (mcp_server_entry, mode_label, hooks_config) = if *local {
         let mp_binary = std::env::current_exe()?
             .canonicalize()
             .unwrap_or_else(|_| std::env::current_exe().unwrap());
         let mp_bin_str = mp_binary.to_string_lossy().to_string();
-        let config_abs = project_dir.join("moneypenny.toml");
 
         let entry = serde_json::json!({
             "command": &mp_bin_str,
             "args": [
                 "--config", config_abs.to_string_lossy().as_ref(),
-                "sidecar", "--agent", &ag.name
+                "serve", "--agent", &ag.name
             ]
         });
         let hooks = generate_hooks_json(&mp_bin_str, &config_abs.to_string_lossy(), &ag.name);
         (entry, format!("local ({mp_bin_str})"), hooks)
     } else {
         let data_mount = format!("{}:/data", data_dir.display());
-        let config_abs = project_dir.join("moneypenny.toml");
         let config_mount = format!("{}:/app/moneypenny.toml:ro", config_abs.display());
+        let gateway_port = config.gateway.port;
         let entry = serde_json::json!({
             "command": "docker",
             "args": [
                 "run", "-i", "--rm",
+                "-p", format!("{gateway_port}:{gateway_port}"),
                 "-v", &data_mount,
                 "-v", &config_mount,
                 "-e", "ANTHROPIC_API_KEY",
                 &image,
-                "sidecar", "--agent", &ag.name
+                "serve", "--agent", &ag.name
             ]
         });
         let hooks = generate_hooks_json_docker(image, &data_mount, &config_mount, &ag.name);
@@ -1495,7 +1583,10 @@ async fn cmd_setup(config: &Config, cmd: cli::SetupCommand) -> Result<()> {
     let rules_dir = project_dir.join(".cursor").join("rules");
     std::fs::create_dir_all(&rules_dir)?;
     let rule_path = rules_dir.join("moneypenny.mdc");
-    std::fs::write(&rule_path, AGENT_INSTRUCTIONS)?;
+    let cursor_agent_conn = mp_core::db::open(&config.agent_db_path(&ag.name))
+        .ok()
+        .and_then(|c| mp_core::schema::init_agent_db(&c).ok().map(|_| c));
+    std::fs::write(&rule_path, generate_agent_instructions(cursor_agent_conn.as_ref()))?;
 
     // Write .cursor/hooks.json
     let hooks_json_path = project_dir.join(".cursor").join("hooks.json");
@@ -1520,15 +1611,20 @@ async fn cmd_setup(config: &Config, cmd: cli::SetupCommand) -> Result<()> {
         ui::hint(format!("docker run -it --rm -v {}:/data -e ANTHROPIC_API_KEY {image} init", data_dir.display()));
     }
     ui::blank();
-    ui::info("Governance:");
-    ui::hint("- All tool calls, shell commands, file edits, and MCP calls are audited");
-    ui::hint("- Policy engine enforces allow/deny on pre-execution hooks");
-    ui::hint("- View audit trail: mp audit");
-    ui::hint("- Add policies: mp policy add --name <name> --effect deny --action shell_exec");
+    ui::info("What's configured:");
+    ui::hint("- MCP tools: moneypenny.facts, moneypenny.knowledge, moneypenny.policy, moneypenny.activity, moneypenny.execute");
+    ui::hint("- Hooks: audit trail + policy enforcement on every tool call, shell, file edit");
+    ui::hint("- Agent rules: instructs Cursor how to use Moneypenny");
     ui::blank();
     ui::info("Next steps:");
     ui::hint("1. Restart Cursor (or reload the window)");
     ui::hint("2. Ask the agent: \"What Moneypenny tools do you have?\"");
+    if *local {
+        ui::blank();
+        ui::info("CLI agent (same database, same agent):");
+        ui::hint("mp chat                            # interactive terminal chat");
+        ui::hint("mp send main \"remember X\"          # one-shot message");
+    }
     ui::blank();
 
     Ok(())
@@ -1836,92 +1932,158 @@ fn generate_hooks_json_docker(image: &str, data_mount: &str, config_mount: &str,
     serde_json::to_string_pretty(&hooks).unwrap_or_default() + "\n"
 }
 
-const AGENT_INSTRUCTIONS: &str = r#"---
-description: Moneypenny MCP server - persistent memory, knowledge, and governance for AI agents
+fn generate_claude_md(agent_conn: Option<&rusqlite::Connection>) -> String {
+    let mut md = r#"## Moneypenny
+
+You have access to a Moneypenny MCP server. It provides persistent facts,
+knowledge retrieval, document ingestion, governance policies, and activity
+tracking.
+
+### "mp" prefix
+
+When the user starts a message with **"mp"** (e.g. "mp remember that we use
+Redis for caching", "mp search facts about auth", "mp ingest this doc"), treat
+it as a direct instruction to use Moneypenny. Translate the natural-language
+request into the appropriate tool call and execute it immediately.
+
+### Tools
+
+| Tool | Purpose |
+|------|---------|
+| `moneypenny.facts` | CRUD for durable facts — persistent knowledge across sessions. |
+| `moneypenny.knowledge` | Ingest and retrieve documents — long-term reference library. |
+| `moneypenny.policy` | Governance — control what agents can and cannot do. |
+| `moneypenny.activity` | Query session history and audit trail. |
+| `moneypenny.execute` | Escape hatch for any canonical operation. |
+
+**Important:** These tools are MCP tools served by the Moneypenny sidecar
+process. They must appear in your callable tool list. If they do not, the MCP
+server is not connected — tell the user to run `mp setup claude-code` in the
+project directory.
+
+### Tool usage
+
+Each domain tool takes an `action` string and an `input` object.
+
+**moneypenny.facts**: search, add, get, update, delete
+**moneypenny.knowledge**: ingest, search, list
+**moneypenny.policy**: add, list, disable, evaluate
+**moneypenny.activity**: query (source: events | decisions | all)
+**moneypenny.execute**: op + args (any canonical operation)
+
+### When to use Moneypenny
+
+- **User says "mp ..."**: Always route through Moneypenny
+- **Remembering things**: Use `moneypenny.facts` action `add`
+- **Recalling context**: Use `moneypenny.facts` action `search`
+- **Ingesting documents**: Use `moneypenny.knowledge` action `ingest`
+- **Activity trail**: Use `moneypenny.activity` action `query`
+- **Governance**: Use `moneypenny.policy` to manage rules
+
+### Best practices
+
+- Search before inserting facts to avoid duplicates
+- Use specific keywords when inserting facts
+- Set confidence scores to reflect certainty (0.0 to 1.0)
+- Use `moneypenny.execute` only for operations not covered by domain tools
+"#.to_string();
+
+    if let Some(conn) = agent_conn {
+        md.push('\n');
+        md.push_str(&mp_core::schema::generate_schema_summary(conn));
+    }
+
+    md
+}
+
+fn generate_agent_instructions(agent_conn: Option<&rusqlite::Connection>) -> String {
+    let mut md = r#"---
+description: Moneypenny MCP server - persistent facts, knowledge, governance, and activity tracking for AI agents
 globs:
 alwaysApply: true
 ---
 
 # Moneypenny
 
-You have access to a Moneypenny MCP server. It provides persistent memory,
-knowledge retrieval, document ingestion, governance policies, and scheduled jobs.
+You have access to a Moneypenny MCP server. It provides persistent facts,
+knowledge retrieval, document ingestion, governance policies, and activity
+tracking.
 
 ## "mp" prefix
 
 When the user starts a message with **"mp"** (e.g. "mp remember that we use
 Redis for caching", "mp search facts about auth", "mp ingest this doc"), treat
 it as a direct instruction to use Moneypenny. Translate the natural-language
-request into the appropriate `moneypenny.query` call and execute it immediately.
+request into the appropriate tool call and execute it immediately.
 
 ## Tools
 
 | Tool | Purpose |
 |------|---------|
-| `moneypenny.query` | **Primary.** Execute MPQ expressions (see syntax below). |
-| `moneypenny.capabilities` | Discover available domains and example expressions. |
-| `moneypenny.execute` | Fallback for advanced operations not yet in MPQ. |
+| `moneypenny.facts` | CRUD for durable facts — persistent knowledge across sessions. |
+| `moneypenny.knowledge` | Ingest and retrieve documents — long-term reference library. |
+| `moneypenny.policy` | Governance — control what agents can and cannot do. |
+| `moneypenny.activity` | Query session history and audit trail. |
+| `moneypenny.execute` | Escape hatch for any canonical operation. |
 
 **Important:** These tools are MCP tools served by the Moneypenny sidecar
 process. They must appear in your callable tool list. If they do not, the MCP
 server is not connected — tell the user to run `mp setup cursor` and restart
 Cursor (or reload the window).
 
-## MPQ syntax
+## Tool usage
 
-```
-SEARCH <store> [WHERE <filters>] [SINCE <duration>] [| SORT field ASC|DESC] [| TAKE n]
-INSERT INTO facts ("content", key=value ...)
-UPDATE facts SET key=value WHERE id = "id"
-DELETE FROM facts WHERE <filters>
-INGEST "url"
-SEARCH audit WHERE <filters> [| TAKE n]
-CREATE POLICY allow|deny|audit <action> ON <resource> [MESSAGE "reason"]
-CREATE JOB "name" SCHEDULE "cron" [TYPE type]
-```
+Each domain tool takes an `action` string and an `input` object.
 
-### Stores
+### moneypenny.facts
+- `search`: `{query, limit?}` — hybrid search across facts
+- `add`: `{content, summary?, keywords?, confidence?}` — store a new fact
+- `get`: `{id}` — retrieve a fact by ID
+- `update`: `{id, content, summary?}` — update an existing fact
+- `delete`: `{id, reason?}` — remove a fact
 
-`facts`, `knowledge`, `log`, `audit`
+### moneypenny.knowledge
+- `ingest`: `{path?, content?, title?}` — add a document (pass `path` as an HTTP URL to fetch a webpage, or provide `content` directly)
+- `search`: `{query, limit?}` — search ingested documents
+- `list`: `{}` — list all documents
 
-### Examples
+### moneypenny.policy
+- `add`: `{name, effect?, priority?, action_pattern?, resource_pattern?, sql_pattern?, message?}` — create a policy
+- `list`: `{enabled?, effect?, limit?}` — list policies
+- `disable`: `{id}` — disable a policy
+- `evaluate`: `{actor, action, resource}` — test if action is allowed
 
-```
-SEARCH facts WHERE topic = "auth" SINCE 7d | SORT confidence DESC | TAKE 10
-INSERT INTO facts ("Redis preferred for caching", topic="infrastructure", confidence=0.9)
-DELETE FROM facts WHERE confidence < 0.3 AND BEFORE 30d
-SEARCH knowledge WHERE "deployment runbook" | TAKE 5
-SEARCH facts | COUNT
-```
+### moneypenny.activity
+- `query`: `{source?, event?, action?, resource?, query?, limit?}` — query events and decisions
 
-### Multi-statement
-
-Separate with `;` to run multiple operations:
-
-```
-INSERT INTO facts ("new fact"); SEARCH facts | TAKE 5
-```
-
-### Dry run
-
-Set `dry_run: true` to parse and policy-check without executing.
+### moneypenny.execute
+- `op`: canonical operation name (e.g. `job.create`, `ingest.events`)
+- `args`: operation-specific arguments
 
 ## When to use Moneypenny
 
-- **User says "mp ..."**: Always route through Moneypenny (see prefix rule above)
-- **Remembering things**: Store facts the user tells you to remember
-- **Recalling context**: Search facts and knowledge before answering questions
-- **Ingesting documents**: Use INGEST to add URLs or documents to the knowledge store
-- **Audit trail**: Search audit logs to understand what happened
-- **Governance**: Create policies to control what agents can do
+- **User says "mp ..."**: Always route through Moneypenny
+- **Remembering things**: Use `moneypenny.facts` action `add`
+- **Recalling context**: Use `moneypenny.facts` action `search`
+- **Ingesting documents**: Use `moneypenny.knowledge` action `ingest`
+- **Activity trail**: Use `moneypenny.activity` action `query`
+- **Governance**: Use `moneypenny.policy` to manage rules
 
 ## Best practices
 
 - Search before inserting facts to avoid duplicates
-- Use specific topics and keywords when inserting facts
+- Use specific keywords when inserting facts
 - Set confidence scores to reflect certainty (0.0 to 1.0)
-- Prefer `moneypenny.query` over `moneypenny.execute` whenever possible
-"#;
+- Use `moneypenny.execute` only for operations not covered by domain tools
+"#.to_string();
+
+    if let Some(conn) = agent_conn {
+        md.push('\n');
+        md.push_str(&mp_core::schema::generate_schema_summary(conn));
+    }
+
+    md
+}
 
 fn upsert_json_mcp_config(
     path: &std::path::Path,
@@ -2300,6 +2462,291 @@ async fn cmd_start(config: &Config, config_path: &Path) -> Result<()> {
 
     let _ = std::fs::remove_file(&pid_path);
     ui::info("Goodbye.");
+    Ok(())
+}
+
+async fn cmd_serve(config: &Config, config_path: &Path, agent: Option<String>) -> Result<()> {
+    let shutdown = tokio::sync::broadcast::channel::<()>(1).0;
+
+    // Spawn one worker subprocess per agent and register each in the WorkerBus
+    let bus = WorkerBus::new();
+    let mut workers: Vec<WorkerHandle> = Vec::new();
+    for ag in &config.agents {
+        let (handle, w_stdin, w_stdout) = spawn_worker(config, config_path, &ag.name)?;
+        tracing::info!(agent = %ag.name, pid = handle.pid, "worker started");
+        bus.register(ag.name.clone(), w_stdin, w_stdout).await;
+        workers.push(handle);
+    }
+
+    // Spawn the scheduler loop
+    let sched_config = config.clone();
+    let mut sched_shutdown = shutdown.subscribe();
+    let scheduler_handle =
+        tokio::spawn(async move { run_scheduler(&sched_config, &mut sched_shutdown).await });
+
+    // Build the shared dispatcher used by all channel adapters.
+    let bus_for_dispatch = Arc::clone(&bus);
+    let dispatch: adapters::DispatchFn = Arc::new(move |agent, message, session_id| {
+        let bus = Arc::clone(&bus_for_dispatch);
+        Box::pin(async move {
+            bus.route_full(&agent, &message, session_id.as_deref())
+                .await
+        })
+    });
+
+    // Canonical operation HTTP parity dispatcher.
+    let config_for_ops = config.clone();
+    let op_dispatch: adapters::OpDispatchFn = Arc::new(move |payload| {
+        let config = config_for_ops.clone();
+        Box::pin(async move {
+            let default_agent = config
+                .agents
+                .first()
+                .map(|a| a.name.clone())
+                .unwrap_or_else(|| "main".into());
+
+            let req = match build_sidecar_request(payload, &default_agent) {
+                Ok(r) => r,
+                Err(e) => return Ok(sidecar_error_response("invalid_request", e.to_string())),
+            };
+
+            let conn = match open_agent_db(&config, &req.actor.agent_id) {
+                Ok(c) => c,
+                Err(e) => return Ok(sidecar_error_response("invalid_agent", e.to_string())),
+            };
+
+            let resp = match mp_core::operations::execute(&conn, &req) {
+                Ok(r) => r,
+                Err(e) => {
+                    return Ok(sidecar_error_response(
+                        "http_ops_execute_error",
+                        e.to_string(),
+                    ));
+                }
+            };
+
+            Ok(serde_json::to_value(resp)
+                .unwrap_or_else(|e| sidecar_error_response("serialization_error", e.to_string())))
+        })
+    });
+
+    // Force-enable HTTP channel in serve mode (use gateway port if not explicitly configured)
+    let http_cfg = config.channels.http.clone().or_else(|| {
+        Some(mp_core::config::HttpChannelConfig {
+            port: config.gateway.port,
+            api_key: None,
+        })
+    });
+    let slack_cfg = config.channels.slack.clone();
+    let discord_cfg = config.channels.discord.clone();
+    let default_agent_name = config
+        .agents
+        .first()
+        .map(|a| a.name.clone())
+        .unwrap_or_else(|| "main".into());
+
+    {
+        let dispatch_clone = Arc::clone(&dispatch);
+        let op_dispatch_clone = Arc::clone(&op_dispatch);
+        let srv_shutdown = shutdown.subscribe();
+        let da = default_agent_name.clone();
+        tokio::spawn(async move {
+            if let Err(e) = adapters::run_http_server(
+                http_cfg.as_ref(),
+                slack_cfg.as_ref(),
+                discord_cfg.as_ref(),
+                da,
+                dispatch_clone,
+                op_dispatch_clone,
+                srv_shutdown,
+            )
+            .await
+            {
+                tracing::error!("HTTP server error: {e}");
+            }
+        });
+    }
+
+    // Spawn the Telegram long-polling adapter if configured.
+    if let Some(tg_cfg) = config.channels.telegram.clone() {
+        let dispatch_clone = Arc::clone(&dispatch);
+        let tg_shutdown = shutdown.subscribe();
+        let da = default_agent_name.clone();
+        tokio::spawn(async move {
+            adapters::run_telegram_polling(tg_cfg, da, dispatch_clone, tg_shutdown).await;
+        });
+    }
+
+    // Spawn the periodic sync loop if configured.
+    let has_sync = config.sync.interval_secs > 0
+        && (!config.sync.peers.is_empty() || config.sync.cloud_url.is_some());
+    if has_sync {
+        let sync_config = config.sync.clone();
+        let sync_data_dir = config.data_dir.clone();
+        let sync_agents: Vec<String> = config.agents.iter().map(|a| a.name.clone()).collect();
+        let mut sync_shutdown = shutdown.subscribe();
+        tokio::spawn(async move {
+            let interval = std::time::Duration::from_secs(sync_config.interval_secs);
+            let tables: Vec<&str> = sync_config.tables.iter().map(String::as_str).collect();
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep(interval) => {}
+                    _ = sync_shutdown.recv() => break,
+                }
+                for agent_name in &sync_agents {
+                    let db_path = sync_data_dir.join(format!("{agent_name}.db"));
+                    let conn = match rusqlite::Connection::open(&db_path) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            tracing::warn!("sync: cannot open {agent_name}: {e}");
+                            continue;
+                        }
+                    };
+                    if let Err(e) = mp_ext::init_all_extensions(&conn) {
+                        tracing::warn!("sync: ext init for {agent_name}: {e}");
+                        continue;
+                    }
+                    let _ = mp_core::sync::init_sync_tables(&conn, &tables);
+                    for peer in &sync_config.peers {
+                        let peer_path =
+                            if std::path::Path::new(peer).is_absolute() || peer.ends_with(".db") {
+                                std::path::PathBuf::from(peer)
+                            } else {
+                                sync_data_dir.join(format!("{peer}.db"))
+                            };
+                        if !peer_path.exists() {
+                            continue;
+                        }
+                        let peer_conn = match rusqlite::Connection::open(&peer_path).and_then(|c| {
+                            mp_ext::init_all_extensions(&c).ok();
+                            Ok(c)
+                        }) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                tracing::warn!("auto-sync: cannot open peer {peer}: {e}");
+                                continue;
+                            }
+                        };
+                        let _ = mp_core::sync::init_sync_tables(&peer_conn, &tables);
+                        match mp_core::sync::local_sync_bidirectional(&conn, &peer_conn, &tables) {
+                            Ok(r) => {
+                                tracing::debug!(agent = %agent_name, peer = %peer, sent = r.sent, received = r.received, "auto-sync")
+                            }
+                            Err(e) => {
+                                tracing::warn!(agent = %agent_name, peer = %peer, "auto-sync error: {e}")
+                            }
+                        }
+                    }
+                    if let Some(ref url) = sync_config.cloud_url {
+                        match mp_core::sync::cloud_sync(&conn, url) {
+                            Ok(r) => {
+                                tracing::debug!(agent = %agent_name, batches = r.sent, "cloud auto-sync")
+                            }
+                            Err(e) => tracing::warn!(agent = %agent_name, "cloud sync error: {e}"),
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Write PID file for `mp stop`
+    let pid_path = config.data_dir.join("mp.pid");
+    std::fs::write(&pid_path, std::process::id().to_string())?;
+
+    let http_port = config
+        .channels
+        .http
+        .as_ref()
+        .map(|h| h.port)
+        .unwrap_or(config.gateway.port);
+    tracing::info!(
+        agents = config.agents.len(),
+        http_port = http_port,
+        "serve mode ready — MCP on stdio, HTTP on port {http_port}"
+    );
+
+    // ── MCP sidecar loop on stdio (replaces the CLI chat loop from cmd_start) ──
+    let ag = resolve_agent(config, agent.as_deref())?;
+    let conn = open_agent_db(config, &ag.name)?;
+    let embed_provider = build_embedding_provider(config, ag).ok();
+    let sidecar_embedding_model_id = embedding_model_id(ag);
+
+    let stdin = tokio::io::stdin();
+    let reader = tokio::io::BufReader::new(stdin);
+    let mut lines = tokio::io::AsyncBufReadExt::lines(reader);
+    let mut stdout = tokio::io::stdout();
+    let mut shutdown_rx = shutdown.subscribe();
+
+    loop {
+        tokio::select! {
+            line_result = lines.next_line() => {
+                match line_result {
+                    Ok(Some(line)) => {
+                        let parsed: serde_json::Value = match serde_json::from_str(&line) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                let err = sidecar_error_response("invalid_json", e.to_string());
+                                tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{err}\n").as_bytes()).await?;
+                                tokio::io::AsyncWriteExt::flush(&mut stdout).await?;
+                                continue;
+                            }
+                        };
+
+                        if let Some(mcp_response) = handle_sidecar_mcp_request(
+                            &conn, &parsed, &ag.name,
+                            embed_provider.as_deref(), &sidecar_embedding_model_id,
+                        ).await? {
+                            tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{mcp_response}\n").as_bytes()).await?;
+                            tokio::io::AsyncWriteExt::flush(&mut stdout).await?;
+                            continue;
+                        }
+
+                        if parsed.get("method").is_some() && parsed.get("id").is_none() {
+                            continue;
+                        }
+
+                        let request = match build_sidecar_request(parsed, &ag.name) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                let err = sidecar_error_response("invalid_request", e.to_string());
+                                tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{err}\n").as_bytes()).await?;
+                                tokio::io::AsyncWriteExt::flush(&mut stdout).await?;
+                                continue;
+                            }
+                        };
+
+                        let response = match execute_sidecar_operation(
+                            &conn, &request,
+                            embed_provider.as_deref(), &sidecar_embedding_model_id,
+                        ).await {
+                            Ok(resp) => serde_json::to_value(resp)
+                                .unwrap_or_else(|e| sidecar_error_response("serialization_error", e.to_string())),
+                            Err(e) => sidecar_error_response("sidecar_execute_error", e.to_string()),
+                        };
+
+                        tokio::io::AsyncWriteExt::write_all(&mut stdout, format!("{response}\n").as_bytes()).await?;
+                        tokio::io::AsyncWriteExt::flush(&mut stdout).await?;
+                    }
+                    Ok(None) => break, // stdin closed
+                    Err(e) => {
+                        tracing::error!("stdin read error: {e}");
+                        break;
+                    }
+                }
+            }
+            _ = shutdown_rx.recv() => break,
+        }
+    }
+
+    // Graceful shutdown
+    tracing::info!("shutting down serve mode");
+    let _ = shutdown.send(());
+    scheduler_handle.abort();
+    for mut w in workers {
+        w.shutdown().await;
+    }
+    let _ = std::fs::remove_file(&pid_path);
     Ok(())
 }
 
@@ -3575,56 +4022,13 @@ async fn cmd_ingest(
             embed_pending(&conn, ep.as_ref(), &ag.name, &model_id).await;
         }
     } else if let Some(u) = url {
-        ui::info(format!("Fetching {u} …"));
-        let response = reqwest::get(&u)
-            .await
-            .map_err(|e| anyhow::anyhow!("HTTP fetch failed for {u}: {e}"))?;
-        let status_code = response.status();
-        if !status_code.is_success() {
-            anyhow::bail!("HTTP {status_code} for {u}");
-        }
-        let content_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string();
-        let body = response
-            .text()
-            .await
-            .map_err(|e| anyhow::anyhow!("failed to read response body from {u}: {e}"))?;
-
-        let is_html = content_type.contains("text/html");
-        let title = if is_html {
-            extract_html_title(&body)
-        } else {
-            None
-        }
-        .unwrap_or_else(|| {
-            u.rsplit('/')
-                .find(|s| !s.is_empty())
-                .unwrap_or(&u)
-                .to_string()
-        });
-
-        let content = if is_html {
-            strip_html_tags(&body)
-        } else {
-            body
-        };
-
-        if content.trim().is_empty() {
-            anyhow::bail!("fetched URL returned empty content: {u}");
-        }
+        ui::info(format!("Ingesting URL {u} …"));
 
         let req = op_request(
             &ag.name,
             "knowledge.ingest",
             serde_json::json!({
                 "path": u,
-                "title": title,
-                "content": content,
-                "metadata": format!("{{\"source_url\":\"{u}\",\"content_type\":\"{content_type}\"}}"),
             }),
         );
         let resp = mp_core::operations::execute(&conn, &req)?;
@@ -3642,125 +4046,6 @@ async fn cmd_ingest(
         anyhow::bail!("Provide a path, --openclaw-file, or --url to ingest.");
     }
     Ok(())
-}
-
-/// Minimal HTML tag stripper that collapses whitespace and drops script/style blocks.
-fn strip_html_tags(html: &str) -> String {
-    let mut out = String::with_capacity(html.len() / 2);
-    let mut in_tag = false;
-    let mut in_skip_block = false;
-    let mut tag_buf = String::new();
-
-    let mut chars = html.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '<' {
-            in_tag = true;
-            tag_buf.clear();
-            continue;
-        }
-        if in_tag {
-            if ch == '>' {
-                in_tag = false;
-                let tag_lower = tag_buf.to_ascii_lowercase();
-                let tag_name = tag_lower.split_whitespace().next().unwrap_or("");
-                if tag_name == "script" || tag_name == "style" || tag_name == "noscript" {
-                    in_skip_block = true;
-                } else if tag_name == "/script" || tag_name == "/style" || tag_name == "/noscript" {
-                    in_skip_block = false;
-                }
-                if matches!(
-                    tag_name,
-                    "br" | "br/"
-                        | "p"
-                        | "/p"
-                        | "div"
-                        | "/div"
-                        | "h1"
-                        | "/h1"
-                        | "h2"
-                        | "/h2"
-                        | "h3"
-                        | "/h3"
-                        | "h4"
-                        | "/h4"
-                        | "h5"
-                        | "/h5"
-                        | "h6"
-                        | "/h6"
-                        | "li"
-                        | "/li"
-                        | "tr"
-                        | "/tr"
-                        | "blockquote"
-                        | "/blockquote"
-                ) {
-                    out.push('\n');
-                }
-            } else {
-                tag_buf.push(ch);
-            }
-            continue;
-        }
-        if in_skip_block {
-            continue;
-        }
-        if ch == '&' {
-            let mut entity = String::new();
-            while let Some(&next) = chars.peek() {
-                if next == ';' || entity.len() > 8 {
-                    chars.next();
-                    break;
-                }
-                entity.push(next);
-                chars.next();
-            }
-            match entity.as_str() {
-                "amp" => out.push('&'),
-                "lt" => out.push('<'),
-                "gt" => out.push('>'),
-                "quot" => out.push('"'),
-                "apos" => out.push('\''),
-                "nbsp" => out.push(' '),
-                _ => {
-                    out.push(' ');
-                }
-            }
-            continue;
-        }
-        out.push(ch);
-    }
-
-    collapse_whitespace(&out)
-}
-
-fn collapse_whitespace(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut prev_blank = false;
-    for line in s.lines() {
-        let trimmed = line.split_whitespace().collect::<Vec<_>>().join(" ");
-        if trimmed.is_empty() {
-            if !prev_blank && !result.is_empty() {
-                result.push('\n');
-                prev_blank = true;
-            }
-        } else {
-            result.push_str(&trimmed);
-            result.push('\n');
-            prev_blank = false;
-        }
-    }
-    result.trim().to_string()
-}
-
-/// Extract the <title> text from an HTML document.
-fn extract_html_title(html: &str) -> Option<String> {
-    let lower = html.to_ascii_lowercase();
-    let start = lower.find("<title")?.checked_add(6)?;
-    let after_tag = lower[start..].find('>')?.checked_add(1)?;
-    let content_start = start + after_tag;
-    let end = lower[content_start..].find("</title")?;
-    let title = html[content_start..content_start + end].trim().to_string();
-    if title.is_empty() { None } else { Some(title) }
 }
 
 fn op_request(
@@ -4559,15 +4844,17 @@ mod tests {
     }
 
     #[test]
-    fn sidecar_mcp_tools_list_exposes_canonical_ops() {
+    fn sidecar_mcp_tools_list_exposes_domain_tools() {
         let result = mcp_tools_list_result();
         let tools = result["tools"].as_array().cloned().unwrap_or_default();
-        assert_eq!(tools.len(), 3, "MCP surface: query + capabilities + execute");
-        assert!(tools.iter().any(|t| t["name"] == "moneypenny.query"));
-        assert!(tools.iter().any(|t| t["name"] == "moneypenny.capabilities"));
+        assert_eq!(tools.len(), 5, "MCP surface: facts + knowledge + policy + activity + execute");
+        assert!(tools.iter().any(|t| t["name"] == "moneypenny.facts"));
+        assert!(tools.iter().any(|t| t["name"] == "moneypenny.knowledge"));
+        assert!(tools.iter().any(|t| t["name"] == "moneypenny.policy"));
+        assert!(tools.iter().any(|t| t["name"] == "moneypenny.activity"));
         assert!(tools.iter().any(|t| t["name"] == "moneypenny.execute"));
-        assert!(!tools.iter().any(|t| t["name"] == "moneypenny.memory"));
-        assert!(!tools.iter().any(|t| t["name"] == "moneypenny.jobs"));
+        // DSL/query tool should NOT be on the MCP surface
+        assert!(!tools.iter().any(|t| t["name"] == "moneypenny.query"));
     }
 
     #[test]

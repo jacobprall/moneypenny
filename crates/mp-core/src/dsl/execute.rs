@@ -230,27 +230,21 @@ fn execute_head(
         }
         Head::Delete(d) => execute_delete(conn, d, ctx, raw),
         Head::Ingest(i) => {
-            let (content, path) = if i.url.starts_with("file://") {
+            let mut args = if i.url.starts_with("file://") {
                 let file_path = i.url.strip_prefix("file://").unwrap_or(&i.url);
                 let text = std::fs::read_to_string(file_path)
                     .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", file_path))?;
-                (text, Some(file_path.to_string()))
+                json!({
+                    "content": text,
+                    "path": file_path,
+                })
             } else if i.url.starts_with("http://") || i.url.starts_with("https://") {
-                return Ok(StatementResult {
-                    ok: false,
-                    code: "not_supported".into(),
-                    message: "HTTP URL fetch is not supported in MPQ INGEST. Use the CLI (mp ingest --url) or EXEC \"knowledge.ingest\" with pre-fetched content.".into(),
-                    data: json!({"url": i.url}),
-                    raw: raw.to_string(),
-                    policy: None,
-                });
+                json!({
+                    "path": i.url,
+                })
             } else {
-                (i.url.clone(), None)
+                json!({"content": i.url})
             };
-            let mut args = json!({"content": content});
-            if let Some(p) = path {
-                args["path"] = json!(p);
-            }
             if let Some(ref name) = i.name {
                 args["title"] = json!(name);
             }
@@ -259,6 +253,7 @@ fn execute_head(
         }
         Head::CreatePolicy(cp) => {
             let args = json!({
+                "name": cp.name,
                 "effect": cp.effect.as_str(),
                 "action_pattern": cp.action,
                 "resource_pattern": cp.resource,

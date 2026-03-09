@@ -763,6 +763,97 @@ CREATE TABLE IF NOT EXISTS agents (
 );
 ";
 
+/// Exact table names to skip in schema summaries.
+const SCHEMA_SKIP_TABLES: &[&str] = &[
+    "schema_version",
+    "embedding_jobs",
+    "operation_idempotency",
+    "operation_hooks",
+];
+
+/// Table name prefixes to skip (extension internals, FTS shadow tables, etc.).
+const SCHEMA_SKIP_PREFIXES: &[&str] = &[
+    "_cloudsync",
+    "_sqliteai",
+    "cloudsync_",
+    "dbmem_",
+];
+
+/// Columns to omit from schema summaries (embeddings, internal hashes).
+const SCHEMA_SKIP_COLUMNS: &[&str] = &[
+    "content_embedding",
+    "summary_embedding",
+    "pointer_embedding",
+    "embedding_model",
+    "embedding_content_hash",
+];
+
+/// Introspect an initialized agent database and produce a compact markdown
+/// schema reference suitable for embedding in agent instructions (CLAUDE.md,
+/// .cursor/rules, etc.).
+pub fn generate_schema_summary(conn: &Connection) -> String {
+    let mut out = String::from("### Database schema\n\n");
+    out.push_str("The Moneypenny agent database is SQLite. ");
+    out.push_str("Below are the tables and columns available for queries ");
+    out.push_str("via `moneypenny.execute` or `moneypenny.activity`.\n\n");
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT name FROM sqlite_master \
+             WHERE type = 'table' AND name NOT LIKE 'sqlite_%' \
+             ORDER BY name",
+        )
+        .expect("list tables");
+
+    let tables: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .expect("query tables")
+        .filter_map(|r| r.ok())
+        .filter(|name| {
+            !SCHEMA_SKIP_TABLES.contains(&name.as_str())
+                && !SCHEMA_SKIP_PREFIXES.iter().any(|p| name.starts_with(p))
+                && !name.contains("_fts_")
+                && !name.ends_with("_fts")
+                && !name.ends_with("_cloudsync")
+        })
+        .collect();
+
+    for table in &tables {
+        out.push_str(&format!("**{table}**\n"));
+
+        let mut col_stmt = conn
+            .prepare(&format!("PRAGMA table_info('{table}')"))
+            .expect("pragma table_info");
+
+        let cols: Vec<(String, String)> = col_stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .expect("query columns")
+            .filter_map(|r| r.ok())
+            .filter(|(name, _)| !SCHEMA_SKIP_COLUMNS.contains(&name.as_str()))
+            .collect();
+
+        let col_list: Vec<String> = cols
+            .iter()
+            .map(|(name, typ)| {
+                if typ.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{name} ({typ})")
+                }
+            })
+            .collect();
+
+        out.push_str(&format!("`{}`\n\n", col_list.join(", ")));
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use crate::db;

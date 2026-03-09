@@ -2,47 +2,47 @@
   "hooks": {
     "afterFileEdit": [
       {
-        "command": "\"/Users/jprall/moneypenny/target/release/mp\" --config \"/Users/jprall/moneypenny/moneypenny.toml\" hook --event afterFileEdit --agent main"
+        "command": "\"/Users/colossus/Desktop/untitled folder 2/moneypenny/target/release/mp\" --config \"/Users/colossus/Desktop/untitled folder 2/moneypenny/moneypenny.toml\" hook --event afterFileEdit --agent main"
       }
     ],
     "afterMCPExecution": [
       {
-        "command": "\"/Users/jprall/moneypenny/target/release/mp\" --config \"/Users/jprall/moneypenny/moneypenny.toml\" hook --event afterMCPExecution --agent main"
+        "command": "\"/Users/colossus/Desktop/untitled folder 2/moneypenny/target/release/mp\" --config \"/Users/colossus/Desktop/untitled folder 2/moneypenny/moneypenny.toml\" hook --event afterMCPExecution --agent main"
       }
     ],
     "afterShellExecution": [
       {
-        "command": "\"/Users/jprall/moneypenny/target/release/mp\" --config \"/Users/jprall/moneypenny/moneypenny.toml\" hook --event afterShellExecution --agent main"
+        "command": "\"/Users/colossus/Desktop/untitled folder 2/moneypenny/target/release/mp\" --config \"/Users/colossus/Desktop/untitled folder 2/moneypenny/moneypenny.toml\" hook --event afterShellExecution --agent main"
       }
     ],
     "beforeMCPExecution": [
       {
-        "command": "\"/Users/jprall/moneypenny/target/release/mp\" --config \"/Users/jprall/moneypenny/moneypenny.toml\" hook --event beforeMCPExecution --agent main"
+        "command": "\"/Users/colossus/Desktop/untitled folder 2/moneypenny/target/release/mp\" --config \"/Users/colossus/Desktop/untitled folder 2/moneypenny/moneypenny.toml\" hook --event beforeMCPExecution --agent main"
       }
     ],
     "beforeShellExecution": [
       {
-        "command": "\"/Users/jprall/moneypenny/target/release/mp\" --config \"/Users/jprall/moneypenny/moneypenny.toml\" hook --event beforeShellExecution --agent main"
+        "command": "\"/Users/colossus/Desktop/untitled folder 2/moneypenny/target/release/mp\" --config \"/Users/colossus/Desktop/untitled folder 2/moneypenny/moneypenny.toml\" hook --event beforeShellExecution --agent main"
       }
     ],
     "postToolUse": [
       {
-        "command": "\"/Users/jprall/moneypenny/target/release/mp\" --config \"/Users/jprall/moneypenny/moneypenny.toml\" hook --event postToolUse --agent main"
+        "command": "\"/Users/colossus/Desktop/untitled folder 2/moneypenny/target/release/mp\" --config \"/Users/colossus/Desktop/untitled folder 2/moneypenny/moneypenny.toml\" hook --event postToolUse --agent main"
       }
     ],
     "preToolUse": [
       {
-        "command": "\"/Users/jprall/moneypenny/target/release/mp\" --config \"/Users/jprall/moneypenny/moneypenny.toml\" hook --event preToolUse --agent main"
+        "command": "\"/Users/colossus/Desktop/untitled folder 2/moneypenny/target/release/mp\" --config \"/Users/colossus/Desktop/untitled folder 2/moneypenny/moneypenny.toml\" hook --event preToolUse --agent main"
       }
     ],
     "sessionStart": [
       {
-        "command": "\"/Users/jprall/moneypenny/target/release/mp\" --config \"/Users/jprall/moneypenny/moneypenny.toml\" hook --event sessionStart --agent main"
+        "command": "\"/Users/colossus/Desktop/untitled folder 2/moneypenny/target/release/mp\" --config \"/Users/colossus/Desktop/untitled folder 2/moneypenny/moneypenny.toml\" hook --event sessionStart --agent main"
       }
     ],
     "stop": [
       {
-        "command": "\"/Users/jprall/moneypenny/target/release/mp\" --config \"/Users/jprall/moneypenny/moneypenny.toml\" hook --event stop --agent main"
+        "command": "\"/Users/colossus/Desktop/untitled folder 2/moneypenny/target/release/mp\" --config \"/Users/colossus/Desktop/untitled folder 2/moneypenny/moneypenny.toml\" hook --event stop --agent main"
       }
     ]
   },

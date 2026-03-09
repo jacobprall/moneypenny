@@ -24,6 +24,13 @@ pub enum Command {
     /// Start gateway and all configured agents
     Start,
 
+    /// Start gateway with MCP sidecar on stdio (combines start + sidecar)
+    Serve {
+        /// Agent name for MCP sidecar (defaults to first configured agent)
+        #[arg(long)]
+        agent: Option<String>,
+    },
+
     /// Graceful shutdown
     Stop,
 
@@ -663,6 +670,17 @@ pub enum SetupCommand {
         /// Docker image name
         #[arg(long, default_value = "moneypenny")]
         image: String,
+    },
+
+    /// Register Moneypenny as an MCP server in Claude Code
+    ClaudeCode {
+        /// Agent name (defaults to first configured agent)
+        #[arg(long)]
+        agent: Option<String>,
+
+        /// Scope: "project" writes .mcp.json (committable), "user" writes ~/.claude.json
+        #[arg(long, default_value = "project")]
+        scope: String,
     },
 
     /// Download embedding models required by configured agents

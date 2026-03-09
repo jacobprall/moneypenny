@@ -23,7 +23,7 @@ DELETE FROM facts WHERE <filters>
 INGEST "content_or_file_uri" [AS "title"]
 INGEST EVENTS "source" [FROM "file_path"]
 EXEC "op.name" {json_args}
-CREATE POLICY allow|deny|audit <action> ON <resource> [FOR AGENT "id"] [MESSAGE "reason"]
+CREATE POLICY "name" allow|deny|audit <action> ON <resource> [FOR AGENT "id"] [MESSAGE "reason"]
 EVALUATE POLICY ON ("actor", "action", "resource")
 CREATE JOB "name" SCHEDULE "cron" [TYPE type]
 RUN|PAUSE|RESUME JOB "name"
@@ -46,7 +46,7 @@ Examples:
   SEARCH facts WHERE topic = "auth" AND confidence > 0.7 SINCE 7d | SORT confidence DESC | TAKE 10
   INSERT INTO facts ("Redis is preferred for caching", topic="infrastructure", confidence=0.9)
   DELETE FROM facts WHERE confidence < 0.3 AND BEFORE 30d
-  CREATE POLICY deny DELETE ON facts FOR AGENT "junior-bot"
+  CREATE POLICY "no-junior-deletes" deny DELETE ON facts FOR AGENT "junior-bot"
   SEARCH knowledge WHERE "deployment" | TAKE 5
   SEARCH facts | COUNT
   CREATE JOB "digest" SCHEDULE "0 9 * * *" TYPE prompt
@@ -336,7 +336,7 @@ mod tests {
 
         let resp = run(
             &conn,
-            r#"CREATE POLICY allow search ON facts"#,
+            r#"CREATE POLICY "allow-search" allow search ON facts"#,
             false,
             &ctx("agent:any"),
         );
@@ -496,16 +496,17 @@ mod tests {
     }
 
     #[test]
-    fn ingest_http_url_returns_not_supported() {
+    fn ingest_http_url_routes_to_core_ingest() {
         let conn = setup();
         let resp = run(
             &conn,
-            r#"INGEST "https://example.com/doc""#,
+            r#"INGEST "http://127.0.0.1:9/doc""#,
             false,
             &ctx("agent:test"),
         );
         assert!(!resp.ok);
-        assert_eq!(resp.code, "not_supported");
+        assert_eq!(resp.code, "execution_error");
+        assert!(!resp.message.contains("not supported"));
     }
 
     #[test]

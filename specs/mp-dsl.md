@@ -75,7 +75,7 @@ INGEST "https://wiki.internal/runbook" AS "incident-runbook"
 ### Policy
 
 ```
-CREATE POLICY <effect> <action> ON <resource> [FOR AGENT <id>] [MESSAGE <reason>]
+CREATE POLICY <name> <effect> <action> ON <resource> [FOR AGENT <id>] [MESSAGE <reason>]
 EVALUATE POLICY ON (<actor>, <action>, <resource>)
 EXPLAIN POLICY FOR (<actor>, <action>, <resource>)
 ```
@@ -84,8 +84,8 @@ Effect: `allow` | `deny` | `audit`
 
 Examples:
 ```
-CREATE POLICY deny DELETE ON facts FOR AGENT "junior-bot" MESSAGE "junior agents cannot delete facts"
-CREATE POLICY audit INSERT ON facts MESSAGE "log all fact creation"
+CREATE POLICY "no-junior-deletes" deny DELETE ON facts FOR AGENT "junior-bot" MESSAGE "junior agents cannot delete facts"
+CREATE POLICY "audit-inserts" audit INSERT ON facts MESSAGE "log all fact creation"
 EVALUATE POLICY ON ("junior-bot", "delete", "facts")
 EXPLAIN POLICY FOR ("junior-bot", "delete", "facts")
 ```
@@ -244,7 +244,7 @@ INSERT INTO facts ("content", key=value ...)
 UPDATE facts SET key=value WHERE id = "id"
 DELETE FROM facts WHERE <filters>
 INGEST "url"
-CREATE POLICY allow|deny|audit <action> ON <resource> [FOR AGENT "id"] [MESSAGE "reason"]
+CREATE POLICY "name" allow|deny|audit <action> ON <resource> [FOR AGENT "id"] [MESSAGE "reason"]
 EVALUATE POLICY ON ("actor", "action", "resource")
 CREATE JOB "name" SCHEDULE "cron" [TYPE type]
 RUN|PAUSE|RESUME JOB "name"
@@ -261,7 +261,7 @@ Examples:
   SEARCH facts WHERE topic = "auth" AND confidence > 0.7 SINCE 7d | SORT confidence DESC | TAKE 10
   INSERT INTO facts ("Redis is preferred for caching", topic="infrastructure", confidence=0.9)
   DELETE FROM facts WHERE confidence < 0.3 AND BEFORE 30d
-  CREATE POLICY deny DELETE ON facts FOR AGENT "junior-bot"
+  CREATE POLICY "no-junior-deletes" deny DELETE ON facts FOR AGENT "junior-bot"
   SEARCH knowledge WHERE "deployment" | TAKE 5
   SEARCH facts | COUNT
   CREATE JOB "digest" SCHEDULE "0 9 * * *" TYPE prompt

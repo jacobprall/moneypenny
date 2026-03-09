@@ -95,6 +95,7 @@ pub struct IngestEventsHead {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreatePolicyHead {
+    pub name: String,
     pub effect: PolicyEffect,
     pub action: String,
     pub resource: String,

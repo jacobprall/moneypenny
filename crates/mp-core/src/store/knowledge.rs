@@ -2,6 +2,7 @@ use rusqlite::{Connection, params};
 use uuid::Uuid;
 
 const CHUNK_MAX_CHARS: usize = 2000;
+const DOC_MAX_CHARS: usize = 120_000;
 
 #[derive(Debug, Clone)]
 pub struct Document {
@@ -47,9 +48,14 @@ pub fn ingest(
     content: &str,
     metadata: Option<&str>,
 ) -> anyhow::Result<(String, usize)> {
+    let normalized_content = normalize_ingest_content(content);
+    if normalized_content.trim().is_empty() {
+        anyhow::bail!("ingest content is empty after normalization");
+    }
+
     let now = chrono::Utc::now().timestamp();
     let doc_id = Uuid::new_v4().to_string();
-    let hash = simple_hash(content);
+    let hash = simple_hash(&normalized_content);
 
     conn.execute(
         "INSERT INTO documents (id, path, title, content_hash, metadata, created_at, updated_at)
@@ -57,7 +63,7 @@ pub fn ingest(
         params![doc_id, path, title, hash, metadata, now, now],
     )?;
 
-    let chunks = chunk_markdown(content);
+    let chunks = chunk_markdown(&normalized_content);
     for (i, chunk_text) in chunks.iter().enumerate() {
         let chunk_id = Uuid::new_v4().to_string();
         conn.execute(
@@ -68,6 +74,205 @@ pub fn ingest(
     }
 
     Ok((doc_id, chunks.len()))
+}
+
+/// Normalize content for knowledge ingestion with balanced cleanup:
+/// - strip HTML when detected,
+/// - remove obvious boilerplate lines,
+/// - collapse whitespace while keeping paragraph breaks,
+/// - enforce a document-size budget before chunking.
+pub fn normalize_ingest_content(content: &str) -> String {
+    let base = if is_probably_html_document(content) {
+        strip_html_tags(content)
+    } else {
+        content.to_string()
+    };
+    let collapsed = collapse_whitespace_preserve_paragraphs(&base);
+    let pruned = prune_boilerplate_lines(&collapsed);
+    apply_content_budget(&pruned, DOC_MAX_CHARS)
+}
+
+pub fn extract_html_title(html: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    let start = lower.find("<title")?.checked_add(6)?;
+    let after_tag = lower[start..].find('>')?.checked_add(1)?;
+    let content_start = start + after_tag;
+    let end = lower[content_start..].find("</title")?;
+    let title = html[content_start..content_start + end].trim().to_string();
+    if title.is_empty() { None } else { Some(title) }
+}
+
+pub fn is_probably_html_document(content: &str) -> bool {
+    let lower = content.to_ascii_lowercase();
+    lower.contains("<!doctype html")
+        || lower.contains("<html")
+        || lower.contains("<body")
+        || lower.contains("<article")
+        || lower.contains("<main")
+        || (lower.contains("<p") && lower.contains("</p>"))
+}
+
+pub fn strip_html_tags(html: &str) -> String {
+    let mut out = String::with_capacity(html.len() / 2);
+    let mut in_tag = false;
+    let mut skip_depth: usize = 0;
+    let mut tag_buf = String::new();
+    let mut chars = html.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '<' {
+            in_tag = true;
+            tag_buf.clear();
+            continue;
+        }
+        if in_tag {
+            if ch == '>' {
+                in_tag = false;
+                let raw = tag_buf.trim().to_ascii_lowercase();
+                let tag_name = raw
+                    .trim_start_matches('/')
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("");
+                let is_closing = raw.starts_with('/');
+                let skip_tag = matches!(
+                    tag_name,
+                    "script"
+                        | "style"
+                        | "noscript"
+                        | "svg"
+                        | "nav"
+                        | "footer"
+                        | "header"
+                        | "aside"
+                        | "form"
+                );
+                if skip_tag {
+                    if is_closing {
+                        skip_depth = skip_depth.saturating_sub(1);
+                    } else {
+                        skip_depth = skip_depth.saturating_add(1);
+                    }
+                }
+                if matches!(
+                    tag_name,
+                    "br" | "p" | "div" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "li" | "tr"
+                        | "blockquote" | "section" | "article" | "main"
+                ) {
+                    out.push('\n');
+                }
+            } else {
+                tag_buf.push(ch);
+            }
+            continue;
+        }
+        if skip_depth > 0 {
+            continue;
+        }
+        if ch == '&' {
+            let mut entity = String::new();
+            while let Some(&next) = chars.peek() {
+                if next == ';' || entity.len() > 8 {
+                    chars.next();
+                    break;
+                }
+                entity.push(next);
+                chars.next();
+            }
+            match entity.as_str() {
+                "amp" => out.push('&'),
+                "lt" => out.push('<'),
+                "gt" => out.push('>'),
+                "quot" => out.push('"'),
+                "apos" => out.push('\''),
+                "nbsp" => out.push(' '),
+                _ => out.push(' '),
+            }
+            continue;
+        }
+        out.push(ch);
+    }
+
+    collapse_whitespace_preserve_paragraphs(&out)
+}
+
+fn collapse_whitespace_preserve_paragraphs(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut previous_blank = false;
+    for line in s.lines() {
+        let trimmed = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        if trimmed.is_empty() {
+            if !previous_blank && !result.is_empty() {
+                result.push('\n');
+                previous_blank = true;
+            }
+        } else {
+            result.push_str(&trimmed);
+            result.push('\n');
+            previous_blank = false;
+        }
+    }
+    result.trim().to_string()
+}
+
+fn prune_boilerplate_lines(content: &str) -> String {
+    let mut out = String::with_capacity(content.len());
+    let mut previous_blank = false;
+    for line in content.lines() {
+        if is_boilerplate_line(line) {
+            continue;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            if !previous_blank && !out.is_empty() {
+                out.push('\n');
+                previous_blank = true;
+            }
+            continue;
+        }
+        out.push_str(trimmed);
+        out.push('\n');
+        previous_blank = false;
+    }
+    out.trim().to_string()
+}
+
+fn is_boilerplate_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let is_short = trimmed.chars().count() <= 120;
+    is_short
+        && (lower.contains("cookie policy")
+            || lower.contains("privacy policy")
+            || lower.contains("terms of service")
+            || lower.contains("all rights reserved")
+            || lower.contains("sign in")
+            || lower.contains("log in")
+            || lower.contains("subscribe")
+            || lower.contains("back to top")
+            || lower == "menu"
+            || lower == "search")
+}
+
+fn apply_content_budget(content: &str, max_chars: usize) -> String {
+    if content.chars().count() <= max_chars {
+        return content.to_string();
+    }
+    let mut hard_cutoff = content.len();
+    for (idx, _) in content.char_indices().take(max_chars) {
+        hard_cutoff = idx;
+    }
+    let candidate = &content[..hard_cutoff];
+    let preferred = candidate
+        .rfind("\n\n")
+        .or_else(|| candidate.rfind('\n'))
+        .unwrap_or(hard_cutoff);
+    let mut truncated = content[..preferred].trim_end().to_string();
+    truncated.push_str("\n\n[Content truncated during ingest due to size budget.]");
+    truncated
 }
 
 /// Get a document by ID.
@@ -262,17 +467,19 @@ pub fn chunk_markdown(content: &str) -> Vec<String> {
     let mut chunks: Vec<String> = Vec::new();
     let mut current = String::new();
 
-    for line in content.lines() {
-        let is_heading = line.starts_with('#');
-        let would_overflow = current.len() + line.len() + 1 > CHUNK_MAX_CHARS;
+    for raw_line in content.lines() {
+        for line in split_long_line(raw_line, CHUNK_MAX_CHARS) {
+            let is_heading = line.starts_with('#');
+            let would_overflow = current.len() + line.len() + 1 > CHUNK_MAX_CHARS;
 
-        if (is_heading || would_overflow) && !current.trim().is_empty() {
-            chunks.push(current.trim().to_string());
-            current = String::new();
+            if (is_heading || would_overflow) && !current.trim().is_empty() {
+                chunks.push(current.trim().to_string());
+                current = String::new();
+            }
+
+            current.push_str(line);
+            current.push('\n');
         }
-
-        current.push_str(line);
-        current.push('\n');
     }
 
     if !current.trim().is_empty() {
@@ -280,6 +487,29 @@ pub fn chunk_markdown(content: &str) -> Vec<String> {
     }
 
     chunks
+}
+
+fn split_long_line(line: &str, max_chars: usize) -> Vec<&str> {
+    if line.chars().count() <= max_chars {
+        return vec![line];
+    }
+
+    let mut parts = Vec::new();
+    let mut start_char = 0usize;
+    let byte_indices: Vec<usize> = line
+        .char_indices()
+        .map(|(idx, _)| idx)
+        .chain(std::iter::once(line.len()))
+        .collect();
+
+    while start_char < byte_indices.len() - 1 {
+        let end_char = (start_char + max_chars).min(byte_indices.len() - 1);
+        let start_byte = byte_indices[start_char];
+        let end_byte = byte_indices[end_char];
+        parts.push(&line[start_byte..end_byte]);
+        start_char = end_char;
+    }
+    parts
 }
 
 fn simple_hash(content: &str) -> String {
@@ -347,6 +577,31 @@ mod tests {
     fn chunk_markdown_handles_empty() {
         assert!(chunk_markdown("").is_empty());
         assert!(chunk_markdown("   \n  \n  ").is_empty());
+    }
+
+    #[test]
+    fn normalize_ingest_content_strips_html_and_boilerplate() {
+        let html = r#"
+            <html><head><title>Demo</title></head>
+            <body>
+                <nav>Menu</nav>
+                <article><h1>Hello</h1><p>Useful body text.</p></article>
+                <footer>Privacy Policy</footer>
+            </body></html>
+        "#;
+        let normalized = normalize_ingest_content(html);
+        assert!(normalized.contains("Hello"));
+        assert!(normalized.contains("Useful body text."));
+        assert!(!normalized.to_ascii_lowercase().contains("privacy policy"));
+        assert!(!normalized.to_ascii_lowercase().contains("menu"));
+    }
+
+    #[test]
+    fn normalize_ingest_content_applies_budget() {
+        let long = "A paragraph.\n\n".repeat(20_000);
+        let normalized = normalize_ingest_content(&long);
+        assert!(normalized.chars().count() <= DOC_MAX_CHARS + 64);
+        assert!(normalized.contains("Content truncated during ingest"));
     }
 
     #[test]
