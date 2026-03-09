@@ -1,6 +1,7 @@
 pub mod anthropic;
 pub mod http;
 pub mod local_embed;
+pub mod noop;
 pub mod provider;
 pub mod sqlite_ai;
 pub mod types;
@@ -29,8 +30,9 @@ pub fn build_provider(
                 .unwrap_or_else(|| std::path::PathBuf::from("models/default.gguf"));
             Ok(Box::new(sqlite_ai::SqliteAiProvider::new(model_path, None)))
         }
+        "none" => Ok(Box::new(noop::NoopProvider)),
         other => {
-            anyhow::bail!("Unknown LLM provider: {other}. Use 'anthropic', 'http', or 'local'.")
+            anyhow::bail!("Unknown LLM provider: {other}. Use 'anthropic', 'http', 'local', or 'none'.")
         }
     }
 }
@@ -220,6 +222,28 @@ mod tests {
         let p = build_provider("local", None, None, None).unwrap();
         assert_eq!(p.name(), "sqlite-ai");
         assert!(!p.supports_streaming());
+    }
+
+    #[test]
+    fn build_none_provider() {
+        let p = build_provider("none", None, None, None).unwrap();
+        assert_eq!(p.name(), "none");
+        assert!(!p.supports_streaming());
+    }
+
+    #[tokio::test]
+    async fn none_provider_generate_returns_config_error() {
+        let p = noop::NoopProvider;
+        let result = p
+            .generate(
+                &[types::Message::user("hello")],
+                &[],
+                &types::GenerateConfig::default(),
+            )
+            .await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("No LLM provider configured"));
     }
 
     #[test]

@@ -437,7 +437,7 @@ fn default_trust_level() -> String {
 }
 
 fn default_provider() -> String {
-    "anthropic".to_string()
+    "none".to_string()
 }
 
 fn default_policy_mode() -> String {

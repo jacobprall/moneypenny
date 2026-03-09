@@ -16,6 +16,7 @@ use tracing_subscriber::{EnvFilter, fmt};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let _ = dotenvy::dotenv();
     let cli = Cli::parse();
 
     if matches!(cli.command, Command::Init) {
@@ -1140,17 +1141,15 @@ async fn cmd_init(config_path: &str) -> Result<()> {
     for agent in &config.agents {
         println!("  \u{2713} Initialized agent \"{}\"", agent.name);
         println!(
-            "      LLM:       {} ({})",
-            agent.llm.provider,
-            agent.llm.model.as_deref().unwrap_or("default")
-        );
-        println!(
             "      Embedding: {} ({}, {}D)",
             agent.embedding.provider, agent.embedding.model, agent.embedding.dimensions
         );
     }
     println!();
-    println!("  Ready. Run `mp start` to begin.");
+    println!("  Ready. Run `mp setup cursor`, `mp setup claude-code`, or `mp setup cortex`");
+    println!();
+    println!("  Tip: To use mp as a conversational agent (mp chat, mp ask),");
+    println!("       set provider = \"anthropic\" in [agents.llm] and ANTHROPIC_API_KEY in .env.");
     println!();
 
     Ok(())
@@ -1164,6 +1163,7 @@ async fn cmd_setup(config: &Config, cmd: cli::SetupCommand) -> Result<()> {
     let (agent_override, target) = match &cmd {
         cli::SetupCommand::ClaudeCode { agent, .. } => (agent.clone(), "claude-code"),
         cli::SetupCommand::Cortex { agent } => (agent.clone(), "cortex"),
+        cli::SetupCommand::Cursor { agent } => (agent.clone(), "cursor"),
         cli::SetupCommand::OpenClaw { agent } => (agent.clone(), "openclaw"),
     };
 
@@ -1239,6 +1239,25 @@ async fn cmd_setup(config: &Config, cmd: cli::SetupCommand) -> Result<()> {
             }
         }
 
+        cli::SetupCommand::Cursor { .. } => {
+            let mcp_server_entry = serde_json::json!({
+                "command": &mp_bin_str,
+                "args": ["sidecar", "--agent", &ag.name]
+            });
+
+            let mcp_path = project_dir.join(".cursor").join("mcp.json");
+            if let Some(parent) = mcp_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            upsert_json_mcp_config(&mcp_path, "mcpServers", "moneypenny", mcp_server_entry)?;
+
+            print_setup_success(target, &mcp_path, &mp_bin_str, &ag.name, &project_dir);
+            println!("  Next steps:");
+            println!("    1. Restart Cursor (or reload the window)");
+            println!("    2. Ask the agent: \"What Moneypenny tools do you have?\"");
+            println!();
+        }
+
         cli::SetupCommand::OpenClaw { .. } => {
             let mcp_server_entry = serde_json::json!({
                 "command": &mp_bin_str,
@@ -1260,8 +1279,104 @@ async fn cmd_setup(config: &Config, cmd: cli::SetupCommand) -> Result<()> {
         }
     }
 
+    // Write a project-local rule/instructions file so the AI agent knows
+    // about Moneypenny's tools regardless of which host (Cursor, Claude Code,
+    // Cortex, OpenClaw) is being used.
+    write_agent_instructions(&project_dir)?;
+
     Ok(())
 }
+
+fn write_agent_instructions(project_dir: &std::path::Path) -> Result<()> {
+    let targets: &[(&str, &str)] = &[
+        (".cursor/rules/moneypenny.mdc", AGENT_INSTRUCTIONS),
+        ("AGENTS.md", AGENT_INSTRUCTIONS),
+    ];
+    for &(rel_path, content) in targets {
+        let full = project_dir.join(rel_path);
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&full, content)?;
+        println!("  \u{2713} Wrote {rel_path}");
+    }
+    Ok(())
+}
+
+const AGENT_INSTRUCTIONS: &str = r#"---
+description: Moneypenny MCP server - persistent memory, knowledge, and governance for AI agents
+globs:
+alwaysApply: true
+---
+
+# Moneypenny
+
+You have access to a Moneypenny MCP server. Use it to store and retrieve
+persistent memory, ingest documents, manage policies, and schedule jobs.
+
+## Primary tool: `moneypenny.query`
+
+All operations go through a single tool using MPQ (Moneypenny Query) expressions.
+
+### Syntax
+
+```
+SEARCH <store> [WHERE <filters>] [SINCE <duration>] [| SORT field ASC|DESC] [| TAKE n]
+INSERT INTO facts ("content", key=value ...)
+UPDATE facts SET key=value WHERE id = "id"
+DELETE FROM facts WHERE <filters>
+INGEST "url"
+SEARCH audit WHERE <filters> [| TAKE n]
+CREATE POLICY allow|deny|audit <action> ON <resource> [MESSAGE "reason"]
+CREATE JOB "name" SCHEDULE "cron" [TYPE type]
+```
+
+### Stores
+
+`facts`, `knowledge`, `log`, `audit`
+
+### Examples
+
+```
+SEARCH facts WHERE topic = "auth" SINCE 7d | SORT confidence DESC | TAKE 10
+INSERT INTO facts ("Redis preferred for caching", topic="infrastructure", confidence=0.9)
+DELETE FROM facts WHERE confidence < 0.3 AND BEFORE 30d
+SEARCH knowledge WHERE "deployment runbook" | TAKE 5
+SEARCH facts | COUNT
+```
+
+### Multi-statement
+
+Separate with `;` to run multiple operations:
+
+```
+INSERT INTO facts ("new fact"); SEARCH facts | TAKE 5
+```
+
+### Dry run
+
+Set `dry_run: true` to parse and policy-check without executing.
+
+## When to use Moneypenny
+
+- **Remembering things**: Store facts the user tells you to remember
+- **Recalling context**: Search facts and knowledge before answering questions
+- **Ingesting documents**: Use INGEST to add URLs or documents to the knowledge store
+- **Audit trail**: Search audit logs to understand what happened
+- **Governance**: Create policies to control what agents can do
+
+## Other tools
+
+- `moneypenny.capabilities` — discover available domains and example expressions
+- `moneypenny.execute` — fallback for advanced operations not yet in MPQ
+
+## Best practices
+
+- Search before inserting facts to avoid duplicates
+- Use specific topics and keywords when inserting facts
+- Set confidence scores to reflect certainty (0.0 to 1.0)
+- Prefer `moneypenny.query` over `moneypenny.execute` whenever possible
+"#;
 
 fn home_dir() -> Result<std::path::PathBuf> {
     std::env::var("HOME")

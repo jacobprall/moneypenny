@@ -637,6 +637,13 @@ pub enum SetupCommand {
         agent: Option<String>,
     },
 
+    /// Register Moneypenny as an MCP server in Cursor
+    Cursor {
+        /// Agent name (defaults to first configured agent)
+        #[arg(long)]
+        agent: Option<String>,
+    },
+
     /// Register Moneypenny as an MCP server in OpenClaw
     #[command(name = "openclaw")]
     OpenClaw {

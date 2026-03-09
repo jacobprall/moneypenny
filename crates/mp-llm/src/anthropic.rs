@@ -63,7 +63,7 @@ impl LlmProvider for AnthropicProvider {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("Anthropic API error {status}: {body}");
+            return Err(anthropic_error(status, &body));
         }
 
         let api_resp: ApiResponse = resp.json().await?;
@@ -93,7 +93,7 @@ impl LlmProvider for AnthropicProvider {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("Anthropic API error {status}: {body}");
+            return Err(anthropic_error(status, &body));
         }
 
         let byte_stream = resp.bytes_stream();
@@ -511,6 +511,20 @@ fn parse_sse_stream(
             }
         }
     }
+}
+
+fn anthropic_error(status: reqwest::StatusCode, body: &str) -> anyhow::Error {
+    if status == reqwest::StatusCode::UNAUTHORIZED
+        || body.contains("authentication_error")
+        || body.contains("x-api-key header is required")
+    {
+        return anyhow::anyhow!(
+            "Anthropic API key missing or invalid.\n\
+             Set ANTHROPIC_API_KEY in your environment or .env file,\n\
+             or add api_key under [agents.llm] in moneypenny.toml."
+        );
+    }
+    anyhow::anyhow!("Anthropic API error {status}: {body}")
 }
 
 // ---------------------------------------------------------------------------
