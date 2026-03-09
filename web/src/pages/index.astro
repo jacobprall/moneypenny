@@ -15,12 +15,12 @@ const capabilities = [
   {
     title: "Hybrid Retrieval",
     description:
-      "One query searches everything. Semantic and full-text search across four stores, fused with Reciprocal Rank Fusion and diversified with MMR.",
+      "One query searches all of your agent's knowledge — facts, conversations, documents, and session context. Semantic and full-text search combined, deduplicated, and diversity-ranked.",
   },
   {
     title: "Audit Trail",
     description:
-      "Trace exactly what happened and why. Every action logged with full context: session, trace, and the expression that triggered it. Queryable by the agent itself.",
+      "Trace exactly what happened and why. Every action logged with full context. Queryable by you and the agent itself.",
   },
   {
     title: "Multi-Agent Sync",
@@ -28,14 +28,19 @@ const capabilities = [
       "Agents share what they know. CRDT-based knowledge sharing with scoped visibility: private, shared, or protected. No central server.",
   },
   {
-    title: "Runtime Agnostic",
+    title: "Encrypted at Rest",
     description:
-      "Runs anywhere your agent does. Standalone with CLI, HTTP, Slack, Discord, Telegram, or as a sidecar via stdio, MCP, or HTTP.",
+      "SQLCipher encryption for the agent database. Keys stored in your OS keychain — never plaintext on disk. Data at rest is opaque without the key.",
+  },
+  {
+    title: "Runs Anywhere",
+    description:
+      "Standalone with CLI, HTTP, Slack, Discord, and Telegram. Or as a sidecar via stdio, MCP, or HTTP. Same agent, any surface.",
   },
 ];
 ---
 
-<Base title="Moneypenny: The Governed Memory Layer for AI Agents">
+<Base title="Moneypenny: Intelligence Layer for AI Agents">
   <!-- Nav -->
   <nav
     class="fixed top-0 z-50 w-full border-b border-zinc-800/50 bg-[#09090b]/80 backdrop-blur-xl"
@@ -89,7 +94,7 @@ const capabilities = [
       <p
         class="animate-fade-up animate-delay-200 mx-auto mt-6 max-w-2xl text-[17px] leading-relaxed text-zinc-400"
       >
-        Your agents smarter, safer, stateful, and governed.
+        Make your agents smarter, safer, stateful, and governed.
         All in a single SQLite file.
       </p>
 
@@ -137,7 +142,7 @@ const capabilities = [
         </div>
       </div>
       <p class="mt-3 text-center text-[13px] text-zinc-500">
-        Your agent will clone the repo, build the binary, start Moneypenny, and register it as an MCP server.
+        Your agent will set up Moneypenny and start using it as a tool.
       </p>
     </div>
   </section>
@@ -282,8 +287,7 @@ const capabilities = [
             <p>
               Every turn enriches a persistent knowledge graph. Facts are
               extracted, linked, and compressed so today's session builds on
-              yesterday's. One SQLite file per agent holds memory, policies,
-              audit logs, and sync state.
+              yesterday's. No infrastructure to manage. No state to lose.
             </p>
             <p>
               Operations are governed before they execute. Static rules,
@@ -339,10 +343,10 @@ const capabilities = [
             on-device inference, CRDT sync, JavaScript tools, and RAG.
           </p>
           <p>
-            Agents interact through a single query language. One MCP tool
-            that expresses every operation from memory search to policy
-            creation. The agent learns the syntax from the tool description.
-            No SDK, no tool discovery, no integration docs.
+            Every agent turn runs inside a single ACID transaction. Memory,
+            policy checks, tool execution, audit logging, and embeddings all
+            commit together or roll back together. No partial state, no
+            orphaned writes.
           </p>
           <p>
             Every surface (CLI, MCP sidecar, HTTP API, Slack, Discord) is a
