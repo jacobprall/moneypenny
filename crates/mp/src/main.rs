@@ -1,5 +1,6 @@
 mod adapters;
 mod cli;
+mod domain_tools;
 
 use anyhow::Result;
 use clap::Parser;
@@ -7,10 +8,10 @@ use cli::{Cli, Command};
 use mp_core::config::Config;
 use mp_llm::provider::{EmbeddingProvider, LlmProvider};
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 use tracing_subscriber::{EnvFilter, fmt};
 
 #[tokio::main]
@@ -3175,148 +3176,8 @@ fn sidecar_error_response(code: &str, message: impl Into<String>) -> serde_json:
     })
 }
 
-fn canonical_operation_catalog() -> &'static [(&'static str, &'static str)] {
-    &[
-        ("job.create", "Moneypenny operation: create a scheduled job"),
-        ("job.list", "Moneypenny operation: list scheduled jobs"),
-        ("job.run", "Moneypenny operation: run a job immediately"),
-        ("job.pause", "Moneypenny operation: pause a scheduled job"),
-        ("job.resume", "Moneypenny operation: resume a paused job"),
-        ("job.history", "Moneypenny operation: list job run history"),
-        (
-            "job.spec.plan",
-            "Moneypenny operation: plan an agent-generated job spec",
-        ),
-        (
-            "job.spec.confirm",
-            "Moneypenny operation: confirm a planned job spec",
-        ),
-        (
-            "job.spec.apply",
-            "Moneypenny operation: apply a confirmed job spec into jobs",
-        ),
-        ("policy.add", "Moneypenny operation: add a policy rule"),
-        (
-            "policy.evaluate",
-            "Moneypenny operation: evaluate a policy decision",
-        ),
-        (
-            "policy.explain",
-            "Moneypenny operation: explain a policy decision",
-        ),
-        (
-            "policy.spec.plan",
-            "Moneypenny operation: plan an agent-generated policy spec",
-        ),
-        (
-            "policy.spec.confirm",
-            "Moneypenny operation: confirm a planned policy spec",
-        ),
-        (
-            "policy.spec.apply",
-            "Moneypenny operation: apply a confirmed policy spec",
-        ),
-        (
-            "knowledge.ingest",
-            "Moneypenny operation: ingest knowledge content",
-        ),
-        (
-            "memory.search",
-            "Moneypenny operation: search memory across stores",
-        ),
-        ("memory.fact.add", "Moneypenny operation: create a fact"),
-        ("memory.fact.update", "Moneypenny operation: update a fact"),
-        (
-            "memory.fact.get",
-            "Moneypenny operation: get full fact content",
-        ),
-        (
-            "memory.fact.compaction.reset",
-            "Moneypenny operation: reset fact compaction state",
-        ),
-        ("skill.add", "Moneypenny operation: add a skill"),
-        ("skill.promote", "Moneypenny operation: promote a skill"),
-        ("fact.delete", "Moneypenny operation: delete a fact"),
-        ("audit.query", "Moneypenny operation: query audit records"),
-        (
-            "audit.append",
-            "Moneypenny operation: append an audit record",
-        ),
-        (
-            "session.resolve",
-            "Moneypenny operation: resolve or create a session",
-        ),
-        ("session.list", "Moneypenny operation: list sessions"),
-        ("js.tool.add", "Moneypenny operation: add a JavaScript tool"),
-        (
-            "js.tool.list",
-            "Moneypenny operation: list JavaScript tools",
-        ),
-        (
-            "js.tool.delete",
-            "Moneypenny operation: delete a JavaScript tool",
-        ),
-        ("agent.create", "Moneypenny operation: create an agent"),
-        ("agent.delete", "Moneypenny operation: delete an agent"),
-        ("agent.config", "Moneypenny operation: update agent config"),
-        (
-            "ingest.events",
-            "Moneypenny operation: ingest external events",
-        ),
-        ("ingest.status", "Moneypenny operation: list ingest runs"),
-        (
-            "ingest.replay",
-            "Moneypenny operation: replay an ingest run",
-        ),
-        (
-            "embedding.status",
-            "Moneypenny operation: inspect embedding queue status",
-        ),
-        (
-            "embedding.retry_dead",
-            "Moneypenny operation: revive dead embedding jobs",
-        ),
-        (
-            "embedding.backfill.enqueue",
-            "Moneypenny operation: enqueue embedding backfill for a model",
-        ),
-        (
-            "embedding.process",
-            "Moneypenny operation: process queued embedding jobs now",
-        ),
-        (
-            "embedding.backfill.process",
-            "Moneypenny operation: enqueue drifted rows and process embedding backlog now",
-        ),
-    ]
-}
-
 fn mcp_tools_list_result() -> serde_json::Value {
-    let mut tools: Vec<serde_json::Value> = Vec::new();
-    for (name, description) in canonical_operation_catalog().iter() {
-        for tool_name in [name.to_string(), format!("moneypenny.{name}")] {
-            tools.push(serde_json::json!({
-                "name": tool_name,
-                "description": format!("{description}. Prefer the moneypenny.* form for explicit tool routing."),
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "args": { "type": "object", "default": {} },
-                        "request_id": { "type": "string" },
-                        "idempotency_key": { "type": "string" },
-                        "agent_id": { "type": "string" },
-                        "tenant_id": { "type": "string" },
-                        "user_id": { "type": "string" },
-                        "channel": { "type": "string" },
-                        "session_id": { "type": "string" },
-                        "trace_id": { "type": "string" }
-                    },
-                    "additionalProperties": true
-                }
-            }));
-        }
-    }
-    serde_json::json!({ "tools": tools })
+    domain_tools::tools_list()
 }
 
 fn jsonrpc_result(id: Option<serde_json::Value>, result: serde_json::Value) -> serde_json::Value {
@@ -3352,20 +3213,82 @@ fn request_id_from_jsonrpc(input: &serde_json::Value) -> Option<String> {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+struct SidecarToolStats {
+    selection_count: u64,
+    success_count: u64,
+    error_count: u64,
+    fallback_count: u64,
+    invalid_action_count: u64,
+}
+
+static SIDECAR_TOOL_STATS: LazyLock<Mutex<HashMap<String, SidecarToolStats>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn record_sidecar_tool_event(tool: &str, success: bool, fallback: bool, invalid_action: bool) {
+    if let Ok(mut guard) = SIDECAR_TOOL_STATS.lock() {
+        let entry = guard.entry(tool.to_string()).or_default();
+        entry.selection_count += 1;
+        if success {
+            entry.success_count += 1;
+        } else {
+            entry.error_count += 1;
+        }
+        if fallback {
+            entry.fallback_count += 1;
+        }
+        if invalid_action {
+            entry.invalid_action_count += 1;
+        }
+    }
+}
+
+fn sidecar_tool_stats_snapshot() -> serde_json::Value {
+    if let Ok(guard) = SIDECAR_TOOL_STATS.lock() {
+        let mut rows = Vec::new();
+        for (tool, s) in guard.iter() {
+            let selection = s.selection_count.max(1) as f64;
+            rows.push(serde_json::json!({
+                "tool": tool,
+                "selection_rate": s.selection_count,
+                "success_rate": (s.success_count as f64) / selection,
+                "fallback_rate": (s.fallback_count as f64) / selection,
+                "invalid_action_rate": (s.invalid_action_count as f64) / selection,
+                "errors": s.error_count
+            }));
+        }
+        serde_json::json!(rows)
+    } else {
+        serde_json::json!([])
+    }
+}
+
+enum ParsedMcpToolCall {
+    Operation {
+        request: mp_core::operations::OperationRequest,
+        tool: String,
+        action: String,
+        fallback: bool,
+    },
+    DirectResponse {
+        payload: serde_json::Value,
+        tool: String,
+    },
+}
+
 fn build_sidecar_request_from_mcp_call(
     input: &serde_json::Value,
     default_agent_id: &str,
-) -> anyhow::Result<mp_core::operations::OperationRequest> {
+) -> anyhow::Result<ParsedMcpToolCall> {
     let params = input
         .get("params")
         .and_then(serde_json::Value::as_object)
         .ok_or_else(|| anyhow::anyhow!("missing object params for tools/call"))?;
-    let op = params
+    let tool_name = params
         .get("name")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("missing params.name"))?;
-    let op = op.strip_prefix("moneypenny.").unwrap_or(op);
-    let args = params
+    let arguments = params
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| serde_json::json!({}));
@@ -3375,7 +3298,41 @@ fn build_sidecar_request_from_mcp_call(
         .map(str::to_string)
         .or_else(|| request_id_from_jsonrpc(input));
 
-    build_sidecar_request(
+    let tool_specific = if tool_name.starts_with("moneypenny.") {
+        Some(domain_tools::route_tool_call(tool_name, &arguments)?)
+    } else {
+        None
+    };
+
+    let (op, args, tool_label, action, fallback) = match tool_specific {
+        Some(domain_tools::RoutedToolCall::Capabilities { payload }) => {
+            return Ok(ParsedMcpToolCall::DirectResponse {
+                payload,
+                tool: tool_name.to_string(),
+            });
+        }
+        Some(domain_tools::RoutedToolCall::Operation {
+            domain_tool,
+            action,
+            op,
+            args,
+            execute_fallback,
+        }) => (op, args, domain_tool, action, execute_fallback),
+        None => (
+            tool_name.to_string(),
+            arguments,
+            tool_name.to_string(),
+            "legacy".to_string(),
+            false,
+        ),
+    };
+    let request_id = params
+        .get("request_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .or(request_id);
+
+    let request = build_sidecar_request(
         serde_json::json!({
             "op": op,
             "request_id": request_id,
@@ -3389,7 +3346,14 @@ fn build_sidecar_request_from_mcp_call(
             "args": args
         }),
         default_agent_id,
-    )
+    )?;
+
+    Ok(ParsedMcpToolCall::Operation {
+        request,
+        tool: tool_label,
+        action,
+        fallback,
+    })
 }
 
 async fn handle_sidecar_mcp_request(
@@ -3424,9 +3388,11 @@ async fn handle_sidecar_mcp_request(
         ),
         "tools/list" => jsonrpc_result(id, mcp_tools_list_result()),
         "tools/call" => {
-            let req = match build_sidecar_request_from_mcp_call(input, default_agent_id) {
+            let parsed_call = match build_sidecar_request_from_mcp_call(input, default_agent_id) {
                 Ok(r) => r,
                 Err(e) => {
+                    // likely invalid action/shape for domain tools
+                    record_sidecar_tool_event("moneypenny.invalid", false, false, true);
                     return Ok(Some(jsonrpc_error(
                         id,
                         -32602,
@@ -3434,32 +3400,95 @@ async fn handle_sidecar_mcp_request(
                     )));
                 }
             };
-            let op_resp =
-                match execute_sidecar_operation(conn, &req, embed_provider, embedding_model_id)
-                    .await
-                {
-                    Ok(resp) => resp,
-                    Err(e) => {
-                        let err = sidecar_error_response("sidecar_execute_error", e.to_string());
+            match parsed_call {
+                ParsedMcpToolCall::DirectResponse { payload, tool } => {
+                    let payload = if tool == domain_tools::TOOL_CAPABILITIES {
+                        let mut p = payload;
+                        if let Some(obj) = p.as_object_mut() {
+                            obj.insert("telemetry".to_string(), sidecar_tool_stats_snapshot());
+                        }
+                        p
+                    } else {
+                        payload
+                    };
+                    record_sidecar_tool_event(&tool, true, false, false);
+                    jsonrpc_result(
+                        id,
+                        serde_json::json!({
+                            "content": [{
+                                "type": "text",
+                                "text": serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())
+                            }],
+                            "isError": false
+                        }),
+                    )
+                }
+                ParsedMcpToolCall::Operation {
+                    request,
+                    tool,
+                    action,
+                    fallback,
+                } => {
+                    if fallback && domain_tools::covered_ops().contains(&request.op.as_str()) {
+                        record_sidecar_tool_event(&tool, false, true, false);
                         return Ok(Some(jsonrpc_result(
                             id,
                             serde_json::json!({
-                                "content": [{ "type": "text", "text": err.to_string() }],
+                                "content": [{
+                                    "type": "text",
+                                    "text": format!("moneypenny.execute blocked for covered op '{}'. Use the domain tool action instead.", request.op)
+                                }],
                                 "isError": true
                             }),
                         )));
                     }
-                };
-            jsonrpc_result(
-                id,
-                serde_json::json!({
-                    "content": [{
-                        "type": "text",
-                        "text": serde_json::to_string(&op_resp).unwrap_or_else(|_| "{}".to_string())
-                    }],
-                    "isError": !op_resp.ok
-                }),
-            )
+
+                    let op_resp = match execute_sidecar_operation(
+                        conn,
+                        &request,
+                        embed_provider,
+                        embedding_model_id,
+                    )
+                    .await
+                    {
+                        Ok(mut resp) => {
+                            if let Some(obj) = resp.data.as_object_mut() {
+                                obj.insert(
+                                    "next_actions".to_string(),
+                                    serde_json::Value::Array(domain_tools::next_actions(
+                                        &tool, &action,
+                                    )),
+                                );
+                            }
+                            record_sidecar_tool_event(&tool, resp.ok, fallback, false);
+                            resp
+                        }
+                        Err(e) => {
+                            record_sidecar_tool_event(&tool, false, fallback, false);
+                            let err =
+                                sidecar_error_response("sidecar_execute_error", e.to_string());
+                            return Ok(Some(jsonrpc_result(
+                                id,
+                                serde_json::json!({
+                                    "content": [{ "type": "text", "text": err.to_string() }],
+                                    "isError": true
+                                }),
+                            )));
+                        }
+                    };
+
+                    jsonrpc_result(
+                        id,
+                        serde_json::json!({
+                            "content": [{
+                                "type": "text",
+                                "text": serde_json::to_string(&op_resp).unwrap_or_else(|_| "{}".to_string())
+                            }],
+                            "isError": !op_resp.ok
+                        }),
+                    )
+                }
+            }
         }
         unknown if unknown.starts_with("notifications/") && id.is_none() => return Ok(None),
         _ => jsonrpc_error(id, -32601, format!("method not found: {method}")),
@@ -3703,7 +3732,8 @@ async fn cmd_sidecar(config: &Config, agent: Option<String>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_sidecar_request, build_sidecar_request_from_mcp_call, mcp_tools_list_result,
+        ParsedMcpToolCall, build_sidecar_request, build_sidecar_request_from_mcp_call,
+        mcp_tools_list_result,
     };
 
     #[test]
@@ -3756,20 +3786,24 @@ mod tests {
 
     #[test]
     fn sidecar_mcp_tools_call_translates_to_canonical_request() {
-        let req = build_sidecar_request_from_mcp_call(
+        let parsed = build_sidecar_request_from_mcp_call(
             &serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": "rpc-42",
                 "method": "tools/call",
                 "params": {
-                    "name": "ingest.status",
-                    "arguments": { "limit": 5 },
+                    "name": "moneypenny.ingest",
+                    "arguments": { "action": "status", "input": { "limit": 5 } },
                     "agent_id": "main"
                 }
             }),
             "default-agent",
         )
         .expect("translate tools/call to operation request");
+        let req = match parsed {
+            ParsedMcpToolCall::Operation { request, .. } => request,
+            _ => panic!("expected operation"),
+        };
         assert_eq!(req.op, "ingest.status");
         assert_eq!(req.request_id.as_deref(), Some("rpc-42"));
         assert_eq!(req.actor.agent_id, "main");
@@ -3778,19 +3812,23 @@ mod tests {
 
     #[test]
     fn sidecar_mcp_prefixed_tool_name_maps_to_operation() {
-        let req = build_sidecar_request_from_mcp_call(
+        let parsed = build_sidecar_request_from_mcp_call(
             &serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": "rpc-43",
                 "method": "tools/call",
                 "params": {
-                    "name": "moneypenny.job.list",
-                    "arguments": { "agent_id": "main" }
+                    "name": "moneypenny.jobs",
+                    "arguments": { "action": "list", "input": { "agent_id": "main" } }
                 }
             }),
             "default-agent",
         )
         .expect("translate prefixed tools/call to operation request");
+        let req = match parsed {
+            ParsedMcpToolCall::Operation { request, .. } => request,
+            _ => panic!("expected operation"),
+        };
         assert_eq!(req.op, "job.list");
     }
 
@@ -3799,14 +3837,34 @@ mod tests {
         let result = mcp_tools_list_result();
         let tools = result["tools"].as_array().cloned().unwrap_or_default();
         assert!(!tools.is_empty());
-        assert!(tools.iter().any(|t| t["name"] == "job.create"));
-        assert!(tools.iter().any(|t| t["name"] == "moneypenny.job.create"));
-        assert!(tools.iter().any(|t| t["name"] == "ingest.replay"));
-        assert!(
-            tools
-                .iter()
-                .any(|t| t["name"] == "moneypenny.embedding.status")
-        );
+        assert!(tools.iter().any(|t| t["name"] == "moneypenny.memory"));
+        assert!(tools.iter().any(|t| t["name"] == "moneypenny.jobs"));
+        assert!(tools.iter().any(|t| t["name"] == "moneypenny.capabilities"));
+        assert!(tools.iter().any(|t| t["name"] == "moneypenny.execute"));
+        assert!(!tools.iter().any(|t| t["name"] == "job.create"));
+    }
+
+    #[test]
+    fn sidecar_mcp_capabilities_returns_direct_payload() {
+        let parsed = build_sidecar_request_from_mcp_call(
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "rpc-44",
+                "method": "tools/call",
+                "params": {
+                    "name": "moneypenny.capabilities",
+                    "arguments": {}
+                }
+            }),
+            "default-agent",
+        )
+        .expect("build capabilities call");
+        match parsed {
+            ParsedMcpToolCall::DirectResponse { payload, .. } => {
+                assert!(payload["domains"].is_array());
+            }
+            _ => panic!("expected direct response"),
+        }
     }
 }
 

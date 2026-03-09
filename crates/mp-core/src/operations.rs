@@ -143,6 +143,8 @@ fn dispatch_operation(
         "policy.spec.confirm" => op_policy_spec_confirm(conn, req),
         "policy.spec.apply" => op_policy_spec_apply(conn, req),
         "knowledge.ingest" => op_knowledge_ingest(conn, req),
+        "knowledge.search" => op_knowledge_search(conn, req),
+        "knowledge.list" => op_knowledge_list(conn, req),
         "memory.search" => op_memory_search(conn, req),
         "memory.fact.add" => op_memory_fact_add(conn, req),
         "memory.fact.update" => op_memory_fact_update(conn, req),
@@ -1770,6 +1772,98 @@ fn op_knowledge_ingest(
     })
 }
 
+fn op_knowledge_search(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
+    let query = req.args["query"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'query'"))?;
+    let limit = req.args["limit"].as_u64().unwrap_or(20) as usize;
+
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "search",
+            resource: "knowledge",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+            arguments: None,
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    let rows = crate::search::fts5_search_knowledge(conn, query, limit)?;
+    let data = rows
+        .into_iter()
+        .map(|(id, content, score)| {
+            serde_json::json!({
+                "id": id,
+                "content": content,
+                "score": score
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "knowledge search completed".into(),
+        data: serde_json::json!(data),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
+fn op_knowledge_list(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "list",
+            resource: "knowledge",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+            arguments: None,
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    let docs = crate::store::knowledge::list_documents(conn)?;
+    let data = docs
+        .into_iter()
+        .map(|d| {
+            serde_json::json!({
+                "id": d.id,
+                "title": d.title,
+                "path": d.path,
+                "content_hash": d.content_hash,
+                "created_at": d.created_at,
+                "updated_at": d.updated_at
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "knowledge documents listed".into(),
+        data: serde_json::json!(data),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
 fn op_memory_search(
     conn: &Connection,
     req: &OperationRequest,
@@ -2830,6 +2924,8 @@ fn is_policy_required(op: &str) -> bool {
             | "js.tool.list"
             | "js.tool.delete"
             | "knowledge.ingest"
+            | "knowledge.search"
+            | "knowledge.list"
             | "skill.add"
             | "skill.promote"
             | "fact.delete"
