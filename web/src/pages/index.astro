@@ -77,7 +77,9 @@ const capabilities = [
   <!-- ═══════════════ HERO ═══════════════ -->
   <section class="relative pt-32 pb-24 sm:pt-44 sm:pb-32">
     <div class="mx-auto max-w-3xl px-6 text-center">
-      <div class="animate-fade-up">
+      <div class="animate-fade-up mb-5 inline-flex items-center gap-2 rounded-full border border-zinc-800 bg-zinc-900/60 px-4 py-1.5">
+        <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span class="text-[12px] font-medium tracking-wide text-zinc-400">Pre-alpha &mdash; open source</span>
       </div>
 
       <h1
@@ -341,14 +343,17 @@ const capabilities = [
             on-device inference, CRDT sync, JavaScript tools, and RAG.
           </p>
           <p>
-            Every agent turn runs inside a single ACID transaction. Memory,
-            policy checks, tool execution, audit logging, and embeddings all
-            commit together or roll back together. No partial state, no
-            orphaned writes.
+            The database is the runtime, not just the storage layer. Policy
+            evaluation, fact extraction, knowledge search, tool governance,
+            and audit logging all execute inside SQLite — not in application
+            code that happens to persist to a database. The orchestrator is
+            a thin async loop; the intelligence lives at the data boundary.
           </p>
           <p>
-            Every surface (CLI, MCP sidecar, HTTP API, Slack, Discord) is a
-            thin adapter. Business logic never leaves the database boundary.
+            No Postgres, no Redis, no vector database, no message queue.
+            Every surface — CLI, MCP sidecar, HTTP API, Slack, Discord —
+            is a thin adapter over the same core. Deploy anywhere you can
+            run a binary. Back up by copying a file.
           </p>
         </div>
       </div>
