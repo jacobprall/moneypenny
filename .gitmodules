@@ -13,6 +13,3 @@
 [submodule "vendor/sqlite-ai"]
 	path = vendor/sqlite-ai
 	url = https://github.com/sqliteai/sqlite-ai.git
-[submodule "vendor/sqlite-mcp"]
-	path = vendor/sqlite-mcp
-	url = https://github.com/sqliteai/sqlite-mcp.git

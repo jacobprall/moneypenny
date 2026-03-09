@@ -72,7 +72,6 @@ The foundation. Seven extensions statically linked into one binary provide:
 | `sqlite-rag` | Hybrid retrieval, RRF, multi-format docs |
 | `sqlite-sync` | CRDT offline-first sync |
 | `sqlite-js` | QuickJS sandbox for user-defined functions |
-| `sqlite-mcp` | MCP tool integration |
 
 ## Data Model
 

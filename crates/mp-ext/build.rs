@@ -29,7 +29,6 @@ fn main() {
     build_sqlite_js(&vendor, &sqlite_include);
     build_sqlite_sync(&vendor, &target_os, &sqlite_include);
     build_sqlite_memory(&vendor, &sqlite_include);
-    build_sqlite_mcp(&vendor, &sqlite_include);
     build_sqlite_ai(&vendor, &target_os, &sqlite_include);
 }
 
@@ -127,24 +126,6 @@ fn build_sqlite_memory(vendor: &PathBuf, sqlite_include: &str) {
         .opt_level(2)
         .warnings(false)
         .compile("sqlite_memory");
-}
-
-fn build_sqlite_mcp(vendor: &PathBuf, sqlite_include: &str) {
-    let ext = vendor.join("sqlite-mcp");
-    let src = ext.join("src");
-    let libs = ext.join("libs");
-
-    cc::Build::new()
-        .file(src.join("sqlite-mcp.c"))
-        .include(sqlite_include)
-        .include(&src)
-        .include(&libs)
-        .define("SQLITE_CORE", None)
-        .flag("-include")
-        .flag(libs.join("sqlite3ext.h").to_str().unwrap())
-        .opt_level(2)
-        .warnings(false)
-        .compile("sqlite_mcp");
 }
 
 fn build_sqlite_ai(vendor: &PathBuf, target_os: &str, sqlite_include: &str) {
