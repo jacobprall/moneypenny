@@ -1,4 +1,6 @@
 ---
+import Analytics from '@vercel/analytics/astro';
+
 interface Props {
   title: string;
   description?: string;
@@ -26,6 +28,7 @@ const {
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
+    <Analytics />
     <title>{title}</title>
   </head>
   <body class="min-h-screen font-sans">

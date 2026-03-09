@@ -19,6 +19,15 @@ export default defineConfig({
         baseUrl:
           "https://github.com/jacobprall/moneypenny/edit/main/docs/",
       },
+      head: [
+        {
+          tag: 'script',
+          attrs: {
+            src: '/_vercel/insights/script.js',
+            defer: true,
+          },
+        },
+      ],
       sidebar: [
         {
           label: "Getting Started",

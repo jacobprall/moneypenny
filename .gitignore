@@ -7,6 +7,7 @@ moneypenny.toml
 node_modules
 web/dist/
 web/.astro/
+web/.vercel/
 docs/dist/
 docs/.astro/
 .env
