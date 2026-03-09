@@ -10,3 +10,4 @@ web/.astro/
 docs/dist/
 docs/.astro/
 .env
+.vercel

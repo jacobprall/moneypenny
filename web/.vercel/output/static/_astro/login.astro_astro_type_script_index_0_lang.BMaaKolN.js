@@ -1,1 +1,0 @@
-import{c as a}from"./supabase.aBPZuS-D.js";const t=document.getElementById("github-login");t?.addEventListener("click",async()=>{const e=a(),o=t.dataset.redirect??"/dashboard";await e.auth.signInWithOAuth({provider:"github",options:{redirectTo:`${window.location.origin}/auth/callback?redirect=${encodeURIComponent(o)}`}})});
