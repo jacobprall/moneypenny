@@ -6,20 +6,34 @@ Persistent memory, policy governance, and audit for AI agents — in a single SQ
 
 Moneypenny sits between your agent and its LLM. After every turn it extracts and compresses knowledge into structured facts, enforces policy on every tool call, logs an auditable decision trail, and syncs state across agents via CRDTs. The entire agent state lives in one portable SQLite database. No Postgres, no Redis, no Docker.
 
-It runs as a standalone agent runtime (CLI, HTTP, Slack, Discord, Telegram) or as a sidecar intelligence layer that plugs into existing runtimes via JSONL stdio.
+It runs as a standalone agent runtime (CLI, HTTP, Slack, Discord, Telegram) or as a sidecar that plugs into **Claude Code**, **Cortex Code CLI**, or **OpenClaw** via MCP. One command to connect.
 
 ## Quick Start
 
 ```bash
 git clone --recurse-submodules https://github.com/jacobprall/moneypenny.git
 cd moneypenny && cargo build
-
-mp init                # creates moneypenny.toml + downloads local embedding model
-mp start               # starts gateway
-mp chat                # interactive session with memory, policy, and tools
+cp target/debug/mp /usr/local/bin/mp
 ```
 
-Embeddings run locally by default (nomic-embed-text-v1.5). No API keys required to start.
+Then in any project:
+
+```bash
+mp init                    # creates moneypenny.toml + agent database
+mp setup claude-code       # registers as MCP server (or: mp setup cortex / mp setup openclaw)
+```
+
+Restart your agent. Done. Everything else happens through conversation:
+
+```
+You: Remember that deploys happen Tuesday and Thursday via ArgoCD with canary at 5%
+You: Ingest docs/api-reference.md into the knowledge base
+You: What do you know about our deployment pipeline?
+You: Add a policy that blocks destructive SQL
+You: Create a daily job at 9am to check performance metrics
+```
+
+Embeddings run locally by default (nomic-embed-text-v1.5). No API keys required for memory and search.
 
 To load a rich demo environment (3 agents, 15 facts, 4 docs, 6 policies, 2 skills):
 
@@ -183,13 +197,28 @@ Same agent loop, thin adapters:
 
 ## Sidecar Mode
 
-For integration with existing runtimes, Moneypenny exposes canonical operations over JSONL stdio:
+Moneypenny exposes its full surface area as an MCP server. Register it with one command:
 
 ```bash
-mp sidecar
+mp setup claude-code     # writes .mcp.json (or --global for ~/.claude.json)
+mp setup cortex          # runs cortex mcp add
+mp setup openclaw        # writes ~/.clawdbot/clawdbot.json
 ```
 
-This gives external systems access to memory, policy, search, extraction, and audit without running the full agent loop.
+Under the hood, `mp sidecar` runs the MCP server over stdio. This gives any MCP-compatible client access to all 33 canonical operations — memory, policy, search, ingestion, audit, and more.
+
+### Import conversation history
+
+Auto-ingest prior conversations from your agent runtime into Moneypenny's memory:
+
+```bash
+mp ingest --cortex                       # all Cortex Code CLI sessions
+mp ingest --claude-code                  # all Claude Code sessions
+mp ingest --claude-code=my-project-slug  # scoped to one project
+mp ingest --openclaw-file events.jsonl   # OpenClaw JSONL
+```
+
+Content-hash deduplication makes re-runs safe.
 
 ## Configuration
 
