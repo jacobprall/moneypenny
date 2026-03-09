@@ -103,6 +103,38 @@ const features = [
     </div>
   </section>
 
+  <!-- ═══════════════ COPY PROMPT ═══════════════ -->
+  <section class="relative pb-16 sm:pb-20">
+    <div class="mx-auto max-w-2xl px-6">
+      <p class="mb-3 text-center text-[13px] font-medium uppercase tracking-wider text-zinc-500">
+        Paste this into your agent
+      </p>
+      <div
+        id="prompt-box"
+        class="group relative cursor-pointer overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/50 transition-colors hover:border-zinc-700"
+      >
+        <div class="flex items-center justify-between gap-4 px-5 py-4">
+          <p class="font-mono text-[13px] leading-relaxed text-zinc-300">
+            Visit https://github.com/jacobprall/moneypenny and set up the local sidecar
+          </p>
+          <button
+            id="copy-btn"
+            class="flex shrink-0 items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-[12px] font-medium text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-200"
+          >
+            <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+            <span id="copy-label">Copy</span>
+          </button>
+        </div>
+      </div>
+      <p class="mt-3 text-center text-[13px] text-zinc-500">
+        Your agent will clone the repo, build the binary, and register itself as an MCP server.
+      </p>
+    </div>
+  </section>
+
   <!-- ═══════════════ TERMINAL ═══════════════ -->
   <section class="relative pb-24 sm:pb-32">
     <div class="mx-auto max-w-2xl px-6">
@@ -421,6 +453,29 @@ const features = [
 
 <script>
   import { track } from "@vercel/analytics";
+
+  const promptBox = document.getElementById("prompt-box") as HTMLElement;
+  const copyBtn = document.getElementById("copy-btn") as HTMLButtonElement;
+  const copyLabel = document.getElementById("copy-label") as HTMLElement;
+  const promptText = "Visit https://github.com/jacobprall/moneypenny and set up the local sidecar";
+
+  function copyPrompt() {
+    navigator.clipboard.writeText(promptText).then(() => {
+      copyLabel.textContent = "Copied!";
+      copyBtn.classList.add("border-green-700", "text-green-400");
+      track("copy_prompt");
+      setTimeout(() => {
+        copyLabel.textContent = "Copy";
+        copyBtn.classList.remove("border-green-700", "text-green-400");
+      }, 2000);
+    });
+  }
+
+  copyBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    copyPrompt();
+  });
+  promptBox?.addEventListener("click", copyPrompt);
 
   const form = document.getElementById("waitlist-form") as HTMLFormElement;
   const message = document.getElementById("form-message") as HTMLElement;
