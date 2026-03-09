@@ -28,7 +28,7 @@ RUN|PAUSE|RESUME JOB "name"
 CREATE AGENT "name" [CONFIG key=value]
 SEARCH audit WHERE <filters> [| TAKE n]
 
-Stores: facts, knowledge, log, audit
+Stores: facts, knowledge, log, audit, activity
 Filters: field = value, field > value, field LIKE "%pattern%", AND
 Durations: 7d, 24h, 30m
 Pipeline: chain stages with |
@@ -42,7 +42,9 @@ Examples:
   SEARCH knowledge WHERE "deployment" | TAKE 5
   SEARCH facts | COUNT
   CREATE JOB "digest" SCHEDULE "0 9 * * *" TYPE prompt
-  SEARCH audit WHERE action = "delete" SINCE 24h | TAKE 20"#;
+  SEARCH audit WHERE action = "delete" SINCE 24h | TAKE 20
+  SEARCH activity | TAKE 50
+  SEARCH activity "shell" SINCE 24h"#;
 
 pub fn tool_definition() -> serde_json::Value {
     json!({

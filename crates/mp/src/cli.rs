@@ -167,6 +167,21 @@ pub enum Command {
     #[command(subcommand)]
     Sync(SyncCommand),
 
+    /// Execute an MPQ expression (Moneypenny Query DSL)
+    #[command(name = "mpq")]
+    Mpq {
+        /// MPQ expression (e.g. 'SEARCH facts', 'SEARCH activity')
+        expression: String,
+
+        /// Agent name (defaults to first configured agent)
+        #[arg(long)]
+        agent: Option<String>,
+
+        /// Parse and policy-check without executing
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+    },
+
     /// Direct database access (read-only)
     #[command(subcommand)]
     Db(DbCommand),
@@ -640,5 +655,19 @@ pub enum SetupCommand {
         /// Agent name (defaults to first configured agent)
         #[arg(long)]
         agent: Option<String>,
+
+        /// Use local binary instead of Docker (default is Docker)
+        #[arg(long, default_value_t = false)]
+        local: bool,
+
+        /// Docker image name
+        #[arg(long, default_value = "moneypenny")]
+        image: String,
     },
+
+    /// Download embedding models required by configured agents
+    Models,
+
+    /// Seed bootstrap facts into agent databases (safe to re-run)
+    Seed,
 }

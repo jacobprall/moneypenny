@@ -104,6 +104,7 @@ async fn main() -> Result<()> {
         Command::Embeddings(cmd) => cmd_embeddings(&config, cmd).await,
         Command::Audit { agent, command } => cmd_audit(&config, agent, command).await,
         Command::Sync(cmd) => cmd_sync(&config, cmd).await,
+        Command::Mpq { expression, agent, dry_run } => cmd_mpq(&config, &expression, agent, dry_run).await,
         Command::Db(cmd) => cmd_db(&config, cmd).await,
         Command::Health => cmd_health(&config).await,
         Command::Worker { agent } => cmd_worker(&config, &agent).await,
@@ -1085,6 +1086,231 @@ async fn maybe_summarize_session(
 }
 
 // =========================================================================
+// Model download
+// =========================================================================
+
+fn default_model_url(model_name: &str) -> Option<&'static str> {
+    match model_name {
+        "nomic-embed-text-v1.5" => Some(
+            "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf",
+        ),
+        _ => None,
+    }
+}
+
+async fn download_model(url: &str, dest: &Path) -> Result<()> {
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
+
+    fn flush() {
+        let _ = std::io::stdout().flush();
+    }
+
+    if dest.exists() {
+        println!("  \u{2713} Model already present at {}", dest.display());
+        flush();
+        return Ok(());
+    }
+
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let fname = dest
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or("model");
+
+    println!("  \u{2193} Connecting to download {fname}...");
+    flush();
+
+    let resp = reqwest::get(url).await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("download failed: HTTP {}", resp.status());
+    }
+
+    let total = resp.content_length();
+    let size_label = match total {
+        Some(n) => format!("{} MB", n / 1_000_000),
+        None => "unknown size".to_string(),
+    };
+
+    println!("  \u{2193} Downloading {fname} ({size_label})...");
+    println!("      This may take a few minutes on slower connections.");
+    flush();
+
+    let tmp = dest.with_extension("gguf.tmp");
+    let mut file = tokio::fs::File::create(&tmp).await?;
+    let mut stream = resp.bytes_stream();
+    let mut downloaded: u64 = 0;
+    let mut last_mb: u64 = 0;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        file.write_all(&chunk).await?;
+        downloaded += chunk.len() as u64;
+        let current_mb = downloaded / 1_000_000;
+        if current_mb >= last_mb + 25 {
+            last_mb = current_mb;
+            if let Some(t) = total {
+                let pct = (downloaded * 100) / t;
+                println!("      {current_mb} / {} MB ({pct}%)", t / 1_000_000);
+            } else {
+                println!("      {current_mb} MB downloaded...");
+            }
+            flush();
+        }
+    }
+    file.flush().await?;
+    drop(file);
+
+    tokio::fs::rename(&tmp, dest).await?;
+    println!("  \u{2713} Model saved to {}", dest.display());
+    flush();
+    Ok(())
+}
+
+/// Download embedding models for all agents with `provider = "local"`.
+async fn ensure_embedding_models(config: &Config) {
+    for agent in &config.agents {
+        if agent.embedding.provider != "local" {
+            continue;
+        }
+        let model_path = agent.embedding.resolve_model_path(&config.models_dir());
+        let url = match default_model_url(&agent.embedding.model) {
+            Some(u) => u,
+            None => {
+                println!(
+                    "  ! No download URL known for model \"{}\". Place the GGUF file at {:?} manually.",
+                    agent.embedding.model, model_path
+                );
+                continue;
+            }
+        };
+        if let Err(e) = download_model(url, &model_path).await {
+            eprintln!(
+                "  ! Failed to download model for agent \"{}\": {e}",
+                agent.name
+            );
+        }
+    }
+}
+
+// =========================================================================
+// Bootstrap seed facts
+// =========================================================================
+
+fn seed_bootstrap_facts(conn: &rusqlite::Connection, agent_id: &str) {
+    use mp_core::store::facts::{NewFact, add};
+
+    let seeds: &[(&str, &str, &str, &str)] = &[
+        (
+            // Pointer (always in context, ~10 words)
+            "Moneypenny: persistent memory, knowledge, policies, tools, extraction",
+            // Summary (expanded via FTS when relevant)
+            "Moneypenny is an autonomous AI agent runtime where the database is the runtime. \
+             It provides persistent long-term memory (facts), knowledge retrieval from ingested \
+             documents, governance policies, scheduled jobs, and conversation history across sessions.",
+            // Content (full detail, retrieved via memory_search)
+            "Moneypenny is an autonomous AI agent platform where the database is the runtime. \
+             Core capabilities:\n\
+             - Facts: durable knowledge extracted from conversations, stored with confidence scores. \
+               Facts are progressively compacted — full content at Level 0, summaries at Level 1, \
+               pointers at Level 2. All fact pointers appear in every context window.\n\
+             - Knowledge: documents and URLs ingested into a chunk store with FTS5 search.\n\
+             - Policies: allow/deny/audit rules governing what the agent can do.\n\
+             - Sessions: conversation history with rolling summaries for long conversations.\n\
+             - Jobs: cron-scheduled tasks the agent can run autonomously.\n\
+             - Scratch: ephemeral per-session working memory for intermediate results.\n\
+             Architecture: SQLite-based, local-first, with optional CRDT sync across agents.",
+            // Keywords
+            "moneypenny memory facts knowledge policies sessions jobs architecture",
+        ),
+        (
+            "Tools: memory_search, fact_list, web_search, file_read, scratch_set/get",
+            "Available tools: memory_search (semantic + FTS search across facts, messages, knowledge), \
+             fact_list (enumerate stored facts), web_search (live internet search), \
+             file_read (read local files), scratch_set/scratch_get (session working memory), \
+             knowledge_list (ingested documents), job_list (scheduled jobs), \
+             policy_list (active policies), audit_query (audit trail).",
+            "The agent has access to these tools:\n\
+             - memory_search: search across facts, conversation history, and knowledge. Supports \
+               both keyword (FTS5) and semantic (vector) search when embeddings are available.\n\
+             - fact_list: list all stored facts with pointers and confidence scores.\n\
+             - web_search: search the internet for current information.\n\
+             - file_read: read files from the local filesystem.\n\
+             - scratch_set / scratch_get: save and retrieve ephemeral values within the current session. \
+               Use for intermediate results, plans, and working state.\n\
+             - knowledge_list: list ingested documents in the knowledge store.\n\
+             - job_list: list scheduled jobs and their status.\n\
+             - policy_list: list active governance policies.\n\
+             - audit_query: search the audit trail for past actions.\n\
+             When uncertain about what you know, use memory_search before answering. \
+             When asked to remember something, the extraction pipeline handles it automatically — \
+             just acknowledge the request.",
+            "tools memory_search fact_list web_search file_read scratch knowledge jobs",
+        ),
+        (
+            "Learning: facts extracted automatically from conversations",
+            "The agent learns by extracting durable facts from conversations. An extraction pipeline \
+             runs after each turn, identifying statements worth remembering. Facts are deduplicated \
+             against existing knowledge and stored with confidence scores.",
+            "How the agent learns:\n\
+             1. After each conversation turn, an extraction pipeline analyzes recent messages.\n\
+             2. Candidate facts are identified — statements that are durable, non-obvious, and worth \
+                remembering across sessions.\n\
+             3. Candidates are deduplicated against existing facts to avoid redundancy.\n\
+             4. New facts are stored with confidence scores (0.0-1.0) and linked to their source message.\n\
+             5. Over time, fact pointers are progressively compacted to fit more knowledge into the \
+                context window. The full content is always available via memory_search.\n\
+             6. Facts can be manually inserted via the MPQ language: \
+                INSERT INTO facts (\"content\", topic=\"value\", confidence=0.9)\n\
+             The agent does not need to explicitly \"save\" facts — the pipeline handles it. \
+             When a user says \"remember this\", just acknowledge it.",
+            "learning extraction facts pipeline confidence deduplication compaction",
+        ),
+        (
+            "MPQ: query language for memory operations (SEARCH, INSERT, DELETE)",
+            "MPQ (Moneypenny Query) is the agent's query language. Key operations: \
+             SEARCH facts/knowledge/audit with WHERE filters, SINCE duration, SORT, TAKE. \
+             INSERT INTO facts with content and metadata. DELETE FROM facts with conditions.",
+            "MPQ (Moneypenny Query) syntax reference:\n\
+             - SEARCH <store> [WHERE <filters>] [SINCE <duration>] [| SORT field ASC|DESC] [| TAKE n]\n\
+             - INSERT INTO facts (\"content\", key=value ...)\n\
+             - UPDATE facts SET key=value WHERE id = \"id\"\n\
+             - DELETE FROM facts WHERE <filters>\n\
+             - INGEST \"url\"\n\
+             - SEARCH audit WHERE <filters> [| TAKE n]\n\n\
+             Stores: facts, knowledge, log, audit\n\
+             Filters: field = value, field > value, field LIKE \"%pattern%\", AND\n\
+             Durations: 7d, 24h, 30m\n\
+             Pipeline: chain stages with |\n\
+             Multi-statement: separate with ;\n\n\
+             Examples:\n\
+             SEARCH facts WHERE topic = \"auth\" SINCE 7d | SORT confidence DESC | TAKE 10\n\
+             INSERT INTO facts (\"Redis preferred for caching\", topic=\"infra\", confidence=0.9)\n\
+             SEARCH facts | COUNT",
+            "mpq query language search insert delete facts knowledge audit",
+        ),
+    ];
+
+    for (pointer, summary, content, keywords) in seeds {
+        let fact = NewFact {
+            agent_id: agent_id.to_string(),
+            content: content.to_string(),
+            summary: summary.to_string(),
+            pointer: pointer.to_string(),
+            keywords: Some(keywords.to_string()),
+            source_message_id: None,
+            confidence: 1.0,
+        };
+        if let Err(e) = add(conn, &fact, Some("bootstrap")) {
+            tracing::warn!(agent = agent_id, "failed to seed bootstrap fact: {e}");
+        }
+    }
+}
+
+// =========================================================================
 // Init
 // =========================================================================
 
@@ -1140,6 +1366,14 @@ async fn cmd_init(config_path: &str) -> Result<()> {
         }
     }
 
+    for agent in &config.agents {
+        let agent_db_path = config.agent_db_path(&agent.name);
+        if let Ok(agent_conn) = mp_core::db::open(&agent_db_path) {
+            let _ = mp_core::schema::init_agent_db(&agent_conn);
+            seed_bootstrap_facts(&agent_conn, &agent.name);
+        }
+    }
+
     println!();
     println!("  Moneypenny v{}", env!("CARGO_PKG_VERSION"));
     println!();
@@ -1155,11 +1389,24 @@ async fn cmd_init(config_path: &str) -> Result<()> {
             agent.embedding.provider, agent.embedding.model, agent.embedding.dimensions
         );
     }
+    println!("  \u{2713} Seeded bootstrap facts");
     println!();
-    println!("  Ready. Run `mp setup cursor` to register the MCP server.");
+
+    ensure_embedding_models(&config).await;
+
     println!();
-    println!("  Tip: To use mp as a conversational agent (mp chat, mp ask),");
-    println!("       set provider = \"anthropic\" in [agents.llm] and ANTHROPIC_API_KEY in .env.");
+    println!("  Ready! Next steps:");
+    println!();
+    println!("  Docker (recommended):");
+    println!("    docker build -t moneypenny .");
+    println!("    mp setup cursor                    # generates Docker-based MCP config");
+    println!();
+    println!("  Local (alternative):");
+    println!("    mp setup cursor --local            # uses local binary instead");
+    println!();
+    println!("  Then reload Cursor and ask: \"What Moneypenny tools do you have?\"");
+    println!();
+    println!("  Tip: Set ANTHROPIC_API_KEY in .env for LLM features (mp chat, mp ask).");
     println!();
 
     Ok(())
@@ -1170,22 +1417,78 @@ async fn cmd_init(config_path: &str) -> Result<()> {
 // =========================================================================
 
 async fn cmd_setup(config: &Config, cmd: cli::SetupCommand) -> Result<()> {
-    let cli::SetupCommand::Cursor { agent } = &cmd;
+    match &cmd {
+        cli::SetupCommand::Models => {
+            println!();
+            println!("  Checking embedding models...");
+            println!();
+            ensure_embedding_models(config).await;
+            println!();
+            return Ok(());
+        }
+        cli::SetupCommand::Seed => {
+            println!();
+            for agent in &config.agents {
+                let conn = open_agent_db(config, &agent.name)?;
+                let existing: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM facts WHERE agent_id = ?1 AND confidence = 1.0 \
+                     AND id IN (SELECT fact_id FROM fact_audit WHERE reason = 'bootstrap')",
+                    rusqlite::params![agent.name],
+                    |r| r.get(0),
+                ).unwrap_or(0);
+                if existing >= 4 {
+                    println!("  \u{2713} {}: bootstrap facts already present ({existing})", agent.name);
+                    continue;
+                }
+                seed_bootstrap_facts(&conn, &agent.name);
+                println!("  \u{2713} {}: seeded bootstrap facts", agent.name);
+            }
+            println!();
+            return Ok(());
+        }
+        _ => {}
+    }
+    let cli::SetupCommand::Cursor { agent, local, image } = &cmd else {
+        unreachable!()
+    };
     let ag = resolve_agent(config, agent.as_deref())?;
-    let mp_binary = std::env::current_exe()?
-        .canonicalize()
-        .unwrap_or_else(|_| std::env::current_exe().unwrap());
     let project_dir = std::env::current_dir()?;
-    let mp_bin_str = mp_binary.to_string_lossy().to_string();
-    let config_abs = project_dir.join("moneypenny.toml");
+    let data_dir = project_dir.join("mp-data");
 
-    let mcp_server_entry = serde_json::json!({
-        "command": &mp_bin_str,
-        "args": [
-            "--config", config_abs.to_string_lossy().as_ref(),
-            "sidecar", "--agent", &ag.name
-        ]
-    });
+    let (mcp_server_entry, mode_label, hooks_config) = if *local {
+        let mp_binary = std::env::current_exe()?
+            .canonicalize()
+            .unwrap_or_else(|_| std::env::current_exe().unwrap());
+        let mp_bin_str = mp_binary.to_string_lossy().to_string();
+        let config_abs = project_dir.join("moneypenny.toml");
+
+        let entry = serde_json::json!({
+            "command": &mp_bin_str,
+            "args": [
+                "--config", config_abs.to_string_lossy().as_ref(),
+                "sidecar", "--agent", &ag.name
+            ]
+        });
+        let hooks = generate_hooks_json(&mp_bin_str, &config_abs.to_string_lossy(), &ag.name);
+        (entry, format!("local ({mp_bin_str})"), hooks)
+    } else {
+        let data_mount = format!("{}:/data", data_dir.display());
+        let config_abs = project_dir.join("moneypenny.toml");
+        let config_mount = format!("{}:/app/moneypenny.toml:ro", config_abs.display());
+        let entry = serde_json::json!({
+            "command": "docker",
+            "args": [
+                "run", "-i", "--rm",
+                "-v", &data_mount,
+                "-v", &config_mount,
+                "-e", "ANTHROPIC_API_KEY",
+                &image,
+                "sidecar", "--agent", &ag.name
+            ]
+        });
+        let hooks = generate_hooks_json_docker(image, &data_mount, &config_mount, &ag.name);
+        (entry, format!("docker ({image})"), hooks)
+    };
 
     // Write .cursor/mcp.json
     let mcp_path = project_dir.join(".cursor").join("mcp.json");
@@ -1200,10 +1503,12 @@ async fn cmd_setup(config: &Config, cmd: cli::SetupCommand) -> Result<()> {
     let rule_path = rules_dir.join("moneypenny.mdc");
     std::fs::write(&rule_path, AGENT_INSTRUCTIONS)?;
 
-    // Write .cursor/hooks.json — each entry calls `mp hook --event <name>` directly
+    // Write .cursor/hooks.json
     let hooks_json_path = project_dir.join(".cursor").join("hooks.json");
-    let hooks_config = generate_hooks_json(&mp_bin_str, &config_abs.to_string_lossy(), &ag.name);
     std::fs::write(&hooks_json_path, hooks_config)?;
+
+    // Ensure data directory exists for Docker volume mount
+    std::fs::create_dir_all(&data_dir)?;
 
     println!();
     println!("  Moneypenny v{}", env!("CARGO_PKG_VERSION"));
@@ -1212,9 +1517,16 @@ async fn cmd_setup(config: &Config, cmd: cli::SetupCommand) -> Result<()> {
     println!("  \u{2713} Wrote agent rules to {}", rule_path.display());
     println!("  \u{2713} Wrote hooks config to {}", hooks_json_path.display());
     println!();
-    println!("  Binary:  {mp_bin_str}");
+    println!("  Mode:    {mode_label}");
     println!("  Agent:   {}", ag.name);
+    println!("  Data:    {}", data_dir.display());
     println!("  Project: {}", project_dir.display());
+    if !local {
+        println!();
+        println!("  Docker quick start:");
+        println!("    docker build -t {image} .");
+        println!("    docker run -it --rm -v {}:/data -e ANTHROPIC_API_KEY {image} init", data_dir.display());
+    }
     println!();
     println!("  Governance:");
     println!("    - All tool calls, shell commands, file edits, and MCP calls are audited");
@@ -1486,6 +1798,32 @@ fn generate_hooks_json(mp_bin: &str, config_path: &str, agent: &str) -> String {
     let cmd = |event: &str| -> serde_json::Value {
         serde_json::json!({
             "command": format!("\"{}\" --config \"{}\" hook --event {} --agent {}", mp_bin, config_path, event, agent)
+        })
+    };
+
+    let hooks = serde_json::json!({
+        "version": 1,
+        "hooks": {
+            "sessionStart": [cmd("sessionStart")],
+            "stop": [cmd("stop")],
+            "preToolUse": [cmd("preToolUse")],
+            "postToolUse": [cmd("postToolUse")],
+            "beforeShellExecution": [cmd("beforeShellExecution")],
+            "afterShellExecution": [cmd("afterShellExecution")],
+            "beforeMCPExecution": [cmd("beforeMCPExecution")],
+            "afterMCPExecution": [cmd("afterMCPExecution")],
+            "afterFileEdit": [cmd("afterFileEdit")]
+        }
+    });
+    serde_json::to_string_pretty(&hooks).unwrap_or_default() + "\n"
+}
+
+fn generate_hooks_json_docker(image: &str, data_mount: &str, config_mount: &str, agent: &str) -> String {
+    let cmd = |event: &str| -> serde_json::Value {
+        serde_json::json!({
+            "command": format!(
+                "docker run --rm -i -v {data_mount} -v {config_mount} {image} hook --event {event} --agent {agent}"
+            )
         })
     };
 
@@ -5234,6 +5572,32 @@ fn open_peer_db(db_path: &std::path::Path, tables: &[&str]) -> Result<rusqlite::
 // =========================================================================
 // Db
 // =========================================================================
+
+async fn cmd_mpq(config: &Config, expression: &str, agent: Option<String>, dry_run: bool) -> Result<()> {
+    let ag = resolve_agent(config, agent.as_deref())?;
+    let conn = open_agent_db(config, &ag.name)?;
+
+    let ctx = mp_core::dsl::ExecuteContext {
+        agent_id: ag.name.clone(),
+        channel: Some("cli".into()),
+        session_id: None,
+        trace_id: None,
+    };
+
+    let response = mp_core::dsl::run(&conn, expression, dry_run, &ctx);
+    let output = serde_json::to_string_pretty(&serde_json::json!({
+        "ok": response.ok,
+        "code": response.code,
+        "message": response.message,
+        "data": response.data,
+    }))?;
+    println!("{output}");
+
+    if !response.ok {
+        std::process::exit(1);
+    }
+    Ok(())
+}
 
 async fn cmd_db(config: &Config, cmd: cli::DbCommand) -> Result<()> {
     let ag = resolve_agent(config, None)?;
