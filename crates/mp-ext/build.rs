@@ -31,7 +31,6 @@ fn main() {
     build_sqlite_memory(&vendor, &sqlite_include);
     build_sqlite_mcp(&vendor, &sqlite_include);
     build_sqlite_ai(&vendor, &target_os, &sqlite_include);
-    build_sqlite_agent(&vendor, &sqlite_include);
 }
 
 fn build_sqlite_vector(vendor: &PathBuf, sqlite_include: &str) {
@@ -262,20 +261,3 @@ fn build_sqlite_ai(vendor: &PathBuf, target_os: &str, sqlite_include: &str) {
         .compile("sqlite_ai");
 }
 
-fn build_sqlite_agent(vendor: &PathBuf, sqlite_include: &str) {
-    let ext = vendor.join("sqlite-agent");
-    let src = ext.join("src");
-    let libs = ext.join("libs");
-
-    cc::Build::new()
-        .file(src.join("sqlite-agent.c"))
-        .include(sqlite_include)
-        .include(&src)
-        .include(&libs)
-        .define("SQLITE_CORE", None)
-        .flag("-include")
-        .flag(libs.join("sqlite3ext.h").to_str().unwrap())
-        .opt_level(2)
-        .warnings(false)
-        .compile("sqlite_agent");
-}

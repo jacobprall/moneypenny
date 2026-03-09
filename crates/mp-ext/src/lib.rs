@@ -3,7 +3,7 @@
 //! Each extension is compiled from C source via `build.rs` and registered here
 //! through the raw `sqlite3*` handle from rusqlite. Extensions are initialized
 //! in dependency order — sqlite-vector before sqlite-memory, sqlite-mcp before
-//! sqlite-agent, etc.
+//! sqlite-ai, etc.
 
 use std::ffi::{c_char, c_int, c_void};
 use std::ptr;
@@ -18,7 +18,6 @@ unsafe extern "C" {
     fn sqlite3_memory_init(db: *mut c_void, err: *mut *mut c_char, api: *const c_void) -> c_int;
     fn sqlite3_ai_init(db: *mut c_void, err: *mut *mut c_char, api: *const c_void) -> c_int;
     fn sqlite3_mcp_init(db: *mut c_void, err: *mut *mut c_char, api: *const c_void) -> c_int;
-    fn sqlite3_agent_init(db: *mut c_void, err: *mut *mut c_char, api: *const c_void) -> c_int;
 }
 
 /// Initialize all statically-linked SQLite extensions on the given connection.
@@ -41,9 +40,6 @@ pub fn init_all_extensions(conn: &rusqlite::Connection) -> anyhow::Result<()> {
         // Phase 3: extensions with network/MCP and AI inference
         call_init(db, sqlite3_mcp_init, "sqlite-mcp")?;
         call_init(db, sqlite3_ai_init, "sqlite-ai")?;
-
-        // Phase 4: extensions that depend on others at SQL level
-        call_init(db, sqlite3_agent_init, "sqlite-agent")?;
     }
 
     tracing::debug!("all SQLite extensions initialized");
