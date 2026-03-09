@@ -9,3 +9,4 @@ web/dist/
 web/.astro/
 docs/dist/
 docs/.astro/
+.env
