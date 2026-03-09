@@ -3909,13 +3909,12 @@ mod tests {
     fn sidecar_mcp_tools_list_exposes_canonical_ops() {
         let result = mcp_tools_list_result();
         let tools = result["tools"].as_array().cloned().unwrap_or_default();
-        assert!(!tools.is_empty());
+        assert_eq!(tools.len(), 3, "MCP surface: query + capabilities + execute");
         assert!(tools.iter().any(|t| t["name"] == "moneypenny.query"));
-        assert!(tools.iter().any(|t| t["name"] == "moneypenny.memory"));
-        assert!(tools.iter().any(|t| t["name"] == "moneypenny.jobs"));
         assert!(tools.iter().any(|t| t["name"] == "moneypenny.capabilities"));
         assert!(tools.iter().any(|t| t["name"] == "moneypenny.execute"));
-        assert!(!tools.iter().any(|t| t["name"] == "job.create"));
+        assert!(!tools.iter().any(|t| t["name"] == "moneypenny.memory"));
+        assert!(!tools.iter().any(|t| t["name"] == "moneypenny.jobs"));
     }
 
     #[test]

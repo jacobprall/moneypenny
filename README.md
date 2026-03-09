@@ -30,9 +30,9 @@ mp setup cortex            # for Cortex Code CLI
 mp setup openclaw          # for OpenClaw
 ```
 
-After setup, restart the agent runtime. You will then have access to 33 MCP tools for persistent memory (`memory.fact.add`, `memory.search`), knowledge ingestion (`knowledge.ingest`), policy governance (`policy.add`, `policy.evaluate`), audit (`audit.query`), scheduling (`job.create`), and more. All state is stored in a single SQLite database at `mp-data/main.db`.
+After setup, restart the agent runtime. Moneypenny registers 3 MCP tools: `moneypenny.query` (the primary interface — every operation is an MPQ expression), `moneypenny.capabilities` (domain discovery), and `moneypenny.execute` (advanced fallback). All state is stored in a single SQLite database at `mp-data/main.db`.
 
-To verify the connection works, call any MCP tool — for example, `memory.search` with query `"test"`.
+To verify the connection works, call `moneypenny.query` with expression `SEARCH facts WHERE topic = "test" | TAKE 5`.
 
 ---
 
