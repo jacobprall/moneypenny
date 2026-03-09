@@ -1,5 +1,4 @@
 {
   "installCommand": "cd web && npm install && cd ../docs && npm install",
-  "buildCommand": "cd web && npm run build && cd ../docs && npm run build && cp -r dist ../web/dist/docs",
-  "outputDirectory": "web/dist"
+  "buildCommand": "cd web && npm run build && cd ../docs && npm run build && cp -r dist ../web/.vercel/output/static/docs && cd .. && mv web/.vercel .vercel"
 }

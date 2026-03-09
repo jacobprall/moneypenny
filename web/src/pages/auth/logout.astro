@@ -1,4 +1,6 @@
 ---
+export const prerender = false;
+
 const supabase = Astro.locals.supabase;
 await supabase.auth.signOut();
 return Astro.redirect("/");

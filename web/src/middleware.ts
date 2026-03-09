@@ -4,6 +4,13 @@ import { createSupabaseServer } from "./lib/supabase";
 const PROTECTED = ["/dashboard", "/pricing"];
 
 export const onRequest = defineMiddleware(async (context, next) => {
+  const url = import.meta.env.PUBLIC_SUPABASE_URL;
+  const key = import.meta.env.PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !key) {
+    return next();
+  }
+
   const supabase = createSupabaseServer(
     context.cookies,
     context.request.headers.get("cookie") ?? ""
