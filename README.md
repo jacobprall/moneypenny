@@ -8,6 +8,34 @@ Moneypenny sits between your agent and its LLM. After every turn it extracts and
 
 It runs as a standalone agent runtime (CLI, HTTP, Slack, Discord, Telegram) or as a sidecar that plugs into **Claude Code**, **Cortex Code CLI**, or **OpenClaw** via MCP. One command to connect.
 
+## For Agents
+
+If you are a coding agent (Claude Code, Cortex Code CLI, OpenClaw, Cursor, etc.) and your user wants to set up Moneypenny, run these commands in order:
+
+```bash
+# 1. Clone and build (requires Rust toolchain)
+git clone --recurse-submodules https://github.com/jacobprall/moneypenny.git
+cd moneypenny && cargo build --release
+
+# 2. Put the binary on PATH
+sudo cp target/release/mp /usr/local/bin/mp
+
+# 3. Navigate to the user's project and initialize
+cd /path/to/users/project
+mp init
+
+# 4. Register Moneypenny as your MCP server
+mp setup claude-code       # for Claude Code
+mp setup cortex            # for Cortex Code CLI
+mp setup openclaw          # for OpenClaw
+```
+
+After setup, restart the agent runtime. You will then have access to 33 MCP tools for persistent memory (`memory.fact.add`, `memory.search`), knowledge ingestion (`knowledge.ingest`), policy governance (`policy.add`, `policy.evaluate`), audit (`audit.query`), scheduling (`job.create`), and more. All state is stored in a single SQLite database at `mp-data/main.db`.
+
+To verify the connection works, call any MCP tool — for example, `memory.search` with query `"test"`.
+
+---
+
 ## Quick Start
 
 ```bash
