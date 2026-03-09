@@ -234,7 +234,7 @@ mp setup cortex          # runs cortex mcp add
 mp setup openclaw        # writes ~/.clawdbot/clawdbot.json
 ```
 
-Under the hood, `mp sidecar` runs the MCP server over stdio. This gives any MCP-compatible client access to all 33 canonical operations — memory, policy, search, ingestion, audit, and more.
+Under the hood, `mp sidecar` runs the MCP server over stdio. Every operation Moneypenny supports is expressible as a short string in **MPQ (Moneypenny Query)** — a single unified language exposed through one MCP tool whose description *is* the syntax. Instead of discovering 12 tools and learning their JSON schemas, the agent reads ~200 tokens of grammar and can immediately write expressions like `SEARCH facts WHERE topic = "auth" SINCE 7d | TAKE 10` or `CREATE POLICY deny DELETE ON facts FOR AGENT "junior"`. The verb maps directly to the canonical operation; the policy engine pattern-matches against the raw expression; the audit trail is human-readable by default.
 
 ### Import conversation history
 

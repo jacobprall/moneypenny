@@ -1,6 +1,7 @@
 use anyhow::Result;
 use serde_json::{Value, json};
 
+pub const TOOL_QUERY: &str = "moneypenny.query";
 pub const TOOL_MEMORY: &str = "moneypenny.memory";
 pub const TOOL_KNOWLEDGE: &str = "moneypenny.knowledge";
 pub const TOOL_POLICY: &str = "moneypenny.policy";
@@ -19,6 +20,10 @@ pub enum RoutedToolCall {
     Capabilities {
         payload: Value,
     },
+    MpqQuery {
+        expression: String,
+        dry_run: bool,
+    },
     Operation {
         domain_tool: String,
         action: String,
@@ -30,6 +35,7 @@ pub enum RoutedToolCall {
 
 pub fn tools_list() -> Value {
     let tools = vec![
+        mp_core::dsl::tool_definition(),
         domain_tool(
             TOOL_MEMORY,
             "Moneypenny: memory skill pack. Use when the user asks to remember, retrieve, update, or forget durable facts.",
@@ -272,6 +278,21 @@ pub fn capabilities(domain_filter: Option<&str>) -> Value {
 
 pub fn route_tool_call(tool_name: &str, arguments: &Value) -> Result<RoutedToolCall> {
     let normalized = normalize_tool_name(tool_name);
+    if normalized == "query" {
+        let expression = arguments
+            .get("expression")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("moneypenny.query requires 'expression'"))?;
+        let dry_run = arguments
+            .get("dry_run")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        return Ok(RoutedToolCall::MpqQuery {
+            expression: expression.to_string(),
+            dry_run,
+        });
+    }
+
     if normalized == "capabilities" {
         let domain = arguments.get("domain").and_then(Value::as_str);
         return Ok(RoutedToolCall::Capabilities {

@@ -3,6 +3,7 @@ pub mod channel;
 pub mod config;
 pub mod context;
 pub mod db;
+pub mod dsl;
 pub mod encryption;
 pub mod extraction;
 pub mod gateway;

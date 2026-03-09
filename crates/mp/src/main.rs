@@ -3274,6 +3274,14 @@ enum ParsedMcpToolCall {
         payload: serde_json::Value,
         tool: String,
     },
+    MpqQuery {
+        expression: String,
+        dry_run: bool,
+        agent_id: String,
+        channel: Option<String>,
+        session_id: Option<String>,
+        trace_id: Option<String>,
+    },
 }
 
 fn build_sidecar_request_from_mcp_call(
@@ -3305,6 +3313,37 @@ fn build_sidecar_request_from_mcp_call(
     };
 
     let (op, args, tool_label, action, fallback) = match tool_specific {
+        Some(domain_tools::RoutedToolCall::MpqQuery {
+            expression,
+            dry_run,
+        }) => {
+            let agent_id = params
+                .get("agent_id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(default_agent_id)
+                .to_string();
+            let channel = params
+                .get("channel")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            let session_id = params
+                .get("session_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            let trace_id = params
+                .get("trace_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+                .or_else(|| request_id.clone());
+            return Ok(ParsedMcpToolCall::MpqQuery {
+                expression,
+                dry_run,
+                agent_id,
+                channel,
+                session_id,
+                trace_id,
+            });
+        }
         Some(domain_tools::RoutedToolCall::Capabilities { payload }) => {
             return Ok(ParsedMcpToolCall::DirectResponse {
                 payload,
@@ -3401,6 +3440,40 @@ async fn handle_sidecar_mcp_request(
                 }
             };
             match parsed_call {
+                ParsedMcpToolCall::MpqQuery {
+                    expression,
+                    dry_run,
+                    agent_id,
+                    channel,
+                    session_id,
+                    trace_id,
+                } => {
+                    let ctx = mp_core::dsl::ExecuteContext {
+                        agent_id,
+                        channel,
+                        session_id,
+                        trace_id,
+                    };
+                    let resp = mp_core::dsl::run(conn, &expression, dry_run, &ctx);
+                    record_sidecar_tool_event(domain_tools::TOOL_QUERY, resp.ok, false, false);
+                    let text = serde_json::to_string(&serde_json::json!({
+                        "ok": resp.ok,
+                        "code": resp.code,
+                        "message": resp.message,
+                        "data": resp.data,
+                    }))
+                    .unwrap_or_else(|_| "{}".to_string());
+                    jsonrpc_result(
+                        id,
+                        serde_json::json!({
+                            "content": [{
+                                "type": "text",
+                                "text": text
+                            }],
+                            "isError": !resp.ok
+                        }),
+                    )
+                }
                 ParsedMcpToolCall::DirectResponse { payload, tool } => {
                     let payload = if tool == domain_tools::TOOL_CAPABILITIES {
                         let mut p = payload;
