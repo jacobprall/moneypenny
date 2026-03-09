@@ -6,12 +6,12 @@ description: Import documents, URLs, and external event histories
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
 Moneypenny supports ingesting documents from local files, URLs, and external
-runtime event logs (e.g. OpenClaw JSONL). Ingested content feeds the knowledge
-base and enriches agent context.
+runtime event logs from OpenClaw, Cortex Code CLI, and Claude Code. Ingested
+content feeds the knowledge base and enriches agent context.
 
 Because Moneypenny exposes its full capability set over MCP, you can perform
-most ingestion tasks by asking your MCP-connected client (Claude Desktop,
-Cursor, etc.) in plain English — no CLI required.
+most ingestion tasks by asking your MCP-connected agent in plain English — no
+CLI required.
 
 ## Local Files
 
@@ -67,12 +67,45 @@ and audited.
 
 ## External Event Ingestion
 
-Moneypenny can ingest runtime event logs from external agent runtimes like
-OpenClaw. Events are stored raw for replay and projected into native tables.
+Moneypenny can ingest runtime event logs from external agent runtimes. Events
+are stored raw for replay and projected into native tables (messages, tool
+calls, policy audit). Content-hash deduplication makes re-imports safe.
+
+### OpenClaw
 
 ```bash
 mp ingest --openclaw-file events.jsonl
 ```
+
+### Cortex Code CLI
+
+Auto-discover and ingest all Cortex Code conversation history:
+
+```bash
+mp ingest --cortex
+```
+
+Discovers sessions from `~/.snowflake/cortex/conversations/`, converts native
+JSON format to Moneypenny events, and ingests. Thinking blocks and system
+reminders are filtered out. Re-run anytime — duplicates are skipped.
+
+### Claude Code
+
+Auto-discover and ingest all Claude Code conversation history:
+
+```bash
+mp ingest --claude-code
+```
+
+Or scope to a specific project:
+
+```bash
+mp ingest --claude-code=my-project-slug
+```
+
+Discovers sessions from `~/.claude/projects/`, extracts messages, tool call
+results (as `run.attempt` events), and usage statistics. System reminders and
+thinking blocks are filtered out.
 
 ### Replay and Forensics
 
@@ -133,6 +166,8 @@ For external events:
 ```bash
 echo '{"op":"ingest.events","args":{"source":"openclaw","file":"events.jsonl"}}' | mp sidecar
 echo '{"op":"ingest.status","args":{"source":"openclaw","limit":10}}' | mp sidecar
+echo '{"op":"ingest.status","args":{"source":"cortex","limit":10}}' | mp sidecar
+echo '{"op":"ingest.status","args":{"source":"claude-code","limit":10}}' | mp sidecar
 echo '{"op":"ingest.replay","args":{"run_id":"...","dry_run":true}}' | mp sidecar
 ```
 

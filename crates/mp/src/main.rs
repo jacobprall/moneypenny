@@ -58,6 +58,8 @@ async fn main() -> Result<()> {
             apply,
             source,
             limit,
+            cortex,
+            claude_code,
         } => {
             cmd_ingest(
                 &config,
@@ -76,6 +78,8 @@ async fn main() -> Result<()> {
                 apply,
                 source,
                 limit,
+                cortex,
+                claude_code,
             )
             .await
         },
@@ -2417,6 +2421,8 @@ async fn cmd_ingest(
     apply: bool,
     source: String,
     limit: usize,
+    cortex: bool,
+    claude_code: Option<String>,
 ) -> Result<()> {
     let ag = resolve_agent(config, agent.as_deref())?;
     let conn = open_agent_db(config, &ag.name)?;
@@ -2541,6 +2547,85 @@ async fn cmd_ingest(
             resp.data["projected_count"].as_i64().unwrap_or(0),
             resp.data["error_count"].as_i64().unwrap_or(0),
         );
+    } else if cortex {
+        let sessions = mp_core::ingest::discover_cortex_sessions();
+        if sessions.is_empty() {
+            println!("  No Cortex Code conversations found in ~/.snowflake/cortex/conversations/");
+            return Ok(());
+        }
+        println!("  Found {} Cortex Code session(s)", sessions.len());
+        println!();
+        let mut total_inserted = 0i64;
+        let mut total_deduped = 0i64;
+        let mut total_errors = 0i64;
+        for session_path in &sessions {
+            let lines = match mp_core::ingest::convert_cortex_session(session_path) {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("  Skipping {:?}: {}", session_path.file_name().unwrap_or_default(), e);
+                    total_errors += 1;
+                    continue;
+                }
+            };
+            if lines.is_empty() {
+                continue;
+            }
+            let tmp = mp_core::ingest::write_temp_jsonl(&lines, "cortex")?;
+            let summary = mp_core::ingest::ingest_jsonl_file(&conn, "cortex", &tmp, replay, &ag.name)?;
+            let fname = session_path.file_name().unwrap_or_default().to_string_lossy();
+            println!(
+                "  {}: inserted={}, deduped={}, projected={}, errors={}",
+                fname, summary.inserted_count, summary.deduped_count, summary.projected_count, summary.error_count,
+            );
+            total_inserted += summary.inserted_count;
+            total_deduped += summary.deduped_count;
+            total_errors += summary.error_count;
+            let _ = std::fs::remove_file(&tmp);
+        }
+        println!();
+        println!("  Total: {} sessions, {} inserted, {} deduped, {} errors", sessions.len(), total_inserted, total_deduped, total_errors);
+    } else if claude_code.is_some() {
+        let slug = claude_code.as_deref().filter(|s| !s.is_empty());
+        let sessions = mp_core::ingest::discover_claude_code_sessions(slug);
+        if sessions.is_empty() {
+            if let Some(s) = slug {
+                println!("  No Claude Code sessions found for project slug: {s}");
+            } else {
+                println!("  No Claude Code sessions found in ~/.claude/projects/");
+            }
+            return Ok(());
+        }
+        println!("  Found {} Claude Code session(s)", sessions.len());
+        println!();
+        let mut total_inserted = 0i64;
+        let mut total_deduped = 0i64;
+        let mut total_errors = 0i64;
+        for session_path in &sessions {
+            let lines = match mp_core::ingest::convert_claude_code_session(session_path) {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("  Skipping {:?}: {}", session_path.file_name().unwrap_or_default(), e);
+                    total_errors += 1;
+                    continue;
+                }
+            };
+            if lines.is_empty() {
+                continue;
+            }
+            let tmp = mp_core::ingest::write_temp_jsonl(&lines, "claude-code")?;
+            let summary = mp_core::ingest::ingest_jsonl_file(&conn, "claude-code", &tmp, replay, &ag.name)?;
+            let fname = session_path.file_name().unwrap_or_default().to_string_lossy();
+            println!(
+                "  {}: inserted={}, deduped={}, projected={}, errors={}",
+                fname, summary.inserted_count, summary.deduped_count, summary.projected_count, summary.error_count,
+            );
+            total_inserted += summary.inserted_count;
+            total_deduped += summary.deduped_count;
+            total_errors += summary.error_count;
+            let _ = std::fs::remove_file(&tmp);
+        }
+        println!();
+        println!("  Total: {} sessions, {} inserted, {} deduped, {} errors", sessions.len(), total_inserted, total_deduped, total_errors);
     } else if let Some(p) = path {
         let content = std::fs::read_to_string(&p)?;
         let title = Path::new(&p).file_name()

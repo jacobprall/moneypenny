@@ -13,7 +13,7 @@ It sits between your agent and its LLM. After every turn it:
 3. Logs an auditable decision trail
 4. Syncs state across agents via CRDTs
 
-It runs as a **standalone agent runtime** (CLI, HTTP, Slack, Discord, Telegram) or as a **sidecar** that plugs into existing runtimes via JSONL stdio.
+It runs as a **standalone agent runtime** (CLI, HTTP, Slack, Discord, Telegram) or as a **sidecar** that plugs into existing runtimes via MCP (Model Context Protocol). The `mp setup` command auto-registers Moneypenny as an MCP server for Claude Code, Cortex Code CLI, or OpenClaw — one command to connect.
 
 ## Architecture Overview
 
@@ -64,7 +64,9 @@ moneypenny/
 │   ├── mp-core.md
 │   ├── mp-llm.md
 │   ├── mp-ext.md
-│   └── mp-binary.md
+│   ├── mp-binary.md
+│   ├── DEMO_GUIDE.md        # User-facing quickstart (agent-integrated onboarding)
+│   └── CLI_DEMO.md          # CLI reference for presenters
 ├── crates/
 │   ├── mp/                  # Binary crate — CLI, adapters, turn loop, workers
 │   │   ├── src/main.rs      # Entry point + all command handlers (~3700 lines)

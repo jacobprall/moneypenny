@@ -120,6 +120,14 @@ pub enum Command {
         /// Limit for ingest status output
         #[arg(long, default_value_t = 20)]
         limit: usize,
+
+        /// Ingest all Cortex Code CLI conversations from ~/.snowflake/cortex/conversations/
+        #[arg(long, default_value_t = false)]
+        cortex: bool,
+
+        /// Ingest Claude Code conversations (optionally pass a project slug to scope)
+        #[arg(long)]
+        claude_code: Option<String>,
     },
 
     /// Manage the knowledge store

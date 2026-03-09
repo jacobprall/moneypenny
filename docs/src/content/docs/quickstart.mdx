@@ -35,48 +35,56 @@ This creates:
 - `mp-data/` — data directory with one SQLite file per agent
 - A default agent named `main`
 
-## 3. Check Health
+## 3. Connect to Your Agent
 
-```bash
-mp health
-```
+Moneypenny exposes its full surface area as an MCP server. One command registers
+it with your agent runtime — no manual JSON editing required.
 
-## 4. Connect via MCP
+<Tabs>
+  <TabItem label="Claude Code">
+    ```bash
+    mp setup claude-code
+    ```
 
-Moneypenny exposes its full surface area as an MCP server. Add it to your
-MCP-compatible client so you can interact through natural language instead of
-(or alongside) the CLI.
+    Writes `.mcp.json` in your project root. For global registration across all projects:
 
-**Claude Desktop** — add to `claude_desktop_config.json`:
+    ```bash
+    mp setup claude-code --global
+    ```
 
-```json
-{
-  "mcpServers": {
-    "moneypenny": {
-      "command": "mp",
-      "args": ["sidecar"]
-    }
-  }
-}
-```
+    Restart Claude Code to pick up the new MCP server.
+  </TabItem>
+  <TabItem label="Cortex Code CLI">
+    ```bash
+    mp setup cortex
+    ```
 
-**Cursor** — add to `.cursor/mcp.json` in your project root:
+    Runs `cortex mcp add` to register directly. Verify with:
 
-```json
-{
-  "mcpServers": {
-    "moneypenny": {
-      "command": "mp",
-      "args": ["sidecar"]
-    }
-  }
-}
-```
+    ```bash
+    cortex mcp list
+    ```
+  </TabItem>
+  <TabItem label="OpenClaw">
+    ```bash
+    mp setup openclaw
+    ```
 
-Once connected, every operation below can be performed by asking your agent in
-plain English. The following steps show both ways.
+    Writes to `~/.clawdbot/clawdbot.json`. Restart OpenClaw to pick it up.
+  </TabItem>
+</Tabs>
 
-## 5. Add Some Knowledge
+### Verify
+
+Start a conversation and ask:
+
+> What Moneypenny tools do you have?
+
+Your agent should list the available MCP tools. Once connected, every operation
+below can be performed by asking your agent in plain English. The following
+steps show both ways.
+
+## 4. Add Some Knowledge
 
 Ingest a document:
 
@@ -106,7 +114,7 @@ Or from a URL:
   </TabItem>
 </Tabs>
 
-## 6. Add Facts
+## 5. Add Facts
 
 Store structured knowledge:
 
@@ -137,7 +145,7 @@ List what was stored:
   </TabItem>
 </Tabs>
 
-## 7. Search
+## 6. Search
 
 <Tabs>
   <TabItem label="CLI">
@@ -154,7 +162,7 @@ List what was stored:
   </TabItem>
 </Tabs>
 
-## 8. Chat (Requires LLM)
+## 7. Chat (Requires LLM)
 
 For interactive conversation with your agent:
 
@@ -191,7 +199,7 @@ For a one-shot message:
   </TabItem>
 </Tabs>
 
-## 9. Start the Gateway
+## 8. Start the Gateway
 
 For multi-agent, multi-channel operation:
 

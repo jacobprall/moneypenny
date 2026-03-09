@@ -270,13 +270,39 @@ mp sync pull --from research
 
 ### Import external history
 
-Import conversation histories from other agent runtimes (JSONL format). Content-hash dedup makes re-imports safe.
+Import conversation histories from other agent runtimes. Content-hash dedup makes re-imports safe.
 
 ```
 You: Ingest the OpenClaw history from scripts/demo-data/openclaw-history.jsonl
 ```
 
 Your agent calls `ingest.events`. Facts are automatically extracted from imported conversations.
+
+#### Auto-ingest from Cortex Code CLI
+
+Import all your Cortex Code conversations in one shot:
+
+```bash
+mp ingest --cortex
+```
+
+Discovers sessions from `~/.snowflake/cortex/conversations/`, converts them to Moneypenny's event format, and ingests with full dedup. Re-run anytime — already-imported messages are skipped.
+
+#### Auto-ingest from Claude Code
+
+Import all your Claude Code conversations:
+
+```bash
+mp ingest --claude-code
+```
+
+Or scope to a specific project:
+
+```bash
+mp ingest --claude-code=my-project-slug
+```
+
+Discovers sessions from `~/.claude/projects/`, extracts messages, tool calls, and usage stats, then ingests them. Thinking blocks and system reminders are filtered out.
 
 ---
 
@@ -358,6 +384,8 @@ For direct CLI usage (scripting, CI, or hands-on exploration), see [CLI_DEMO.md]
 | `mp facts list/search/inspect/expand` | Fact operations |
 | `mp knowledge search/list` | Knowledge queries |
 | `mp ingest <path>` | Document ingestion |
+| `mp ingest --cortex` | Ingest Cortex Code CLI conversations |
+| `mp ingest --claude-code` | Ingest Claude Code conversations |
 | `mp policy list/add/test/violations` | Policy management |
 | `mp skill add/list` | Skill management |
 | `mp job create/list/run/pause/history` | Job scheduling |

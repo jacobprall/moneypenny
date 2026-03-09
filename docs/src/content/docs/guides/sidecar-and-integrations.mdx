@@ -22,44 +22,50 @@ automatically.
 
 <Aside type="tip">
   MCP is the fastest way to start using Moneypenny. No SDK, no HTTP server,
-  no piping JSON — just add the server config and start talking.
+  no piping JSON — one setup command and start talking.
 </Aside>
 
-### Configuring Moneypenny as an MCP Server
+### Registering Moneypenny as an MCP Server
+
+The `mp setup` command auto-registers Moneypenny with your agent runtime.
+It resolves paths, writes the correct config file, and prints next steps.
 
 <Tabs>
-  <TabItem label="Claude Desktop">
-    Add the following to your Claude Desktop MCP configuration
-    (`claude_desktop_config.json`):
+  <TabItem label="Claude Code">
+    ```bash
+    mp setup claude-code
+    ```
 
-    ```json
-    {
-      "mcpServers": {
-        "moneypenny": {
-          "command": "mp",
-          "args": ["sidecar"]
-        }
-      }
-    }
+    Writes `.mcp.json` in your project root. For global registration across all
+    projects:
+
+    ```bash
+    mp setup claude-code --global
+    ```
+
+    Restart Claude Code (or run `/mcp` in the REPL to verify).
+  </TabItem>
+  <TabItem label="Cortex Code CLI">
+    ```bash
+    mp setup cortex
+    ```
+
+    Runs `cortex mcp add` to register directly. Verify with:
+
+    ```bash
+    cortex mcp list
     ```
   </TabItem>
-  <TabItem label="Cursor">
-    Add the following to `.cursor/mcp.json` in your project root:
-
-    ```json
-    {
-      "mcpServers": {
-        "moneypenny": {
-          "command": "mp",
-          "args": ["sidecar"]
-        }
-      }
-    }
+  <TabItem label="OpenClaw">
+    ```bash
+    mp setup openclaw
     ```
+
+    Writes to `~/.clawdbot/clawdbot.json`. Restart OpenClaw to pick it up.
   </TabItem>
 </Tabs>
 
-Once configured, the client discovers Moneypenny's tools on startup. You can
+Once registered, the client discovers Moneypenny's tools on startup. You can
 immediately ask questions like:
 
 - *"Search my memory for everything about rate limits"*
@@ -284,18 +290,48 @@ audit trail.
   </TabItem>
 </Tabs>
 
-### OpenClaw Integration
+### Runtime Integrations
 
-Moneypenny integrates with OpenClaw as the intelligence/data plane:
+Moneypenny integrates with external agent runtimes as the intelligence/data
+plane — they handle execution, Moneypenny handles memory, policy, audit, and
+retrieval.
 
-- **OpenClaw** handles execution (channels, nodes, browser automation, webhooks)
-- **Moneypenny** handles intelligence (memory, policy, audit, retrieval, sync)
+#### OpenClaw
 
 Ingest OpenClaw event logs for replay and forensics:
 
 ```bash
 mp ingest --openclaw-file run-log.jsonl
 ```
+
+#### Cortex Code CLI
+
+Auto-discover and ingest all Cortex Code conversation history:
+
+```bash
+mp ingest --cortex
+```
+
+Discovers sessions from `~/.snowflake/cortex/conversations/`, converts them to
+Moneypenny's event format, and ingests with full dedup. Thinking blocks and
+system reminders are filtered out.
+
+#### Claude Code
+
+Auto-discover and ingest all Claude Code conversation history:
+
+```bash
+mp ingest --claude-code
+```
+
+Or scope to a specific project:
+
+```bash
+mp ingest --claude-code=my-project-slug
+```
+
+Discovers sessions from `~/.claude/projects/`, extracts messages, tool calls,
+and usage stats. Re-run anytime — already-imported events are skipped.
 
 <Aside type="note">
   Regardless of interface — MCP, sidecar, or HTTP — every operation passes

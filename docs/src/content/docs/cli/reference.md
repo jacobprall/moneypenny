@@ -55,6 +55,43 @@ mp health
 
 ---
 
+## `mp setup`
+
+Register Moneypenny as an MCP server with an AI coding agent.
+
+### `mp setup claude-code [--agent <NAME>] [--global]`
+
+Register in Claude Code. Writes `.mcp.json` in the project root, or
+`~/.claude.json` with `--global`.
+
+```bash
+mp setup claude-code
+mp setup claude-code --global
+```
+
+### `mp setup cortex [--agent <NAME>]`
+
+Register in Cortex Code CLI via `cortex mcp add`.
+
+```bash
+mp setup cortex
+```
+
+### `mp setup openclaw [--agent <NAME>]`
+
+Register in OpenClaw. Writes to `~/.clawdbot/clawdbot.json`.
+
+```bash
+mp setup openclaw
+```
+
+| Flag | Description |
+|---|---|
+| `--agent <NAME>` | Agent name (defaults to first configured agent) |
+| `--global` | (Claude Code only) Write to global `~/.claude.json` |
+
+---
+
 ## `mp chat`
 
 Interactive CLI chat with an agent.
@@ -183,6 +220,8 @@ mp ingest [PATH] [AGENT] [OPTIONS]
 | `--apply` | Apply replay writes |
 | `--source <LABEL>` | Source label (default: `openclaw`) |
 | `--limit <N>` | Limit for status output (default: 20) |
+| `--cortex` | Ingest all Cortex Code CLI conversations |
+| `--claude-code [SLUG]` | Ingest Claude Code conversations (optionally scoped to a project slug) |
 
 ---
 

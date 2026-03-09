@@ -9,8 +9,9 @@ Moneypenny is the intelligence and governance core for AI agents. It provides
 structured memory, policy-governed execution, explainable audit, and portable
 state — all in a single SQLite file per agent.
 
-It can run as a standalone agent runtime, or plug into existing runtimes (like
-OpenClaw) as the memory, policy, and audit substrate.
+It can run as a standalone agent runtime, or plug into existing runtimes —
+Claude Code, Cortex Code CLI, OpenClaw — as the memory, policy, and audit
+substrate. One command to connect: `mp setup claude-code`.
 
 ## Why Moneypenny
 
@@ -25,8 +26,8 @@ Most agent frameworks solve orchestration. Moneypenny solves what happens
 
 Everything Moneypenny can do is exposed as an **MCP server**, so you can
 interact with it through natural language in any MCP-compatible client — Claude
-Desktop, Cursor, or any tool that speaks the Model Context Protocol. No CLI
-memorization required.
+Code, Cortex Code CLI, OpenClaw, or any tool that speaks the Model Context
+Protocol. No CLI memorization required.
 
 ## Four Pillars
 
@@ -77,8 +78,8 @@ or mix and match.
 
 <Tabs>
   <TabItem label="MCP / Natural Language">
-    Connect Moneypenny as an MCP server in Claude Desktop, Cursor, or any
-    MCP-compatible client. Then just ask:
+    Connect Moneypenny with one command (`mp setup claude-code`, `mp setup cortex`,
+    or `mp setup openclaw`). Then just ask:
 
     > Ingest the README from our docs repo.
 

@@ -2,7 +2,7 @@ use rusqlite::{Connection, params};
 use serde_json::Value;
 use std::hash::{Hash, Hasher};
 use std::io::BufRead;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct IngestSummary {
@@ -705,6 +705,285 @@ fn normalized_projection_fields(
         cost_usd,
         correlation_id,
     }
+}
+
+// =========================================================================
+// Cortex Code CLI conversation converter
+// =========================================================================
+
+pub fn discover_cortex_sessions() -> Vec<PathBuf> {
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return Vec::new(),
+    };
+    let dir = PathBuf::from(home).join(".snowflake/cortex/conversations");
+    match std::fs::read_dir(&dir) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("json"))
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+pub fn convert_cortex_session(path: &Path) -> anyhow::Result<Vec<String>> {
+    let raw = std::fs::read_to_string(path)?;
+    let doc: Value = serde_json::from_str(&raw)?;
+
+    let session_id = doc.get("session_id").and_then(Value::as_str).unwrap_or("unknown");
+    let history = match doc.get("history").and_then(Value::as_array) {
+        Some(h) => h,
+        None => return Ok(Vec::new()),
+    };
+
+    let mut lines = Vec::new();
+    lines.push(serde_json::to_string(&serde_json::json!({
+        "type": "session.start",
+        "session_id": session_id,
+        "event_id": format!("cortex-session-{session_id}"),
+        "timestamp": history.first()
+            .and_then(|m| m.get("user_sent_time"))
+            .and_then(Value::as_str)
+            .unwrap_or("1970-01-01T00:00:00Z"),
+    }))?);
+
+    for msg in history {
+        let role = msg.get("role").and_then(Value::as_str).unwrap_or("user");
+        let msg_id = msg.get("id").and_then(Value::as_str).unwrap_or("");
+        let ts = msg.get("user_sent_time").and_then(Value::as_str).unwrap_or("");
+
+        let content_blocks = match msg.get("content").and_then(Value::as_array) {
+            Some(blocks) => blocks,
+            None => continue,
+        };
+
+        let mut text_parts = Vec::new();
+        for block in content_blocks {
+            if block.get("internalOnly").and_then(Value::as_bool) == Some(true) {
+                continue;
+            }
+            let block_type = block.get("type").and_then(Value::as_str).unwrap_or("");
+            if block_type == "thinking" {
+                continue;
+            }
+            if block_type == "text" {
+                if let Some(text) = block.get("text").and_then(Value::as_str) {
+                    if !text.starts_with("<system-reminder>") {
+                        text_parts.push(text);
+                    }
+                }
+            }
+        }
+
+        if text_parts.is_empty() {
+            continue;
+        }
+        let content = text_parts.join("\n");
+
+        let event_type = if role == "user" { "message.queued" } else { "message.processed" };
+        lines.push(serde_json::to_string(&serde_json::json!({
+            "type": event_type,
+            "role": role,
+            "content": content,
+            "session_id": session_id,
+            "event_id": msg_id,
+            "timestamp": ts,
+        }))?);
+    }
+
+    Ok(lines)
+}
+
+// =========================================================================
+// Claude Code conversation converter
+// =========================================================================
+
+pub fn discover_claude_code_sessions(project_slug: Option<&str>) -> Vec<PathBuf> {
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return Vec::new(),
+    };
+    let projects_dir = PathBuf::from(home).join(".claude/projects");
+
+    let project_dirs: Vec<PathBuf> = if let Some(slug) = project_slug {
+        let specific = projects_dir.join(slug);
+        if specific.is_dir() { vec![specific] } else { Vec::new() }
+    } else {
+        match std::fs::read_dir(&projects_dir) {
+            Ok(entries) => entries
+                .filter_map(Result::ok)
+                .map(|e| e.path())
+                .filter(|p| p.is_dir())
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    };
+
+    let mut sessions = Vec::new();
+    for dir in project_dirs {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.filter_map(Result::ok) {
+                let p = entry.path();
+                if p.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+                    sessions.push(p);
+                }
+            }
+        }
+    }
+    sessions
+}
+
+pub fn convert_claude_code_session(path: &Path) -> anyhow::Result<Vec<String>> {
+    let file = std::fs::File::open(path)?;
+    let reader = std::io::BufReader::new(file);
+    let mut lines = Vec::new();
+    let mut session_started = false;
+
+    for line_res in reader.lines() {
+        let line = match line_res {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let parsed: Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let event_type = parsed.get("type").and_then(Value::as_str).unwrap_or("");
+        let session_id = parsed.get("sessionId").and_then(Value::as_str).unwrap_or("");
+        let uuid = parsed.get("uuid").and_then(Value::as_str).unwrap_or("");
+        let timestamp = parsed.get("timestamp").and_then(Value::as_str).unwrap_or("");
+
+        if session_id.is_empty() || event_type == "queue-operation" {
+            continue;
+        }
+
+        if !session_started {
+            lines.push(serde_json::to_string(&serde_json::json!({
+                "type": "session.start",
+                "session_id": session_id,
+                "event_id": format!("cc-session-{session_id}"),
+                "timestamp": timestamp,
+            }))?);
+            session_started = true;
+        }
+
+        let message = match parsed.get("message") {
+            Some(m) => m,
+            None => continue,
+        };
+
+        let has_tool_result = parsed.get("toolUseResult").is_some();
+
+        if has_tool_result {
+            let tool_result = &parsed["toolUseResult"];
+            let status = tool_result.get("status").and_then(Value::as_str).unwrap_or("completed");
+            let duration_ms = tool_result.get("totalDurationMs").and_then(Value::as_i64).unwrap_or(0);
+            let output = tool_result.get("content")
+                .and_then(Value::as_array)
+                .and_then(|arr| arr.iter().find(|b| b.get("type").and_then(Value::as_str) == Some("text")))
+                .and_then(|b| b.get("text"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let truncated = if output.len() > 500 { &output[..500] } else { output };
+
+            lines.push(serde_json::to_string(&serde_json::json!({
+                "type": "run.attempt",
+                "session_id": session_id,
+                "event_id": uuid,
+                "status": status,
+                "output": truncated,
+                "duration_ms": duration_ms,
+                "timestamp": timestamp,
+            }))?);
+            continue;
+        }
+
+        let role = message.get("role").and_then(Value::as_str).unwrap_or("");
+        if role != "user" && role != "assistant" {
+            continue;
+        }
+
+        let content_text = extract_claude_code_text_content(message);
+        if content_text.is_empty() {
+            continue;
+        }
+
+        let msg_type = if role == "user" { "message.queued" } else { "message.processed" };
+        lines.push(serde_json::to_string(&serde_json::json!({
+            "type": msg_type,
+            "role": role,
+            "content": content_text,
+            "session_id": session_id,
+            "event_id": uuid,
+            "timestamp": timestamp,
+        }))?);
+
+        if role == "assistant" {
+            if let Some(usage) = message.get("usage") {
+                let model = message.get("model").and_then(Value::as_str).unwrap_or("unknown");
+                let input_tokens = usage.get("input_tokens").and_then(Value::as_i64)
+                    .or_else(|| usage.get("cache_read_input_tokens").and_then(Value::as_i64))
+                    .unwrap_or(0);
+                let output_tokens = usage.get("output_tokens").and_then(Value::as_i64).unwrap_or(0);
+                lines.push(serde_json::to_string(&serde_json::json!({
+                    "type": "model.usage",
+                    "provider": "anthropic",
+                    "model": model,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "session_id": session_id,
+                    "event_id": format!("usage-{uuid}"),
+                    "timestamp": timestamp,
+                }))?);
+            }
+        }
+    }
+
+    Ok(lines)
+}
+
+fn extract_claude_code_text_content(message: &Value) -> String {
+    let content = match message.get("content") {
+        Some(c) => c,
+        None => return String::new(),
+    };
+
+    if let Some(s) = content.as_str() {
+        if s.starts_with("<system-reminder>") {
+            return String::new();
+        }
+        return s.to_string();
+    }
+
+    if let Some(blocks) = content.as_array() {
+        let parts: Vec<&str> = blocks.iter()
+            .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
+            .filter_map(|b| b.get("text").and_then(Value::as_str))
+            .filter(|t| !t.starts_with("<system-reminder>"))
+            .collect();
+        return parts.join("\n");
+    }
+
+    String::new()
+}
+
+pub fn write_temp_jsonl(lines: &[String], label: &str) -> anyhow::Result<PathBuf> {
+    let dir = std::env::temp_dir().join("moneypenny-ingest");
+    std::fs::create_dir_all(&dir)?;
+    let name = format!("{label}-{}.jsonl", uuid::Uuid::new_v4());
+    let path = dir.join(name);
+    let mut file = std::fs::File::create(&path)?;
+    for line in lines {
+        use std::io::Write;
+        writeln!(file, "{line}")?;
+    }
+    Ok(path)
 }
 
 #[cfg(test)]
