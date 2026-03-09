@@ -262,7 +262,27 @@ impl Config {
         let content = std::fs::read_to_string(path)?;
         let mut config: Config = toml::from_str(&content)?;
         config.apply_env_overrides();
+        config.resolve_relative_paths(path);
         Ok(config)
+    }
+
+    /// Resolve relative paths (data_dir, models_dir) against the config
+    /// file's parent directory so they work regardless of process cwd.
+    fn resolve_relative_paths(&mut self, config_path: &Path) {
+        let base = config_path
+            .parent()
+            .and_then(|p| if p.as_os_str().is_empty() { None } else { Some(p) })
+            .and_then(|p| std::fs::canonicalize(p).ok())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+        if self.data_dir.is_relative() {
+            self.data_dir = base.join(&self.data_dir);
+        }
+        if let Some(ref dir) = self.models_dir {
+            if dir.is_relative() {
+                self.models_dir = Some(base.join(dir));
+            }
+        }
     }
 
     /// Allow environment variables to override config for containerized
