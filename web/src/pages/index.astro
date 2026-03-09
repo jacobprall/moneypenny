@@ -5,37 +5,37 @@ const capabilities = [
   {
     title: "Persistent Memory",
     description:
-      "Facts extracted after every turn, graph-linked, compressed to three tiers. Confidence grows on re-extraction. Stale knowledge decays. 500 facts fit in ~2K tokens.",
+      "Your agent builds on yesterday's context. Facts are extracted every turn, graph-linked, and compressed to three tiers. Confidence grows on re-extraction. Stale knowledge decays. 500 facts fit in ~2K tokens.",
   },
   {
     title: "Policy Engine",
     description:
-      "Every operation checked against policy before execution — static rules, behavioral limits, rate controls, time windows. Denials become context, not crashes.",
+      "Every operation is checked before it runs. Static rules, behavioral limits, rate controls, and time windows. Denials become context the agent can reason about, not crashes.",
   },
   {
     title: "Hybrid Retrieval",
     description:
-      "Semantic + full-text search across four stores, fused with Reciprocal Rank Fusion, diversified with MMR. One query, four sources, one coherent answer.",
+      "One query searches everything. Semantic and full-text search across four stores, fused with Reciprocal Rank Fusion and diversified with MMR.",
   },
   {
     title: "Audit Trail",
     description:
-      "Every action logged with full context — session, trace, the exact expression that triggered it. Queryable by the agent itself.",
+      "Trace exactly what happened and why. Every action logged with full context: session, trace, and the expression that triggered it. Queryable by the agent itself.",
   },
   {
     title: "Multi-Agent Sync",
     description:
-      "CRDT-based knowledge sharing with scoped visibility — private, shared, or protected. No central server for local P2P.",
+      "Agents share what they know. CRDT-based knowledge sharing with scoped visibility: private, shared, or protected. No central server.",
   },
   {
     title: "Runtime Agnostic",
     description:
-      "Standalone agent with CLI, HTTP, Slack, Discord, Telegram. Or plug into any runtime as a sidecar via stdio, MCP, or HTTP.",
+      "Runs anywhere your agent does. Standalone with CLI, HTTP, Slack, Discord, Telegram, or as a sidecar via stdio, MCP, or HTTP.",
   },
 ];
 ---
 
-<Base title="Moneypenny — The Intelligence Layer for AI Agents">
+<Base title="Moneypenny: The Governed Memory Layer for AI Agents">
   <!-- Nav -->
   <nav
     class="fixed top-0 z-50 w-full border-b border-zinc-800/50 bg-[#09090b]/80 backdrop-blur-xl"
@@ -83,15 +83,15 @@ const capabilities = [
       <h1
         class="animate-fade-up animate-delay-100 text-4xl leading-[1.08] font-bold tracking-tight sm:text-6xl"
       >
-        The intelligence layer<br />for AI agents
+        The governed memory layer<br />for AI agents
       </h1>
 
       <p
         class="animate-fade-up animate-delay-200 mx-auto mt-6 max-w-2xl text-[17px] leading-relaxed text-zinc-400"
       >
-        Make every agent runtime smarter, safer, and stateful. Persistent
-        memory, policy governance, and queryable audit — in a single SQLite
-        file.
+        Your agents remember what they learned, follow the rules you set,
+        and explain what they did. Smarter, safer, stateful, and governed.
+        All in a single SQLite file.
       </p>
 
       <div
@@ -177,7 +177,7 @@ const capabilities = [
           </div>
         </div>
 
-        <!-- Project assistant -->
+        <!-- Project assistant: multi-agent sync -->
         <div class="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/50">
           <div class="flex items-center gap-2 border-b border-zinc-800 px-4 py-2.5">
             <span class="h-2 w-2 rounded-full bg-blue-500/70"></span>
@@ -185,27 +185,27 @@ const capabilities = [
           </div>
           <div class="p-4 font-mono text-[12px] leading-relaxed">
             <p class="text-zinc-400">
-              <span class="text-zinc-500">&gt;</span> Catch me up on Acme —
+              <span class="text-zinc-500">&gt;</span> Catch me up on Acme. I
               haven't looked since Tuesday.
             </p>
             <div class="mt-2 border-l-2 border-zinc-800 pl-3 text-zinc-500">
               2 facts synced from design-agent since then: client approved the
               revised wireframes Thursday, launch moved to March 20. Your last
-              note flagged the Stripe integration blocker — still unresolved.
+              note flagged the Stripe integration blocker, still unresolved.
             </div>
             <p class="mt-3 text-zinc-400">
-              <span class="text-zinc-500">&gt;</span> What's the status across all
-              my active projects?
+              <span class="text-zinc-500">&gt;</span> What does design-agent
+              know that I don't?
             </p>
             <div class="mt-2 border-l-2 border-zinc-800 pl-3 text-zinc-500">
-              3 active. Acme: blocked on Stripe (you, 5d). CloudCo: on track,
-              deploy-agent merged the infra PR yesterday. Nova: pending client
-              review since Mar 3, no new synced facts.
+              4 shared facts you haven't seen. Design-agent logged a brand
+              color change Wed, a new homepage layout Thu, and two asset
+              exports Fri. Synced via CRDT, scoped to the Acme project.
             </div>
           </div>
         </div>
 
-        <!-- Ops / governance -->
+        <!-- Ops / governance + audit -->
         <div class="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/50">
           <div class="flex items-center gap-2 border-b border-zinc-800 px-4 py-2.5">
             <span class="h-2 w-2 rounded-full bg-amber-500/70"></span>
@@ -218,16 +218,18 @@ const capabilities = [
             </p>
             <div class="mt-2 border-l-2 border-red-900/50 pl-3 text-zinc-500">
               <span class="text-red-400/80">Denied:</span> Prod deploys blocked
-              outside maintenance windows (Sat 2-6am UTC). Staging is clear —
-              want me to run it there instead?
+              outside maintenance windows (Sat 2-6am UTC). Staging is clear.
+              Want me to run it there instead?
             </div>
             <p class="mt-3 text-zinc-400">
-              <span class="text-zinc-500">&gt;</span> Who touched prod configs
-              this week?
+              <span class="text-zinc-500">&gt;</span> Show me every denied
+              action this week.
             </p>
             <div class="mt-2 border-l-2 border-zinc-800 pl-3 text-zinc-500">
-              3 changes logged. ops-agent updated rate limits Mon, deploy-bot
-              rolled back a feature flag Wed. Full trace for each in audit.
+              4 denials logged. This deploy (policy: maintenance-window), two
+              shell commands from coding-agent (policy: no-rm-rf), one API
+              call from deploy-bot (policy: rate-limit). Full trace and
+              session context attached to each.
             </div>
           </div>
         </div>
@@ -250,21 +252,21 @@ const capabilities = [
           </h2>
           <div class="mt-6 space-y-4 text-[15px] leading-relaxed text-zinc-400">
             <p>
-              Every session starts from zero. Context is expensive, and
-              everything the agent learned yesterday is gone today.
+              Context resets every session. Yesterday's decisions, research,
+              and preferences are gone. You re-explain everything or the
+              agent guesses.
             </p>
             <p>
-              Tool calls execute unchecked. There's no policy, no guardrails, no
-              way to say "block destructive SQL" or "rate-limit shell access."
+              Tool calls run unchecked. No policy, no guardrails, no way to
+              say "block destructive SQL" or "rate-limit shell access."
             </p>
             <p>
-              When something goes wrong, there's no trail. You can't trace what
-              the agent did, what it was denied, or why.
+              When something goes wrong, there's no trail. You can't trace
+              what the agent did, what it was denied, or why.
             </p>
             <p>
-              Adding state means infrastructure — Postgres for storage, Redis
-              for sessions, a vector database for retrieval, and an ops team to
-              keep it all running.
+              Adding state means infrastructure: Postgres, Redis, a vector
+              database, and an ops team to keep it running.
             </p>
           </div>
         </div>
@@ -279,19 +281,19 @@ const capabilities = [
           </h2>
           <div class="mt-6 space-y-4 text-[15px] leading-relaxed text-zinc-400">
             <p>
-              Every turn enriches a persistent knowledge graph — facts are
+              Every turn enriches a persistent knowledge graph. Facts are
               extracted, linked, and compressed so today's session builds on
               yesterday's. One SQLite file per agent holds memory, policies,
               audit logs, and sync state.
             </p>
             <p>
               Operations are governed before they execute. Static rules,
-              behavioral limits, rate controls — all evaluated in-process.
+              behavioral limits, rate controls, all evaluated in-process.
               Denials flow back as context the agent can reason about, not
               silent failures.
             </p>
             <p>
-              Everything is auditable and queryable — by you and by the agent
+              Everything is auditable and queryable, by you and the agent
               itself. No infrastructure beyond a single binary.
             </p>
           </div>
@@ -322,60 +324,31 @@ const capabilities = [
 
   <!-- ═══════════════ ARCHITECTURE ═══════════════ -->
   <section class="relative py-24 sm:py-32">
-    <div class="mx-auto max-w-5xl px-6">
-      <div class="grid items-start gap-12 lg:grid-cols-2 lg:gap-20">
-        <div>
-          <p class="text-[13px] font-medium uppercase tracking-wider text-zinc-500">
-            Architecture
+    <div class="mx-auto max-w-3xl px-6">
+      <div>
+        <p class="text-[13px] font-medium uppercase tracking-wider text-zinc-500">
+          Architecture
+        </p>
+        <h2 class="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">
+          Zero infrastructure, full control
+        </h2>
+        <div class="mt-6 space-y-4 text-[15px] leading-relaxed text-zinc-400">
+          <p>
+            Everything lives in one SQLite file per agent: memory, documents,
+            policies, audit trail, job schedules, sync state. Seven extensions
+            are statically linked into one Rust binary: vector search,
+            on-device inference, CRDT sync, JavaScript tools, and RAG.
           </p>
-          <h2 class="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">
-            Database as runtime
-          </h2>
-          <div class="mt-6 space-y-4 text-[15px] leading-relaxed text-zinc-400">
-            <p>
-              Everything lives in one SQLite file per agent — memory, documents,
-              policies, audit trail, job schedules, sync state. Seven extensions
-              are statically linked into one Rust binary: vector search,
-              on-device inference, CRDT sync, JavaScript tools, and RAG.
-            </p>
-            <p>
-              Agents interact through a single query language — one MCP tool
-              that expresses every operation from memory search to policy
-              creation. The agent learns the syntax from the tool description.
-              No SDK, no tool discovery, no integration docs.
-            </p>
-            <p>
-              Every surface — CLI, MCP sidecar, HTTP API, Slack, Discord — is a
-              thin adapter. Business logic never leaves the database boundary.
-            </p>
-          </div>
-        </div>
-
-        <div>
-          <p class="mb-3 text-[13px] font-medium uppercase tracking-wider text-zinc-500">
-            What's inside
+          <p>
+            Agents interact through a single query language. One MCP tool
+            that expresses every operation from memory search to policy
+            creation. The agent learns the syntax from the tool description.
+            No SDK, no tool discovery, no integration docs.
           </p>
-          <div
-            class="space-y-px overflow-hidden rounded-lg border border-zinc-800 bg-zinc-800"
-          >
-            {
-              [
-                ["SQLite + 7 extensions", "Vector search, FTS5, CRDT sync, on-device inference, JavaScript UDFs, RAG, JSON"],
-                ["Rust binary", "Single statically-linked executable. No runtime dependencies, no containers, no JVM"],
-                ["MCP native", "First-class Model Context Protocol support — stdio, HTTP, or sidecar. Works with any MCP client"],
-                ["One query language", "Every platform operation expressed through one tool. The agent reads the grammar from the tool description"],
-                ["Policy + audit", "Governance evaluated in-process before every operation. Full trace of every decision, queryable in real time"],
-                ["CRDT sync", "Peer-to-peer knowledge sharing between agents with scoped visibility — no central coordination server"],
-              ].map(([title, desc]) => (
-                <div class="flex items-start gap-4 bg-[#09090b] px-5 py-3.5">
-                  <div>
-                    <p class="text-[14px] font-medium text-zinc-300">{title}</p>
-                    <p class="text-[13px] text-zinc-500">{desc}</p>
-                  </div>
-                </div>
-              ))
-            }
-          </div>
+          <p>
+            Every surface (CLI, MCP sidecar, HTTP API, Slack, Discord) is a
+            thin adapter. Business logic never leaves the database boundary.
+          </p>
         </div>
       </div>
     </div>
@@ -385,10 +358,11 @@ const capabilities = [
   <section id="waitlist" class="relative py-24 sm:py-32">
     <div class="mx-auto max-w-md px-6 text-center">
       <h2 class="text-2xl font-bold tracking-tight sm:text-3xl">
-        Get early access
+        Try the hosted alpha
       </h2>
       <p class="mt-3 text-[15px] text-zinc-400">
-        Subscribe to updates and be first to know when Moneypenny is ready.
+        Moneypenny is open source. Hosted Moneypenny is in alpha. Drop your
+        email and we'll send you access.
       </p>
 
       <form id="waitlist-form" class="mt-8">
