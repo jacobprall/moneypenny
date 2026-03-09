@@ -432,7 +432,10 @@ fn card(domain: &str, tool: &str, examples: &[&str], summary: &str) -> Value {
 }
 
 fn normalize_tool_name(name: &str) -> String {
-    name.strip_prefix("moneypenny.").unwrap_or(name).to_string()
+    name.strip_prefix("moneypenny.")
+        .or_else(|| name.strip_prefix("moneypenny_"))
+        .unwrap_or(name)
+        .to_string()
 }
 
 #[cfg(test)]

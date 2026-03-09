@@ -149,6 +149,7 @@ fn head_to_policy_tuple(head: &Head) -> (&'static str, &'static str) {
             Store::Knowledge => ("search", "knowledge"),
             Store::Log => ("search", "log"),
             Store::Audit => ("search", "audit"),
+            Store::Activity => ("search", "activity"),
         },
         Head::Insert(ins) => match ins.store {
             Store::Facts => ("add", "fact"),
@@ -376,8 +377,12 @@ fn execute_search(
     search: &SearchHead,
     ctx: &ExecuteContext,
 ) -> anyhow::Result<StatementResult> {
+    if search.store == Store::Activity {
+        return execute_search_activity(conn, search, ctx);
+    }
+
     let query_text = build_search_query(search);
-    let limit = 500; // We'll apply TAKE in pipeline; fetch max here
+    let limit = 500;
     let rows = crate::search::search(conn, &query_text, &ctx.agent_id, limit, None, None)?;
 
     let mut results: Vec<serde_json::Value> = rows
@@ -392,7 +397,74 @@ fn execute_search(
         })
         .collect();
 
-    // Apply conditions as post-filters (temporal, scope, agent, field comparisons)
+    results = apply_conditions(results, &search.conditions);
+
+    Ok(StatementResult {
+        ok: true,
+        code: "ok".into(),
+        message: format!("{} results", results.len()),
+        data: json!({"rows": results}),
+        raw: String::new(),
+        policy: None,
+    })
+}
+
+fn execute_search_activity(
+    conn: &Connection,
+    search: &SearchHead,
+    ctx: &ExecuteContext,
+) -> anyhow::Result<StatementResult> {
+    let limit = 500;
+    let query_text = build_search_query(search);
+
+    let has_query = query_text != "*";
+
+    let (sql, params_vec): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if has_query {
+        (
+            "SELECT id, agent_id, event, action, resource, detail, conversation_id, generation_id, duration_ms, created_at
+             FROM activity_log
+             WHERE agent_id = ?1 AND (event LIKE ?2 OR action LIKE ?2 OR resource LIKE ?2 OR detail LIKE ?2)
+             ORDER BY created_at DESC
+             LIMIT ?3".to_string(),
+            vec![
+                Box::new(ctx.agent_id.clone()),
+                Box::new(format!("%{query_text}%")),
+                Box::new(limit as i64),
+            ],
+        )
+    } else {
+        (
+            "SELECT id, agent_id, event, action, resource, detail, conversation_id, generation_id, duration_ms, created_at
+             FROM activity_log
+             WHERE agent_id = ?1
+             ORDER BY created_at DESC
+             LIMIT ?2".to_string(),
+            vec![
+                Box::new(ctx.agent_id.clone()),
+                Box::new(limit as i64),
+            ],
+        )
+    };
+
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let mut results: Vec<serde_json::Value> = stmt
+        .query_map(params_refs.as_slice(), |row| {
+            Ok(json!({
+                "id": row.get::<_, String>(0).unwrap_or_default(),
+                "agent_id": row.get::<_, String>(1).unwrap_or_default(),
+                "event": row.get::<_, String>(2).unwrap_or_default(),
+                "action": row.get::<_, String>(3).unwrap_or_default(),
+                "resource": row.get::<_, String>(4).unwrap_or_default(),
+                "detail": row.get::<_, String>(5).unwrap_or_default(),
+                "conversation_id": row.get::<_, String>(6).unwrap_or_default(),
+                "generation_id": row.get::<_, String>(7).unwrap_or_default(),
+                "duration_ms": row.get::<_, Option<i64>>(8).unwrap_or(None),
+                "created_at": row.get::<_, i64>(9).unwrap_or(0),
+            }))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
     results = apply_conditions(results, &search.conditions);
 
     Ok(StatementResult {

@@ -364,9 +364,9 @@ fn parse_search_head(p: &mut Parser) -> Result<Head, ParseError> {
     let store_name = p.expect_ident()?;
     let store = Store::from_str(&store_name).ok_or_else(|| {
         p.error_with_hint(
-            vec!["facts".into(), "knowledge".into(), "log".into(), "audit".into()],
+            vec!["facts".into(), "knowledge".into(), "log".into(), "audit".into(), "activity".into()],
             Some(&Token::Ident(store_name.clone())),
-            "valid stores: facts, knowledge, log, audit",
+            "valid stores: facts, knowledge, log, audit, activity",
         )
     })?;
 

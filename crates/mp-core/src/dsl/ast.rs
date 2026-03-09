@@ -201,6 +201,7 @@ pub enum Store {
     Knowledge,
     Log,
     Audit,
+    Activity,
 }
 
 impl Store {
@@ -210,6 +211,7 @@ impl Store {
             "knowledge" => Some(Store::Knowledge),
             "log" => Some(Store::Log),
             "audit" => Some(Store::Audit),
+            "activity" => Some(Store::Activity),
             _ => None,
         }
     }
@@ -220,6 +222,7 @@ impl Store {
             Store::Knowledge => "knowledge",
             Store::Log => "log",
             Store::Audit => "audit",
+            Store::Activity => "activity",
         }
     }
 }

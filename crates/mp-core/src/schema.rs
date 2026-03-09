@@ -5,7 +5,7 @@
 /// - **Metadata DB**: one per gateway, contains agent registry + routing
 use rusqlite::Connection;
 
-const AGENT_SCHEMA_VERSION: i64 = 12;
+const AGENT_SCHEMA_VERSION: i64 = 13;
 const METADATA_SCHEMA_VERSION: i64 = 1;
 
 pub fn init_agent_db(conn: &Connection) -> anyhow::Result<()> {
@@ -72,6 +72,11 @@ pub fn init_agent_db(conn: &Connection) -> anyhow::Result<()> {
     if current < 12 {
         conn.execute_batch(AGENT_SCHEMA_V12)?;
         set_schema_version(conn, 12)?;
+    }
+
+    if current < 13 {
+        conn.execute_batch(AGENT_SCHEMA_V13)?;
+        set_schema_version(conn, 13)?;
     }
 
     Ok(())
@@ -714,6 +719,30 @@ BEGIN
         lease_expires_at = NULL,
         updated_at = strftime('%s','now');
 END;
+";
+
+const AGENT_SCHEMA_V13: &str = "
+CREATE TABLE IF NOT EXISTS activity_log (
+    id                  TEXT PRIMARY KEY,
+    agent_id            TEXT NOT NULL DEFAULT '',
+    event               TEXT NOT NULL DEFAULT '',
+    action              TEXT NOT NULL DEFAULT '',
+    resource            TEXT NOT NULL DEFAULT '',
+    detail              TEXT NOT NULL DEFAULT '',
+    conversation_id     TEXT NOT NULL DEFAULT '',
+    generation_id       TEXT NOT NULL DEFAULT '',
+    duration_ms         INTEGER,
+    created_at          INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_log_agent
+ON activity_log (agent_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_activity_log_event
+ON activity_log (event, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_activity_log_conversation
+ON activity_log (conversation_id, created_at);
 ";
 
 // ---------------------------------------------------------------------------

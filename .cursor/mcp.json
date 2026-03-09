@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "moneypenny": {
+      "args": [
+        "--config",
+        "/Users/jprall/moneypenny/moneypenny.toml",
+        "sidecar",
+        "--agent",
+        "main"
+      ],
+      "command": "/Users/jprall/moneypenny/target/release/mp"
+    }
+  }
+}

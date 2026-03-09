@@ -1066,6 +1066,159 @@ fn extract_claude_code_text_content(message: &Value) -> String {
     String::new()
 }
 
+// =========================================================================
+// Cursor agent transcript converter
+// =========================================================================
+
+pub fn discover_cursor_sessions(project_slug: Option<&str>) -> Vec<PathBuf> {
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return Vec::new(),
+    };
+    let projects_dir = PathBuf::from(home).join(".cursor/projects");
+
+    let project_dirs: Vec<PathBuf> = if let Some(slug) = project_slug {
+        let specific = projects_dir.join(slug);
+        if specific.is_dir() {
+            vec![specific]
+        } else {
+            Vec::new()
+        }
+    } else {
+        match std::fs::read_dir(&projects_dir) {
+            Ok(entries) => entries
+                .filter_map(Result::ok)
+                .map(|e| e.path())
+                .filter(|p| p.is_dir())
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    };
+
+    let mut sessions = Vec::new();
+    for dir in project_dirs {
+        let transcripts_dir = dir.join("agent-transcripts");
+        if !transcripts_dir.is_dir() {
+            continue;
+        }
+        if let Ok(entries) = std::fs::read_dir(&transcripts_dir) {
+            for entry in entries.filter_map(Result::ok) {
+                let sub = entry.path();
+                if !sub.is_dir() {
+                    continue;
+                }
+                if let Ok(inner) = std::fs::read_dir(&sub) {
+                    for f in inner.filter_map(Result::ok) {
+                        let p = f.path();
+                        if p.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+                            sessions.push(p);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    sessions
+}
+
+pub fn convert_cursor_session(path: &Path) -> anyhow::Result<Vec<String>> {
+    let file = std::fs::File::open(path)?;
+    let reader = std::io::BufReader::new(file);
+    let mut lines = Vec::new();
+
+    let session_id = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown");
+
+    let mut msg_index: u64 = 0;
+    let mut session_started = false;
+
+    for line_res in reader.lines() {
+        let line = match line_res {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let parsed: Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let role = match parsed.get("role").and_then(Value::as_str) {
+            Some(r) => r,
+            None => continue,
+        };
+
+        let content_text = extract_cursor_text_content(&parsed);
+        if content_text.is_empty() {
+            continue;
+        }
+
+        if !session_started {
+            lines.push(serde_json::to_string(&serde_json::json!({
+                "type": "session.start",
+                "session_id": session_id,
+                "event_id": format!("cursor-session-{session_id}"),
+            }))?);
+            session_started = true;
+        }
+
+        let event_id = format!("cursor-{session_id}-{msg_index}");
+        msg_index += 1;
+
+        let event_type = if role == "user" {
+            "message.queued"
+        } else {
+            "message.processed"
+        };
+        lines.push(serde_json::to_string(&serde_json::json!({
+            "type": event_type,
+            "role": role,
+            "content": content_text,
+            "session_id": session_id,
+            "event_id": event_id,
+        }))?);
+    }
+
+    Ok(lines)
+}
+
+fn extract_cursor_text_content(parsed: &Value) -> String {
+    let message = match parsed.get("message") {
+        Some(m) => m,
+        None => return String::new(),
+    };
+    let content = match message.get("content") {
+        Some(c) => c,
+        None => return String::new(),
+    };
+
+    if let Some(s) = content.as_str() {
+        if s.starts_with("<system-reminder>") || s.starts_with("<system_reminder>") {
+            return String::new();
+        }
+        return s.to_string();
+    }
+
+    if let Some(blocks) = content.as_array() {
+        let parts: Vec<&str> = blocks
+            .iter()
+            .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
+            .filter_map(|b| b.get("text").and_then(Value::as_str))
+            .filter(|t| {
+                !t.starts_with("<system-reminder>") && !t.starts_with("<system_reminder>")
+            })
+            .collect();
+        return parts.join("\n");
+    }
+
+    String::new()
+}
+
 pub fn write_temp_jsonl(lines: &[String], label: &str) -> anyhow::Result<PathBuf> {
     let dir = std::env::temp_dir().join("moneypenny-ingest");
     std::fs::create_dir_all(&dir)?;
@@ -1374,5 +1527,96 @@ mod tests {
         let kw = kw.unwrap();
         assert!(!kw.contains("the"));
         assert!(kw.contains("longer"));
+    }
+
+    #[test]
+    fn convert_cursor_session_basic() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("abc123.jsonl");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, r#"{{"role":"user","message":{{"content":[{{"type":"text","text":"hello world"}}]}}}}"#).unwrap();
+        writeln!(f, r#"{{"role":"assistant","message":{{"content":[{{"type":"text","text":"hi there"}}]}}}}"#).unwrap();
+        f.flush().unwrap();
+
+        let lines = convert_cursor_session(&path).unwrap();
+        assert_eq!(lines.len(), 3);
+
+        let first: Value = serde_json::from_str(&lines[0]).unwrap();
+        assert_eq!(first["type"], "session.start");
+        assert_eq!(first["session_id"], "abc123");
+
+        let second: Value = serde_json::from_str(&lines[1]).unwrap();
+        assert_eq!(second["type"], "message.queued");
+        assert_eq!(second["role"], "user");
+        assert_eq!(second["content"], "hello world");
+
+        let third: Value = serde_json::from_str(&lines[2]).unwrap();
+        assert_eq!(third["type"], "message.processed");
+        assert_eq!(third["role"], "assistant");
+        assert_eq!(third["content"], "hi there");
+    }
+
+    #[test]
+    fn convert_cursor_session_filters_system_reminders() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("filter-test.jsonl");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, r#"{{"role":"user","message":{{"content":[{{"type":"text","text":"<system_reminder>ignore this"}}]}}}}"#).unwrap();
+        writeln!(f, r#"{{"role":"user","message":{{"content":[{{"type":"text","text":"real question"}}]}}}}"#).unwrap();
+        f.flush().unwrap();
+
+        let lines = convert_cursor_session(&path).unwrap();
+        assert_eq!(lines.len(), 2);
+        let msg: Value = serde_json::from_str(&lines[1]).unwrap();
+        assert_eq!(msg["content"], "real question");
+    }
+
+    #[test]
+    fn convert_cursor_session_multi_block() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("multi.jsonl");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, r#"{{"role":"assistant","message":{{"content":[{{"type":"text","text":"part one"}},{{"type":"text","text":"part two"}}]}}}}"#).unwrap();
+        f.flush().unwrap();
+
+        let lines = convert_cursor_session(&path).unwrap();
+        assert_eq!(lines.len(), 2);
+        let msg: Value = serde_json::from_str(&lines[1]).unwrap();
+        assert_eq!(msg["content"], "part one\npart two");
+    }
+
+    #[test]
+    fn convert_cursor_session_empty_file() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.jsonl");
+        std::fs::File::create(&path).unwrap().flush().unwrap();
+
+        let lines = convert_cursor_session(&path).unwrap();
+        assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn convert_cursor_session_end_to_end_ingest() {
+        use std::io::Write;
+        let conn = setup();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("e2e-session.jsonl");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, r#"{{"role":"user","message":{{"content":[{{"type":"text","text":"What is Moneypenny?"}}]}}}}"#).unwrap();
+        writeln!(f, r#"{{"role":"assistant","message":{{"content":[{{"type":"text","text":"Moneypenny is a persistent memory system for AI agents with fact extraction and knowledge retrieval."}}]}}}}"#).unwrap();
+        f.flush().unwrap();
+
+        let lines = convert_cursor_session(&path).unwrap();
+        assert_eq!(lines.len(), 3);
+
+        let tmp = write_temp_jsonl(&lines, "cursor").unwrap();
+        let summary = ingest_jsonl_file(&conn, "cursor", &tmp, false, "agent1").unwrap();
+        assert_eq!(summary.inserted_count, 3);
+        assert!(summary.error_count == 0);
+        assert!(summary.projected_count >= 2);
     }
 }

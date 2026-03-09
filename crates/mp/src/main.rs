@@ -24,6 +24,13 @@ async fn main() -> Result<()> {
     }
 
     let config_path = Path::new(&cli.config);
+
+    // Also load .env from the config file's directory so env vars are found
+    // regardless of process cwd (e.g. when launched as an MCP server).
+    if let Some(config_dir) = config_path.parent().and_then(|p| std::fs::canonicalize(p).ok()) {
+        let _ = dotenvy::from_path(config_dir.join(".env"));
+    }
+
     let config = Config::load(config_path).unwrap_or_else(|e| {
         eprintln!(
             "Failed to load config from {}: {e}\nRun `mp init` to create a config file.",
@@ -64,6 +71,7 @@ async fn main() -> Result<()> {
             limit,
             cortex,
             claude_code,
+            cursor,
         } => {
             cmd_ingest(
                 &config,
@@ -84,6 +92,7 @@ async fn main() -> Result<()> {
                 limit,
                 cortex,
                 claude_code,
+                cursor,
             )
             .await
         }
@@ -100,6 +109,7 @@ async fn main() -> Result<()> {
         Command::Worker { agent } => cmd_worker(&config, &agent).await,
         Command::Sidecar { agent } => cmd_sidecar(&config, agent).await,
         Command::Setup(cmd) => cmd_setup(&config, cmd).await,
+        Command::Hook { event, agent } => cmd_hook(&config, &event, agent).await,
     }
 }
 
@@ -1146,7 +1156,7 @@ async fn cmd_init(config_path: &str) -> Result<()> {
         );
     }
     println!();
-    println!("  Ready. Run `mp setup cursor`, `mp setup claude-code`, or `mp setup cortex`");
+    println!("  Ready. Run `mp setup cursor` to register the MCP server.");
     println!();
     println!("  Tip: To use mp as a conversational agent (mp chat, mp ask),");
     println!("       set provider = \"anthropic\" in [agents.llm] and ANTHROPIC_API_KEY in .env.");
@@ -1160,147 +1170,340 @@ async fn cmd_init(config_path: &str) -> Result<()> {
 // =========================================================================
 
 async fn cmd_setup(config: &Config, cmd: cli::SetupCommand) -> Result<()> {
-    let (agent_override, target) = match &cmd {
-        cli::SetupCommand::ClaudeCode { agent, .. } => (agent.clone(), "claude-code"),
-        cli::SetupCommand::Cortex { agent } => (agent.clone(), "cortex"),
-        cli::SetupCommand::Cursor { agent } => (agent.clone(), "cursor"),
-        cli::SetupCommand::OpenClaw { agent } => (agent.clone(), "openclaw"),
-    };
-
-    let ag = resolve_agent(config, agent_override.as_deref())?;
+    let cli::SetupCommand::Cursor { agent } = &cmd;
+    let ag = resolve_agent(config, agent.as_deref())?;
     let mp_binary = std::env::current_exe()?
         .canonicalize()
         .unwrap_or_else(|_| std::env::current_exe().unwrap());
     let project_dir = std::env::current_dir()?;
     let mp_bin_str = mp_binary.to_string_lossy().to_string();
+    let config_abs = project_dir.join("moneypenny.toml");
 
-    match cmd {
-        cli::SetupCommand::ClaudeCode { global, .. } => {
-            let mcp_server_entry = serde_json::json!({
-                "command": &mp_bin_str,
-                "args": ["sidecar", "--agent", &ag.name],
-                "cwd": project_dir.to_string_lossy().as_ref()
-            });
+    let mcp_server_entry = serde_json::json!({
+        "command": &mp_bin_str,
+        "args": [
+            "--config", config_abs.to_string_lossy().as_ref(),
+            "sidecar", "--agent", &ag.name
+        ]
+    });
 
-            let target_path = if global {
-                home_dir()?.join(".claude.json")
-            } else {
-                project_dir.join(".mcp.json")
-            };
-
-            upsert_json_mcp_config(&target_path, "mcpServers", "moneypenny", mcp_server_entry)?;
-
-            print_setup_success(target, &target_path, &mp_bin_str, &ag.name, &project_dir);
-            println!("  Next steps:");
-            println!("    1. Restart Claude Code (or run /mcp in the REPL to verify)");
-            println!("    2. Ask Claude: \"What Moneypenny tools do you have?\"");
-            println!();
-        }
-
-        cli::SetupCommand::Cortex { .. } => {
-            let status = std::process::Command::new("cortex")
-                .args([
-                    "mcp",
-                    "add",
-                    "moneypenny",
-                    &mp_bin_str,
-                    "sidecar",
-                    "--agent",
-                    &ag.name,
-                ])
-                .status();
-
-            match status {
-                Ok(s) if s.success() => {
-                    println!();
-                    println!("  Moneypenny v{}", env!("CARGO_PKG_VERSION"));
-                    println!();
-                    println!("  \u{2713} Registered via `cortex mcp add`");
-                    println!();
-                    println!("  Binary:  {}", mp_binary.display());
-                    println!("  Agent:   {}", ag.name);
-                    println!("  Project: {}", project_dir.display());
-                    println!();
-                    println!("  Next steps:");
-                    println!("    1. Run `cortex mcp list` to verify");
-                    println!("    2. Ask Cortex: \"What Moneypenny tools do you have?\"");
-                    println!();
-                }
-                Ok(s) => {
-                    anyhow::bail!(
-                        "`cortex mcp add` exited with status {s}. Is Cortex Code CLI installed?"
-                    );
-                }
-                Err(e) => {
-                    anyhow::bail!(
-                        "Failed to run `cortex`: {e}\nInstall Cortex Code CLI first: https://docs.snowflake.com/en/user-guide/cortex-code"
-                    );
-                }
-            }
-        }
-
-        cli::SetupCommand::Cursor { .. } => {
-            let mcp_server_entry = serde_json::json!({
-                "command": &mp_bin_str,
-                "args": ["sidecar", "--agent", &ag.name]
-            });
-
-            let mcp_path = project_dir.join(".cursor").join("mcp.json");
-            if let Some(parent) = mcp_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            upsert_json_mcp_config(&mcp_path, "mcpServers", "moneypenny", mcp_server_entry)?;
-
-            print_setup_success(target, &mcp_path, &mp_bin_str, &ag.name, &project_dir);
-            println!("  Next steps:");
-            println!("    1. Restart Cursor (or reload the window)");
-            println!("    2. Ask the agent: \"What Moneypenny tools do you have?\"");
-            println!();
-        }
-
-        cli::SetupCommand::OpenClaw { .. } => {
-            let mcp_server_entry = serde_json::json!({
-                "command": &mp_bin_str,
-                "args": ["sidecar", "--agent", &ag.name]
-            });
-
-            let target_path = home_dir()?.join(".clawdbot").join("clawdbot.json");
-            if let Some(parent) = target_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-
-            upsert_json_mcp_config(&target_path, "mcp", "moneypenny", mcp_server_entry)?;
-
-            print_setup_success(target, &target_path, &mp_bin_str, &ag.name, &project_dir);
-            println!("  Next steps:");
-            println!("    1. Restart OpenClaw");
-            println!("    2. Ask your agent: \"What Moneypenny tools do you have?\"");
-            println!();
-        }
+    // Write .cursor/mcp.json
+    let mcp_path = project_dir.join(".cursor").join("mcp.json");
+    if let Some(parent) = mcp_path.parent() {
+        std::fs::create_dir_all(parent)?;
     }
+    upsert_json_mcp_config(&mcp_path, "moneypenny", mcp_server_entry)?;
 
-    // Write a project-local rule/instructions file so the AI agent knows
-    // about Moneypenny's tools regardless of which host (Cursor, Claude Code,
-    // Cortex, OpenClaw) is being used.
-    write_agent_instructions(&project_dir)?;
+    // Write .cursor/rules/moneypenny.mdc
+    let rules_dir = project_dir.join(".cursor").join("rules");
+    std::fs::create_dir_all(&rules_dir)?;
+    let rule_path = rules_dir.join("moneypenny.mdc");
+    std::fs::write(&rule_path, AGENT_INSTRUCTIONS)?;
+
+    // Write .cursor/hooks.json — each entry calls `mp hook --event <name>` directly
+    let hooks_json_path = project_dir.join(".cursor").join("hooks.json");
+    let hooks_config = generate_hooks_json(&mp_bin_str, &config_abs.to_string_lossy(), &ag.name);
+    std::fs::write(&hooks_json_path, hooks_config)?;
+
+    println!();
+    println!("  Moneypenny v{}", env!("CARGO_PKG_VERSION"));
+    println!();
+    println!("  \u{2713} Registered MCP server in {}", mcp_path.display());
+    println!("  \u{2713} Wrote agent rules to {}", rule_path.display());
+    println!("  \u{2713} Wrote hooks config to {}", hooks_json_path.display());
+    println!();
+    println!("  Binary:  {mp_bin_str}");
+    println!("  Agent:   {}", ag.name);
+    println!("  Project: {}", project_dir.display());
+    println!();
+    println!("  Governance:");
+    println!("    - All tool calls, shell commands, file edits, and MCP calls are audited");
+    println!("    - Policy engine enforces allow/deny on pre-execution hooks");
+    println!("    - View audit trail: mp audit");
+    println!("    - Add policies: mp policy add --name <name> --effect deny --action shell_exec");
+    println!();
+    println!("  Next steps:");
+    println!("    1. Restart Cursor (or reload the window)");
+    println!("    2. Ask the agent: \"What Moneypenny tools do you have?\"");
+    println!();
 
     Ok(())
 }
 
-fn write_agent_instructions(project_dir: &std::path::Path) -> Result<()> {
-    let targets: &[(&str, &str)] = &[
-        (".cursor/rules/moneypenny.mdc", AGENT_INSTRUCTIONS),
-        ("AGENTS.md", AGENT_INSTRUCTIONS),
-    ];
-    for &(rel_path, content) in targets {
-        let full = project_dir.join(rel_path);
-        if let Some(parent) = full.parent() {
-            std::fs::create_dir_all(parent)?;
+// =========================================================================
+// Hook (Cursor hooks → audit + policy enforcement)
+// =========================================================================
+
+async fn cmd_hook(config: &Config, event: &str, agent: Option<String>) -> Result<()> {
+    let ag = resolve_agent(config, agent.as_deref())?;
+    let conn = open_agent_db(config, &ag.name)?;
+
+    let input: serde_json::Value = {
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
+        serde_json::from_str(&buf).unwrap_or_else(|_| serde_json::json!({}))
+    };
+
+    let conversation_id = input["conversation_id"].as_str().unwrap_or("unknown");
+    let generation_id = input["generation_id"].as_str().unwrap_or("unknown");
+
+    match event {
+        // ── Observe-only events → activity_log ──
+        "sessionStart" => {
+            let model = input["model"].as_str().unwrap_or("unknown");
+            record_activity(
+                &conn, &ag.name, event, "session_start", "session",
+                &format!("model={model}"),
+                conversation_id, generation_id, None,
+            )?;
+            emit_hook_allow();
         }
-        std::fs::write(&full, content)?;
-        println!("  \u{2713} Wrote {rel_path}");
+        "sessionEnd" | "stop" => {
+            let status = input["status"].as_str().unwrap_or("completed");
+            record_activity(
+                &conn, &ag.name, event, "session_end", "session",
+                &format!("status={status}"),
+                conversation_id, generation_id, None,
+            )?;
+            emit_hook_allow();
+        }
+        "postToolUse" => {
+            let tool = input["tool_name"].as_str().unwrap_or("unknown");
+            let duration = input["duration"].as_u64();
+            record_activity(
+                &conn, &ag.name, event, "tool_call", tool,
+                &format!("Tool completed"),
+                conversation_id, generation_id, duration,
+            )?;
+            emit_hook_allow();
+        }
+        "afterShellExecution" => {
+            let command = input["command"].as_str().unwrap_or("");
+            let duration = input["duration"].as_u64();
+            record_activity(
+                &conn, &ag.name, event, "shell_exec", "shell",
+                truncate(command, 500),
+                conversation_id, generation_id, duration,
+            )?;
+            emit_hook_allow();
+        }
+        "afterMCPExecution" => {
+            let tool = input["tool_name"].as_str().unwrap_or("unknown");
+            let duration = input["duration"].as_u64();
+            record_activity(
+                &conn, &ag.name, event, "mcp_call", tool,
+                "MCP tool completed",
+                conversation_id, generation_id, duration,
+            )?;
+            emit_hook_allow();
+        }
+        "afterFileEdit" => {
+            let file_path = input["file_path"].as_str().unwrap_or("unknown");
+            let edit_count = input["edits"].as_array().map(|a| a.len()).unwrap_or(0);
+            record_activity(
+                &conn, &ag.name, event, "file_edit", file_path,
+                &format!("{edit_count} edit(s)"),
+                conversation_id, generation_id, None,
+            )?;
+            emit_hook_allow();
+        }
+
+        // ── Policy-enforced events → policy_audit + activity_log ──
+        "preToolUse" => {
+            let tool = input["tool_name"].as_str().unwrap_or("unknown");
+            let decision = mp_core::policy::evaluate(
+                &conn,
+                &mp_core::policy::PolicyRequest {
+                    actor: &ag.name,
+                    action: "call",
+                    resource: tool,
+                    sql_content: None,
+                    channel: Some("cursor"),
+                    arguments: None,
+                },
+            )?;
+            record_policy_audit(
+                &conn, &ag.name, "call", tool,
+                &decision, conversation_id, generation_id,
+            )?;
+            record_activity(
+                &conn, &ag.name, event, "policy_check", tool,
+                &format!("{:?}", decision.effect),
+                conversation_id, generation_id, None,
+            )?;
+            emit_hook_decision(&decision);
+        }
+        "beforeShellExecution" => {
+            let command = input["command"].as_str().unwrap_or("");
+            let decision = mp_core::policy::evaluate(
+                &conn,
+                &mp_core::policy::PolicyRequest {
+                    actor: &ag.name,
+                    action: "shell_exec",
+                    resource: "shell",
+                    sql_content: Some(command),
+                    channel: Some("cursor"),
+                    arguments: Some(command),
+                },
+            )?;
+            record_policy_audit(
+                &conn, &ag.name, "shell_exec", "shell",
+                &decision, conversation_id, generation_id,
+            )?;
+            record_activity(
+                &conn, &ag.name, event, "policy_check", "shell",
+                &format!("{:?}: {}", decision.effect, truncate(command, 200)),
+                conversation_id, generation_id, None,
+            )?;
+            emit_hook_decision(&decision);
+        }
+        "beforeMCPExecution" => {
+            let tool = input["tool_name"].as_str().unwrap_or("unknown");
+            let decision = mp_core::policy::evaluate(
+                &conn,
+                &mp_core::policy::PolicyRequest {
+                    actor: &ag.name,
+                    action: "mcp_call",
+                    resource: tool,
+                    sql_content: None,
+                    channel: Some("cursor"),
+                    arguments: None,
+                },
+            )?;
+            record_policy_audit(
+                &conn, &ag.name, "mcp_call", tool,
+                &decision, conversation_id, generation_id,
+            )?;
+            record_activity(
+                &conn, &ag.name, event, "policy_check", tool,
+                &format!("{:?}", decision.effect),
+                conversation_id, generation_id, None,
+            )?;
+            emit_hook_decision(&decision);
+        }
+
+        _ => {
+            record_activity(
+                &conn, &ag.name, event, "unknown", "unknown",
+                "unhandled hook event",
+                conversation_id, generation_id, None,
+            )?;
+            emit_hook_allow();
+        }
     }
+
     Ok(())
+}
+
+fn record_activity(
+    conn: &rusqlite::Connection,
+    agent_id: &str,
+    event: &str,
+    action: &str,
+    resource: &str,
+    detail: &str,
+    conversation_id: &str,
+    generation_id: &str,
+    duration_ms: Option<u64>,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO activity_log (id, agent_id, event, action, resource, detail, conversation_id, generation_id, duration_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![
+            uuid::Uuid::new_v4().to_string(),
+            agent_id,
+            event,
+            action,
+            resource,
+            detail,
+            conversation_id,
+            generation_id,
+            duration_ms.map(|d| d as i64),
+        ],
+    )?;
+    Ok(())
+}
+
+fn record_policy_audit(
+    conn: &rusqlite::Connection,
+    agent_id: &str,
+    action: &str,
+    resource: &str,
+    decision: &mp_core::policy::PolicyDecision,
+    conversation_id: &str,
+    generation_id: &str,
+) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    let effect_str = match decision.effect {
+        mp_core::policy::Effect::Allow => "allow",
+        mp_core::policy::Effect::Deny => "deny",
+        mp_core::policy::Effect::Audit => "audit",
+    };
+    conn.execute(
+        "INSERT INTO policy_audit (id, policy_id, actor, action, resource, effect, reason, correlation_id, session_id, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        rusqlite::params![
+            uuid::Uuid::new_v4().to_string(),
+            decision.policy_id,
+            agent_id,
+            action,
+            resource,
+            effect_str,
+            decision.reason,
+            generation_id,
+            conversation_id,
+            now,
+        ],
+    )?;
+    Ok(())
+}
+
+fn emit_hook_allow() {
+    println!("{}", serde_json::json!({ "permission": "allow" }));
+}
+
+fn emit_hook_decision(decision: &mp_core::policy::PolicyDecision) {
+    match decision.effect {
+        mp_core::policy::Effect::Deny => {
+            let msg = decision.reason.as_deref().unwrap_or("Blocked by Moneypenny policy");
+            println!("{}", serde_json::json!({
+                "permission": "deny",
+                "user_message": msg,
+                "agent_message": format!("Policy denied this action: {msg}")
+            }));
+        }
+        _ => {
+            emit_hook_allow();
+        }
+    }
+}
+
+fn truncate(s: &str, max: usize) -> &str {
+    if s.len() <= max { s } else { &s[..max] }
+}
+
+fn generate_hooks_json(mp_bin: &str, config_path: &str, agent: &str) -> String {
+    let cmd = |event: &str| -> serde_json::Value {
+        serde_json::json!({
+            "command": format!("\"{}\" --config \"{}\" hook --event {} --agent {}", mp_bin, config_path, event, agent)
+        })
+    };
+
+    let hooks = serde_json::json!({
+        "version": 1,
+        "hooks": {
+            "sessionStart": [cmd("sessionStart")],
+            "stop": [cmd("stop")],
+            "preToolUse": [cmd("preToolUse")],
+            "postToolUse": [cmd("postToolUse")],
+            "beforeShellExecution": [cmd("beforeShellExecution")],
+            "afterShellExecution": [cmd("afterShellExecution")],
+            "beforeMCPExecution": [cmd("beforeMCPExecution")],
+            "afterMCPExecution": [cmd("afterMCPExecution")],
+            "afterFileEdit": [cmd("afterFileEdit")]
+        }
+    });
+    serde_json::to_string_pretty(&hooks).unwrap_or_default() + "\n"
 }
 
 const AGENT_INSTRUCTIONS: &str = r#"---
@@ -1311,14 +1514,30 @@ alwaysApply: true
 
 # Moneypenny
 
-You have access to a Moneypenny MCP server. Use it to store and retrieve
-persistent memory, ingest documents, manage policies, and schedule jobs.
+You have access to a Moneypenny MCP server. It provides persistent memory,
+knowledge retrieval, document ingestion, governance policies, and scheduled jobs.
 
-## Primary tool: `moneypenny.query`
+## "mp" prefix
 
-All operations go through a single tool using MPQ (Moneypenny Query) expressions.
+When the user starts a message with **"mp"** (e.g. "mp remember that we use
+Redis for caching", "mp search facts about auth", "mp ingest this doc"), treat
+it as a direct instruction to use Moneypenny. Translate the natural-language
+request into the appropriate `moneypenny.query` call and execute it immediately.
 
-### Syntax
+## Tools
+
+| Tool | Purpose |
+|------|---------|
+| `moneypenny.query` | **Primary.** Execute MPQ expressions (see syntax below). |
+| `moneypenny.capabilities` | Discover available domains and example expressions. |
+| `moneypenny.execute` | Fallback for advanced operations not yet in MPQ. |
+
+**Important:** These tools are MCP tools served by the Moneypenny sidecar
+process. They must appear in your callable tool list. If they do not, the MCP
+server is not connected — tell the user to run `mp setup cursor` and restart
+Cursor (or reload the window).
+
+## MPQ syntax
 
 ```
 SEARCH <store> [WHERE <filters>] [SINCE <duration>] [| SORT field ASC|DESC] [| TAKE n]
@@ -1359,16 +1578,12 @@ Set `dry_run: true` to parse and policy-check without executing.
 
 ## When to use Moneypenny
 
+- **User says "mp ..."**: Always route through Moneypenny (see prefix rule above)
 - **Remembering things**: Store facts the user tells you to remember
 - **Recalling context**: Search facts and knowledge before answering questions
 - **Ingesting documents**: Use INGEST to add URLs or documents to the knowledge store
 - **Audit trail**: Search audit logs to understand what happened
 - **Governance**: Create policies to control what agents can do
-
-## Other tools
-
-- `moneypenny.capabilities` — discover available domains and example expressions
-- `moneypenny.execute` — fallback for advanced operations not yet in MPQ
 
 ## Best practices
 
@@ -1378,15 +1593,8 @@ Set `dry_run: true` to parse and policy-check without executing.
 - Prefer `moneypenny.query` over `moneypenny.execute` whenever possible
 "#;
 
-fn home_dir() -> Result<std::path::PathBuf> {
-    std::env::var("HOME")
-        .map(std::path::PathBuf::from)
-        .map_err(|_| anyhow::anyhow!("could not determine home directory"))
-}
-
 fn upsert_json_mcp_config(
     path: &std::path::Path,
-    servers_key: &str,
     server_name: &str,
     entry: serde_json::Value,
 ) -> Result<()> {
@@ -1401,59 +1609,17 @@ fn upsert_json_mcp_config(
         .as_object_mut()
         .ok_or_else(|| anyhow::anyhow!("{} is not a JSON object", path.display()))?;
 
-    // OpenClaw nests under mcp.servers; Claude Code uses mcpServers directly
-    if servers_key == "mcp" {
-        let mcp = root_obj
-            .entry("mcp")
-            .or_insert_with(|| serde_json::json!({}));
-        let mcp_obj = mcp
-            .as_object_mut()
-            .ok_or_else(|| anyhow::anyhow!("\"mcp\" is not a JSON object in {}", path.display()))?;
-        let servers = mcp_obj
-            .entry("servers")
-            .or_insert_with(|| serde_json::json!({}));
-        servers
-            .as_object_mut()
-            .ok_or_else(|| anyhow::anyhow!("\"mcp.servers\" is not a JSON object"))?
-            .insert(server_name.to_string(), entry);
-    } else {
-        if let Some(servers) = root_obj.get_mut(servers_key) {
-            servers
-                .as_object_mut()
-                .ok_or_else(|| anyhow::anyhow!("\"{servers_key}\" is not a JSON object"))?
-                .insert(server_name.to_string(), entry);
-        } else {
-            root_obj.insert(
-                servers_key.to_string(),
-                serde_json::json!({ server_name: entry }),
-            );
-        }
-    }
+    let servers = root_obj
+        .entry("mcpServers")
+        .or_insert_with(|| serde_json::json!({}));
+    servers
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("\"mcpServers\" is not a JSON object"))?
+        .insert(server_name.to_string(), entry);
 
     let formatted = serde_json::to_string_pretty(&root)?;
     std::fs::write(path, format!("{formatted}\n"))?;
     Ok(())
-}
-
-fn print_setup_success(
-    target: &str,
-    config_path: &std::path::Path,
-    binary: &str,
-    agent: &str,
-    project: &std::path::Path,
-) {
-    println!();
-    println!("  Moneypenny v{}", env!("CARGO_PKG_VERSION"));
-    println!();
-    println!(
-        "  \u{2713} Registered as MCP server for {target} in {}",
-        config_path.display()
-    );
-    println!();
-    println!("  Binary:  {binary}");
-    println!("  Agent:   {agent}");
-    println!("  Project: {}", project.display());
-    println!();
 }
 
 // =========================================================================
@@ -2764,6 +2930,7 @@ async fn cmd_ingest(
     limit: usize,
     cortex: bool,
     claude_code: Option<String>,
+    cursor: Option<String>,
 ) -> Result<()> {
     let ag = resolve_agent(config, agent.as_deref())?;
     let conn = open_agent_db(config, &ag.name)?;
@@ -2981,6 +3148,66 @@ async fn cmd_ingest(
             let tmp = mp_core::ingest::write_temp_jsonl(&lines, "claude-code")?;
             let summary =
                 mp_core::ingest::ingest_jsonl_file(&conn, "claude-code", &tmp, replay, &ag.name)?;
+            let fname = session_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy();
+            println!(
+                "  {}: inserted={}, deduped={}, projected={}, errors={}",
+                fname,
+                summary.inserted_count,
+                summary.deduped_count,
+                summary.projected_count,
+                summary.error_count,
+            );
+            total_inserted += summary.inserted_count;
+            total_deduped += summary.deduped_count;
+            total_errors += summary.error_count;
+            let _ = std::fs::remove_file(&tmp);
+        }
+        println!();
+        println!(
+            "  Total: {} sessions, {} inserted, {} deduped, {} errors",
+            sessions.len(),
+            total_inserted,
+            total_deduped,
+            total_errors
+        );
+    } else if cursor.is_some() {
+        let slug = cursor.as_deref().filter(|s| !s.is_empty());
+        let sessions = mp_core::ingest::discover_cursor_sessions(slug);
+        if sessions.is_empty() {
+            if let Some(s) = slug {
+                println!("  No Cursor sessions found for project slug: {s}");
+            } else {
+                println!("  No Cursor sessions found in ~/.cursor/projects/");
+            }
+            return Ok(());
+        }
+        println!("  Found {} Cursor session(s)", sessions.len());
+        println!();
+        let mut total_inserted = 0i64;
+        let mut total_deduped = 0i64;
+        let mut total_errors = 0i64;
+        for session_path in &sessions {
+            let lines = match mp_core::ingest::convert_cursor_session(session_path) {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!(
+                        "  Skipping {:?}: {}",
+                        session_path.file_name().unwrap_or_default(),
+                        e
+                    );
+                    total_errors += 1;
+                    continue;
+                }
+            };
+            if lines.is_empty() {
+                continue;
+            }
+            let tmp = mp_core::ingest::write_temp_jsonl(&lines, "cursor")?;
+            let summary =
+                mp_core::ingest::ingest_jsonl_file(&conn, "cursor", &tmp, replay, &ag.name)?;
             let fname = session_path
                 .file_name()
                 .unwrap_or_default()
@@ -3421,7 +3648,7 @@ fn build_sidecar_request_from_mcp_call(
         .map(str::to_string)
         .or_else(|| request_id_from_jsonrpc(input));
 
-    let tool_specific = if tool_name.starts_with("moneypenny.") {
+    let tool_specific = if tool_name.starts_with("moneypenny.") || tool_name.starts_with("moneypenny_") {
         Some(domain_tools::route_tool_call(tool_name, &arguments)?)
     } else {
         None

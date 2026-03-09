@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 )]
 pub struct Cli {
     /// Path to moneypenny.toml config file
-    #[arg(short, long, default_value = "moneypenny.toml")]
+    #[arg(short, long, default_value = "moneypenny.toml", env = "MP_CONFIG")]
     pub config: String,
 
     #[command(subcommand)]
@@ -128,6 +128,10 @@ pub enum Command {
         /// Ingest Claude Code conversations (optionally pass a project slug to scope)
         #[arg(long)]
         claude_code: Option<String>,
+
+        /// Ingest Cursor agent transcripts (optionally pass a project slug to scope)
+        #[arg(long)]
+        cursor: Option<String>,
     },
 
     /// Manage the knowledge store
@@ -188,6 +192,18 @@ pub enum Command {
     /// Register Moneypenny with an AI coding agent
     #[command(subcommand)]
     Setup(SetupCommand),
+
+    /// Process a Cursor hook event (audit + policy enforcement)
+    #[command(hide = true)]
+    Hook {
+        /// Hook event name (e.g. preToolUse, sessionStart)
+        #[arg(long)]
+        event: String,
+
+        /// Agent name (defaults to first configured agent)
+        #[arg(long)]
+        agent: Option<String>,
+    },
 }
 
 // -- Agent subcommands --
@@ -619,34 +635,8 @@ pub enum SessionCommand {
 
 #[derive(Subcommand)]
 pub enum SetupCommand {
-    /// Register Moneypenny as an MCP server in Claude Code
-    ClaudeCode {
-        /// Agent name (defaults to first configured agent)
-        #[arg(long)]
-        agent: Option<String>,
-
-        /// Write to global ~/.claude.json instead of project .mcp.json
-        #[arg(long)]
-        global: bool,
-    },
-
-    /// Register Moneypenny as an MCP server in Cortex Code CLI
-    Cortex {
-        /// Agent name (defaults to first configured agent)
-        #[arg(long)]
-        agent: Option<String>,
-    },
-
     /// Register Moneypenny as an MCP server in Cursor
     Cursor {
-        /// Agent name (defaults to first configured agent)
-        #[arg(long)]
-        agent: Option<String>,
-    },
-
-    /// Register Moneypenny as an MCP server in OpenClaw
-    #[command(name = "openclaw")]
-    OpenClaw {
         /// Agent name (defaults to first configured agent)
         #[arg(long)]
         agent: Option<String>,
