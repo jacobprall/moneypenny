@@ -1,8 +1,6 @@
 ---
 import Base from "../layouts/Base.astro";
 
-const user = Astro.locals.user;
-
 const features = [
   {
     title: "Persistent Memory",
@@ -55,26 +53,15 @@ const features = [
           >Docs</a
         >
         <a
-          href="/pricing"
-          class="text-[13px] text-zinc-400 transition-colors hover:text-zinc-50"
-          >Pricing</a
-        >
-        <a
           href="https://github.com/jacobprall/moneypenny"
           class="text-[13px] text-zinc-400 transition-colors hover:text-zinc-50"
           >GitHub</a
         >
-        {user ? (
-          <a
-            href="/dashboard"
-            class="rounded-md bg-zinc-50 px-3.5 py-1.5 text-[13px] font-medium text-zinc-950 transition-colors hover:bg-zinc-200"
-            >Dashboard</a>
-        ) : (
-          <a
-            href="/login"
-            class="rounded-md bg-zinc-50 px-3.5 py-1.5 text-[13px] font-medium text-zinc-950 transition-colors hover:bg-zinc-200"
-            >Sign In</a>
-        )}
+        <a
+          href="#waitlist"
+          class="rounded-md bg-zinc-50 px-3.5 py-1.5 text-[13px] font-medium text-zinc-950 transition-colors hover:bg-zinc-200"
+          >Join Waitlist</a
+        >
       </div>
     </div>
   </nav>
@@ -451,6 +438,8 @@ const features = [
 </Base>
 
 <script>
+  import { track } from "@vercel/analytics";
+
   const form = document.getElementById("waitlist-form") as HTMLFormElement;
   const message = document.getElementById("form-message") as HTMLElement;
   const success = document.getElementById("form-success") as HTMLElement;
@@ -465,9 +454,7 @@ const features = [
     button.textContent = "...";
 
     try {
-      // Wire to your email service (Buttondown, Resend, Loops, etc.):
-      // await fetch("/api/subscribe", { method: "POST", body: JSON.stringify({ email }), headers: { "Content-Type": "application/json" } });
-      await new Promise((r) => setTimeout(r, 600));
+      track("waitlist_signup", { email });
 
       form.classList.add("hidden");
       success.classList.remove("hidden");

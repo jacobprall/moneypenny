@@ -30,6 +30,10 @@ const {
   </head>
   <body class="min-h-screen font-sans">
     <slot />
+    <script>
+      import { inject } from "@vercel/analytics";
+      inject();
+    </script>
   </body>
 </html>
 
