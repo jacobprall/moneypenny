@@ -3,14 +3,9 @@ import Base from "../layouts/Base.astro";
 
 const capabilities = [
   {
-    title: "Persistent Memory",
+    title: "Multi-Agent Sync",
     description:
-      "Your agent builds on yesterday's context. Facts are extracted every turn, graph-linked, and compressed to three tiers. Confidence grows on re-extraction. Stale knowledge decays. 500 facts fit in ~2K tokens.",
-  },
-  {
-    title: "Policy Engine",
-    description:
-      "Every operation is checked before it runs. Static rules, behavioral limits, rate controls, and time windows. Denials become context the agent can reason about, not crashes.",
+      "Agents share what they know via CRDTs. Scoped visibility — private, shared, or protected — enforced at the SQL level. Delegate tasks across agents with independent memory and persona. No central server.",
   },
   {
     title: "Hybrid Retrieval",
@@ -18,24 +13,24 @@ const capabilities = [
       "One query searches all of your agent's knowledge — facts, conversations, documents, and session context. Semantic and full-text search combined, deduplicated, and diversity-ranked.",
   },
   {
-    title: "Audit Trail",
+    title: "Scheduled Jobs",
     description:
-      "Trace exactly what happened and why. Every action logged with full context. Queryable by you and the agent itself.",
+      "Cron-scheduled prompts, reflection loops, pipelines, and custom JavaScript — all governed by the same policy engine. Define once, sync across agents.",
   },
   {
-    title: "Multi-Agent Sync",
+    title: "Knowledge Ingestion",
     description:
-      "Agents share what they know. CRDT-based knowledge sharing with scoped visibility: private, shared, or protected. No central server.",
+      "Feed URLs, files, or raw text into the knowledge base. HTML is stripped and normalized automatically. Content is chunked, embedded, and searchable within seconds.",
+  },
+  {
+    title: "Extensible Tools",
+    description:
+      "JavaScript tools persist in the database and sync across agents. Connect any MCP server. Runtime skills track usage and success rate — high performers surface more in retrieval.",
   },
   {
     title: "Encrypted at Rest",
     description:
       "SQLCipher encryption for the agent database. Keys stored in your OS keychain — never plaintext on disk. Data at rest is opaque without the key.",
-  },
-  {
-    title: "Runs Anywhere",
-    description:
-      "Standalone with CLI, HTTP, Slack, Discord, and Telegram. Or as a sidecar via stdio, MCP, or HTTP. Same agent, any surface.",
   },
 ];
 ---
@@ -290,14 +285,17 @@ const capabilities = [
               yesterday's. No infrastructure to manage. No state to lose.
             </p>
             <p>
+              Multiple agents share knowledge via CRDTs with scoped
+              visibility. Delegate research to one agent and have it sync
+              findings back. Each agent keeps its own persona, memory, and
+              policies.
+            </p>
+            <p>
               Operations are governed before they execute. Static rules,
               behavioral limits, rate controls, all evaluated in-process.
               Denials flow back as context the agent can reason about, not
-              silent failures.
-            </p>
-            <p>
-              Everything is auditable and queryable, by you and the agent
-              itself. No infrastructure beyond a single binary.
+              silent failures. Everything is auditable and queryable — by
+              you and the agent itself.
             </p>
           </div>
         </div>
