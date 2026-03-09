@@ -133,6 +133,7 @@ fn dispatch_operation(
         "job.list" => op_job_list(conn, req),
         "job.run" => op_job_run(conn, req),
         "job.pause" => op_job_pause(conn, req),
+        "job.resume" => op_job_resume(conn, req),
         "job.history" => op_job_history(conn, req),
         "job.spec.plan" => op_job_spec_plan(conn, req),
         "job.spec.confirm" => op_job_spec_confirm(conn, req),
@@ -165,6 +166,9 @@ fn dispatch_operation(
         "ingest.events" => op_ingest_events(conn, req),
         "ingest.status" => op_ingest_status(conn, req),
         "ingest.replay" => op_ingest_replay(conn, req),
+        "embedding.status" => op_embedding_status(conn, req),
+        "embedding.retry_dead" => op_embedding_retry_dead(conn, req),
+        "embedding.backfill.enqueue" => op_embedding_backfill_enqueue(conn, req),
         _ => Ok(fail_response(
             "invalid_args",
             format!("unknown operation '{}'", req.op),
@@ -420,6 +424,39 @@ fn op_job_pause(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Ope
             "id": job_id,
             "status": "paused"
         }),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
+fn op_job_resume(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
+    let job_id = req.args["id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'id'"))?;
+
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "resume",
+            resource: "job",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+            arguments: None,
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    crate::scheduler::resume_job(conn, job_id)?;
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "job resumed".into(),
+        data: serde_json::json!({ "id": job_id }),
         policy: Some(policy_meta(&decision)),
         audit: AuditMeta { recorded: true },
     })
@@ -2570,6 +2607,151 @@ fn op_ingest_replay(
     })
 }
 
+fn op_embedding_status(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "status",
+            resource: "embedding_queue",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+            arguments: None,
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    let stats = crate::store::embedding::queue_stats(conn)?;
+    let by_target = crate::store::embedding::queue_target_stats(conn)?;
+    let rows: Vec<serde_json::Value> = by_target
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "target": r.target,
+                "total": r.total,
+                "pending": r.pending,
+                "retry": r.retry,
+                "processing": r.processing,
+                "dead": r.dead
+            })
+        })
+        .collect();
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "embedding queue status".into(),
+        data: serde_json::json!({
+            "total": stats.total,
+            "pending": stats.pending,
+            "retry": stats.retry,
+            "processing": stats.processing,
+            "dead": stats.dead,
+            "by_target": rows
+        }),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
+fn op_embedding_retry_dead(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "retry_dead",
+            resource: "embedding_queue",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+            arguments: None,
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    let target = req.args["target"].as_str();
+    let limit = req.args["limit"].as_u64().unwrap_or(500) as usize;
+    let revived = crate::store::embedding::retry_dead_jobs(conn, target, limit)?;
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "embedding dead jobs revived".into(),
+        data: serde_json::json!({
+            "revived": revived,
+            "target": target,
+            "limit": limit
+        }),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
+fn op_embedding_backfill_enqueue(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "backfill_enqueue",
+            resource: "embedding_queue",
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+            arguments: None,
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    let agent_id = req.args["agent_id"]
+        .as_str()
+        .unwrap_or(&req.actor.agent_id)
+        .to_string();
+    let provider = req.args["provider"].as_str().unwrap_or("local");
+    let model = req.args["model"]
+        .as_str()
+        .unwrap_or("nomic-embed-text-v1.5");
+    let dimensions = req.args["dimensions"].as_u64().unwrap_or(768) as usize;
+    let model_id = req.args["model_id"]
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| crate::store::embedding::model_identity(provider, model, dimensions));
+    let limit = req.args["limit"].as_u64().unwrap_or(10_000) as usize;
+    let queued = crate::store::embedding::enqueue_drift_jobs(conn, &agent_id, &model_id, limit)?;
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "embedding backfill enqueue complete".into(),
+        data: serde_json::json!({
+            "agent_id": agent_id,
+            "provider": provider,
+            "model": model,
+            "dimensions": dimensions,
+            "model_id": model_id,
+            "limit": limit,
+            "queued": queued
+        }),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
 fn policy_meta(decision: &crate::policy::PolicyDecision) -> PolicyMeta {
     let effect = match decision.effect {
         crate::policy::Effect::Allow => "allow",
@@ -2624,6 +2806,7 @@ fn is_policy_required(op: &str) -> bool {
             | "job.list"
             | "job.run"
             | "job.pause"
+            | "job.resume"
             | "job.history"
             | "job.spec.plan"
             | "job.spec.confirm"
@@ -2655,6 +2838,9 @@ fn is_policy_required(op: &str) -> bool {
             | "agent.config"
             | "ingest.events"
             | "ingest.replay"
+            | "embedding.status"
+            | "embedding.retry_dead"
+            | "embedding.backfill.enqueue"
     )
 }
 
@@ -2664,6 +2850,7 @@ fn is_idempotent_mutation(op: &str) -> bool {
         "job.create"
             | "job.run"
             | "job.pause"
+            | "job.resume"
             | "job.spec.plan"
             | "job.spec.confirm"
             | "job.spec.apply"
@@ -2687,6 +2874,8 @@ fn is_idempotent_mutation(op: &str) -> bool {
             | "agent.config"
             | "ingest.events"
             | "ingest.replay"
+            | "embedding.retry_dead"
+            | "embedding.backfill.enqueue"
     )
 }
 

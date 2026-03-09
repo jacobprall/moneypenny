@@ -146,6 +146,10 @@ pub enum Command {
     #[command(subcommand)]
     Job(JobCommand),
 
+    /// Manage embedding queue operations
+    #[command(subcommand)]
+    Embeddings(EmbeddingsCommand),
+
     /// View the audit trail
     Audit {
         /// Agent name
@@ -462,6 +466,56 @@ pub enum JobCommand {
     History {
         /// Job ID (optional — all jobs if omitted)
         id: Option<String>,
+    },
+}
+
+// -- Embedding queue subcommands --
+
+#[derive(Subcommand)]
+pub enum EmbeddingsCommand {
+    /// Show embedding queue status and per-target breakdown
+    Status {
+        /// Agent name (defaults to first configured agent)
+        #[arg(long)]
+        agent: Option<String>,
+    },
+
+    /// Move dead embedding jobs back to retry
+    RetryDead {
+        /// Agent name (defaults to first configured agent)
+        #[arg(long)]
+        agent: Option<String>,
+
+        /// Optional target filter: facts, messages, tool_calls, policy_audit, chunks
+        #[arg(long)]
+        target: Option<String>,
+
+        /// Max dead jobs to revive
+        #[arg(long, default_value_t = 500)]
+        limit: usize,
+    },
+
+    /// Enqueue and process a model backfill immediately
+    Backfill {
+        /// Agent name (defaults to first configured agent)
+        #[arg(long)]
+        agent: Option<String>,
+
+        /// Override embedding model name (defaults to agent config model)
+        #[arg(long)]
+        model: Option<String>,
+
+        /// Max rows to enqueue per target
+        #[arg(long, default_value_t = 10_000)]
+        limit: usize,
+
+        /// Jobs to process per batch iteration
+        #[arg(long, default_value_t = 128)]
+        batch_size: usize,
+
+        /// Only enqueue jobs, do not run embedding processing
+        #[arg(long, default_value_t = false)]
+        enqueue_only: bool,
     },
 }
 

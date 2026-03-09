@@ -47,6 +47,15 @@ const features = [
         >moneypenny</a
       >
       <div class="flex items-center gap-5">
+        <button
+          id="theme-toggle"
+          type="button"
+          class="rounded-md border border-zinc-800 px-3 py-1.5 text-[13px] text-zinc-400 transition-colors hover:border-zinc-700 hover:text-zinc-50"
+          aria-label="Toggle light and dark mode"
+          aria-pressed="false"
+        >
+          <span id="theme-toggle-label">Light</span>
+        </button>
         <a
           href="/docs/"
           class="text-[13px] text-zinc-400 transition-colors hover:text-zinc-50"
@@ -454,6 +463,40 @@ const features = [
 <script>
   import { track } from "@vercel/analytics";
 
+  const THEME_KEY = "moneypenny-theme";
+  const root = document.documentElement;
+  const themeToggle = document.getElementById("theme-toggle") as HTMLButtonElement;
+  const themeToggleLabel = document.getElementById("theme-toggle-label") as HTMLElement;
+
+  function applyTheme(theme: "dark" | "light") {
+    const isLight = theme === "light";
+    root.classList.toggle("theme-light", isLight);
+    root.style.colorScheme = isLight ? "light" : "dark";
+    if (themeToggleLabel) {
+      themeToggleLabel.textContent = isLight ? "Dark" : "Light";
+    }
+    if (themeToggle) {
+      themeToggle.setAttribute("aria-pressed", String(isLight));
+    }
+  }
+
+  try {
+    const savedTheme = localStorage.getItem(THEME_KEY);
+    applyTheme(savedTheme === "light" ? "light" : "dark");
+  } catch {
+    applyTheme("dark");
+  }
+
+  themeToggle?.addEventListener("click", () => {
+    const next = root.classList.contains("theme-light") ? "dark" : "light";
+    applyTheme(next);
+    try {
+      localStorage.setItem(THEME_KEY, next);
+    } catch {
+      // Ignore storage write failures (private mode, blocked storage, etc.)
+    }
+  });
+
   const promptBox = document.getElementById("prompt-box") as HTMLElement;
   const copyBtn = document.getElementById("copy-btn") as HTMLButtonElement;
   const copyLabel = document.getElementById("copy-label") as HTMLElement;
@@ -503,3 +546,15 @@ const features = [
     }
   });
 </script>
+
+<style is:global>
+  html.theme-light body {
+    filter: invert(1) hue-rotate(180deg);
+  }
+
+  html.theme-light img,
+  html.theme-light video,
+  html.theme-light iframe {
+    filter: invert(1) hue-rotate(180deg);
+  }
+</style>

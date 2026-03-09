@@ -90,6 +90,7 @@ async fn main() -> Result<()> {
         Command::Skill(cmd) => cmd_skill(&config, cmd).await,
         Command::Policy(cmd) => cmd_policy(&config, cmd).await,
         Command::Job(cmd) => cmd_job(&config, cmd).await,
+        Command::Embeddings(cmd) => cmd_embeddings(&config, cmd).await,
         Command::Audit { agent, command } => cmd_audit(&config, agent, command).await,
         Command::Sync(cmd) => cmd_sync(&config, cmd).await,
         Command::Db(cmd) => cmd_db(&config, cmd).await,
@@ -171,6 +172,28 @@ fn build_embedding_provider(
         agent.embedding.dimensions,
         agent.embedding.api_base.as_deref(),
         agent.embedding.api_key.as_deref(),
+    )
+}
+
+fn build_embedding_provider_with_override(
+    config: &Config,
+    agent: &mp_core::config::AgentConfig,
+    model_override: Option<&str>,
+) -> Result<Box<dyn mp_llm::provider::EmbeddingProvider>> {
+    let mut embed_cfg = agent.embedding.clone();
+    if let Some(model) = model_override {
+        embed_cfg.model = model.to_string();
+        // If config pins a path for a different model, fall back to the derived path.
+        embed_cfg.model_path = None;
+    }
+    let model_path = embed_cfg.resolve_model_path(&config.models_dir());
+    mp_llm::build_embedding_provider(
+        &embed_cfg.provider,
+        &embed_cfg.model,
+        &model_path,
+        embed_cfg.dimensions,
+        embed_cfg.api_base.as_deref(),
+        embed_cfg.api_key.as_deref(),
     )
 }
 
@@ -3154,52 +3177,119 @@ fn sidecar_error_response(code: &str, message: impl Into<String>) -> serde_json:
 
 fn canonical_operation_catalog() -> &'static [(&'static str, &'static str)] {
     &[
-        ("job.create", "Create a scheduled job"),
-        ("job.list", "List scheduled jobs"),
-        ("job.run", "Run a job immediately"),
-        ("job.pause", "Pause a scheduled job"),
-        ("job.history", "List job run history"),
-        ("job.spec.plan", "Plan an agent-generated job spec"),
-        ("job.spec.confirm", "Confirm a planned job spec"),
-        ("job.spec.apply", "Apply a confirmed job spec into jobs"),
-        ("policy.add", "Add a policy rule"),
-        ("policy.evaluate", "Evaluate policy decision"),
-        ("policy.explain", "Explain policy decision"),
-        ("knowledge.ingest", "Ingest knowledge content"),
-        ("memory.search", "Search memory across stores"),
-        ("memory.fact.add", "Create a fact"),
-        ("memory.fact.update", "Update a fact"),
-        ("memory.fact.get", "Get full fact content"),
+        ("job.create", "Moneypenny operation: create a scheduled job"),
+        ("job.list", "Moneypenny operation: list scheduled jobs"),
+        ("job.run", "Moneypenny operation: run a job immediately"),
+        ("job.pause", "Moneypenny operation: pause a scheduled job"),
+        ("job.resume", "Moneypenny operation: resume a paused job"),
+        ("job.history", "Moneypenny operation: list job run history"),
+        (
+            "job.spec.plan",
+            "Moneypenny operation: plan an agent-generated job spec",
+        ),
+        (
+            "job.spec.confirm",
+            "Moneypenny operation: confirm a planned job spec",
+        ),
+        (
+            "job.spec.apply",
+            "Moneypenny operation: apply a confirmed job spec into jobs",
+        ),
+        ("policy.add", "Moneypenny operation: add a policy rule"),
+        (
+            "policy.evaluate",
+            "Moneypenny operation: evaluate a policy decision",
+        ),
+        (
+            "policy.explain",
+            "Moneypenny operation: explain a policy decision",
+        ),
+        (
+            "policy.spec.plan",
+            "Moneypenny operation: plan an agent-generated policy spec",
+        ),
+        (
+            "policy.spec.confirm",
+            "Moneypenny operation: confirm a planned policy spec",
+        ),
+        (
+            "policy.spec.apply",
+            "Moneypenny operation: apply a confirmed policy spec",
+        ),
+        (
+            "knowledge.ingest",
+            "Moneypenny operation: ingest knowledge content",
+        ),
+        (
+            "memory.search",
+            "Moneypenny operation: search memory across stores",
+        ),
+        ("memory.fact.add", "Moneypenny operation: create a fact"),
+        ("memory.fact.update", "Moneypenny operation: update a fact"),
+        (
+            "memory.fact.get",
+            "Moneypenny operation: get full fact content",
+        ),
         (
             "memory.fact.compaction.reset",
-            "Reset fact compaction state",
+            "Moneypenny operation: reset fact compaction state",
         ),
-        ("skill.add", "Add a skill"),
-        ("skill.promote", "Promote a skill"),
-        ("fact.delete", "Delete a fact"),
-        ("audit.query", "Query audit records"),
-        ("audit.append", "Append an audit record"),
-        ("session.resolve", "Resolve or create session"),
-        ("session.list", "List sessions"),
-        ("js.tool.add", "Add JavaScript tool"),
-        ("js.tool.list", "List JavaScript tools"),
-        ("js.tool.delete", "Delete JavaScript tool"),
-        ("agent.create", "Create an agent"),
-        ("agent.delete", "Delete an agent"),
-        ("agent.config", "Update agent config"),
-        ("ingest.events", "Ingest external events"),
-        ("ingest.status", "List ingest runs"),
-        ("ingest.replay", "Replay an ingest run"),
+        ("skill.add", "Moneypenny operation: add a skill"),
+        ("skill.promote", "Moneypenny operation: promote a skill"),
+        ("fact.delete", "Moneypenny operation: delete a fact"),
+        ("audit.query", "Moneypenny operation: query audit records"),
+        (
+            "audit.append",
+            "Moneypenny operation: append an audit record",
+        ),
+        (
+            "session.resolve",
+            "Moneypenny operation: resolve or create a session",
+        ),
+        ("session.list", "Moneypenny operation: list sessions"),
+        ("js.tool.add", "Moneypenny operation: add a JavaScript tool"),
+        (
+            "js.tool.list",
+            "Moneypenny operation: list JavaScript tools",
+        ),
+        (
+            "js.tool.delete",
+            "Moneypenny operation: delete a JavaScript tool",
+        ),
+        ("agent.create", "Moneypenny operation: create an agent"),
+        ("agent.delete", "Moneypenny operation: delete an agent"),
+        ("agent.config", "Moneypenny operation: update agent config"),
+        (
+            "ingest.events",
+            "Moneypenny operation: ingest external events",
+        ),
+        ("ingest.status", "Moneypenny operation: list ingest runs"),
+        (
+            "ingest.replay",
+            "Moneypenny operation: replay an ingest run",
+        ),
+        (
+            "embedding.status",
+            "Moneypenny operation: inspect embedding queue status",
+        ),
+        (
+            "embedding.retry_dead",
+            "Moneypenny operation: revive dead embedding jobs",
+        ),
+        (
+            "embedding.backfill.enqueue",
+            "Moneypenny operation: enqueue embedding backfill for a model",
+        ),
     ]
 }
 
 fn mcp_tools_list_result() -> serde_json::Value {
-    let tools: Vec<serde_json::Value> = canonical_operation_catalog()
-        .iter()
-        .map(|(name, description)| {
-            serde_json::json!({
-                "name": name,
-                "description": description,
+    let mut tools: Vec<serde_json::Value> = Vec::new();
+    for (name, description) in canonical_operation_catalog().iter() {
+        for tool_name in [name.to_string(), format!("moneypenny.{name}")] {
+            tools.push(serde_json::json!({
+                "name": tool_name,
+                "description": format!("{description}. Prefer the moneypenny.* form for explicit tool routing."),
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -3215,9 +3305,9 @@ fn mcp_tools_list_result() -> serde_json::Value {
                     },
                     "additionalProperties": true
                 }
-            })
-        })
-        .collect();
+            }));
+        }
+    }
     serde_json::json!({ "tools": tools })
 }
 
@@ -3266,6 +3356,7 @@ fn build_sidecar_request_from_mcp_call(
         .get("name")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("missing params.name"))?;
+    let op = op.strip_prefix("moneypenny.").unwrap_or(op);
     let args = params
         .get("arguments")
         .cloned()
@@ -3541,12 +3632,36 @@ mod tests {
     }
 
     #[test]
+    fn sidecar_mcp_prefixed_tool_name_maps_to_operation() {
+        let req = build_sidecar_request_from_mcp_call(
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "rpc-43",
+                "method": "tools/call",
+                "params": {
+                    "name": "moneypenny.job.list",
+                    "arguments": { "agent_id": "main" }
+                }
+            }),
+            "default-agent",
+        )
+        .expect("translate prefixed tools/call to operation request");
+        assert_eq!(req.op, "job.list");
+    }
+
+    #[test]
     fn sidecar_mcp_tools_list_exposes_canonical_ops() {
         let result = mcp_tools_list_result();
         let tools = result["tools"].as_array().cloned().unwrap_or_default();
         assert!(!tools.is_empty());
         assert!(tools.iter().any(|t| t["name"] == "job.create"));
+        assert!(tools.iter().any(|t| t["name"] == "moneypenny.job.create"));
         assert!(tools.iter().any(|t| t["name"] == "ingest.replay"));
+        assert!(
+            tools
+                .iter()
+                .any(|t| t["name"] == "moneypenny.embedding.status")
+        );
     }
 }
 
@@ -3922,6 +4037,17 @@ fn parse_duration_hours(s: &str) -> i64 {
     }
 }
 
+fn normalize_embedding_target(value: &str) -> Option<&'static str> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "facts" | "fact" => Some("facts"),
+        "messages" | "message" | "msg" => Some("messages"),
+        "tool_calls" | "tool-calls" | "toolcalls" | "tool_call" => Some("tool_calls"),
+        "policy_audit" | "policy-audit" | "policyaudit" | "policy" => Some("policy_audit"),
+        "chunks" | "chunk" | "knowledge" => Some("chunks"),
+        _ => None,
+    }
+}
+
 // =========================================================================
 // Job
 // =========================================================================
@@ -4046,6 +4172,146 @@ async fn cmd_job(config: &Config, cmd: cli::JobCommand) -> Result<()> {
                 }
             }
             println!();
+        }
+    }
+    Ok(())
+}
+
+// =========================================================================
+// Embeddings
+// =========================================================================
+
+async fn cmd_embeddings(config: &Config, cmd: cli::EmbeddingsCommand) -> Result<()> {
+    match cmd {
+        cli::EmbeddingsCommand::Status { agent } => {
+            let ag = resolve_agent(config, agent.as_deref())?;
+            let conn = open_agent_db(config, &ag.name)?;
+            let stats = mp_core::store::embedding::queue_stats(&conn)?;
+            let by_target = mp_core::store::embedding::queue_target_stats(&conn)?;
+
+            println!();
+            println!("  Embedding queue status (agent: {})", ag.name);
+            println!(
+                "  total={} pending={} retry={} processing={} dead={}",
+                stats.total, stats.pending, stats.retry, stats.processing, stats.dead
+            );
+            if by_target.is_empty() {
+                println!("  No queue entries.");
+            } else {
+                println!();
+                println!(
+                    "  {:14} {:7} {:7} {:7} {:10} {:7}",
+                    "TARGET", "TOTAL", "PENDING", "RETRY", "PROCESSING", "DEAD"
+                );
+                for row in &by_target {
+                    println!(
+                        "  {:14} {:7} {:7} {:7} {:10} {:7}",
+                        row.target, row.total, row.pending, row.retry, row.processing, row.dead
+                    );
+                }
+            }
+            println!();
+        }
+        cli::EmbeddingsCommand::RetryDead {
+            agent,
+            target,
+            limit,
+        } => {
+            let ag = resolve_agent(config, agent.as_deref())?;
+            let conn = open_agent_db(config, &ag.name)?;
+            let target_norm = if let Some(raw) = target.as_deref() {
+                Some(normalize_embedding_target(raw).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Unknown --target value. Use one of: facts, messages, tool_calls, policy_audit, chunks"
+                    )
+                })?)
+            } else {
+                None
+            };
+
+            let revived = mp_core::store::embedding::retry_dead_jobs(&conn, target_norm, limit)?;
+            println!(
+                "  Revived {revived} dead embedding job{} for agent \"{}\"{}.",
+                if revived == 1 { "" } else { "s" },
+                ag.name,
+                target_norm
+                    .map(|t| format!(" (target={t})"))
+                    .unwrap_or_default()
+            );
+        }
+        cli::EmbeddingsCommand::Backfill {
+            agent,
+            model,
+            limit,
+            batch_size,
+            enqueue_only,
+        } => {
+            let ag = resolve_agent(config, agent.as_deref())?;
+            let conn = open_agent_db(config, &ag.name)?;
+
+            let embed_provider =
+                build_embedding_provider_with_override(config, ag, model.as_deref())?;
+            let model_name = model.as_deref().unwrap_or(&ag.embedding.model).to_string();
+            let model_id = mp_core::store::embedding::model_identity(
+                &ag.embedding.provider,
+                &model_name,
+                ag.embedding.dimensions,
+            );
+
+            let queued =
+                mp_core::store::embedding::enqueue_drift_jobs(&conn, &ag.name, &model_id, limit)?;
+            println!(
+                "  Enqueued {queued} backfill candidat{} for agent \"{}\" using model \"{}\".",
+                if queued == 1 { "e" } else { "es" },
+                ag.name,
+                model_name
+            );
+
+            if enqueue_only {
+                return Ok(());
+            }
+
+            let mut total_embedded = 0usize;
+            let mut total_failed = 0usize;
+            let mut rounds = 0usize;
+            let embed_provider_ref = embed_provider.as_ref();
+            loop {
+                rounds += 1;
+                let stats = mp_core::store::embedding::process_embedding_jobs(
+                    &conn,
+                    &ag.name,
+                    &model_id,
+                    batch_size.max(1),
+                    5,
+                    8,
+                    |content| async move {
+                        let vec = embed_provider_ref.embed(&content).await?;
+                        Ok::<Vec<u8>, anyhow::Error>(mp_llm::f32_slice_to_blob(&vec))
+                    },
+                )
+                .await?;
+
+                total_embedded += stats.embedded;
+                total_failed += stats.failed;
+
+                if stats.claimed == 0 {
+                    break;
+                }
+                if rounds >= 10_000 {
+                    break;
+                }
+            }
+
+            let queue = mp_core::store::embedding::queue_stats(&conn)?;
+            println!(
+                "  Backfill run complete: embedded={}, failed={}, queue pending={} retry={} processing={} dead={}.",
+                total_embedded,
+                total_failed,
+                queue.pending,
+                queue.retry,
+                queue.processing,
+                queue.dead
+            );
         }
     }
     Ok(())

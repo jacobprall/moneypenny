@@ -73,6 +73,16 @@ pub struct EmbeddingQueueStats {
     pub dead: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmbeddingQueueTargetStats {
+    pub target: String,
+    pub total: i64,
+    pub pending: i64,
+    pub retry: i64,
+    pub processing: i64,
+    pub dead: i64,
+}
+
 pub trait EmbeddingStore {
     fn target() -> EmbeddingTargetKind;
     fn pending(conn: &Connection, agent_id: &str) -> Result<Vec<(String, String)>>;
@@ -734,6 +744,61 @@ pub fn queue_stats(conn: &Connection) -> Result<EmbeddingQueueStats> {
         processing,
         dead,
     })
+}
+
+pub fn queue_target_stats(conn: &Connection) -> Result<Vec<EmbeddingQueueTargetStats>> {
+    let mut stmt = conn.prepare(
+        "SELECT
+            target,
+            COUNT(*) AS total,
+            SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
+            SUM(CASE WHEN status = 'retry' THEN 1 ELSE 0 END) AS retry,
+            SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing,
+            SUM(CASE WHEN status = 'dead' THEN 1 ELSE 0 END) AS dead
+         FROM embedding_jobs
+         GROUP BY target
+         ORDER BY target ASC",
+    )?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(EmbeddingQueueTargetStats {
+                target: r.get(0)?,
+                total: r.get(1)?,
+                pending: r.get(2)?,
+                retry: r.get(3)?,
+                processing: r.get(4)?,
+                dead: r.get(5)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+pub fn retry_dead_jobs(conn: &Connection, target: Option<&str>, limit: usize) -> Result<usize> {
+    if limit == 0 {
+        return Ok(0);
+    }
+    let now = chrono::Utc::now().timestamp();
+    let changed = conn.execute(
+        "WITH picked AS (
+            SELECT target, row_id
+            FROM embedding_jobs
+            WHERE status = 'dead'
+              AND (?1 IS NULL OR target = ?1)
+            ORDER BY updated_at ASC
+            LIMIT ?2
+         )
+         UPDATE embedding_jobs
+         SET status = 'retry',
+             attempts = 0,
+             last_error = NULL,
+             next_attempt_at = ?3,
+             lease_expires_at = NULL,
+             updated_at = ?3
+         WHERE (target, row_id) IN (SELECT target, row_id FROM picked)",
+        params![target, limit as i64, now],
+    )?;
+    Ok(changed)
 }
 
 /// Queue drifted rows, claim due jobs, embed, persist metadata, and update
