@@ -172,6 +172,10 @@ pub enum Command {
         #[arg(long)]
         agent: Option<String>,
     },
+
+    /// Register Moneypenny with an AI coding agent
+    #[command(subcommand)]
+    Setup(SetupCommand),
 }
 
 // -- Agent subcommands --
@@ -546,5 +550,36 @@ pub enum SessionCommand {
         /// Max sessions to return
         #[arg(long, default_value_t = 20)]
         limit: usize,
+    },
+}
+
+// -- Setup subcommands --
+
+#[derive(Subcommand)]
+pub enum SetupCommand {
+    /// Register Moneypenny as an MCP server in Claude Code
+    ClaudeCode {
+        /// Agent name (defaults to first configured agent)
+        #[arg(long)]
+        agent: Option<String>,
+
+        /// Write to global ~/.claude.json instead of project .mcp.json
+        #[arg(long)]
+        global: bool,
+    },
+
+    /// Register Moneypenny as an MCP server in Cortex Code CLI
+    Cortex {
+        /// Agent name (defaults to first configured agent)
+        #[arg(long)]
+        agent: Option<String>,
+    },
+
+    /// Register Moneypenny as an MCP server in OpenClaw
+    #[command(name = "openclaw")]
+    OpenClaw {
+        /// Agent name (defaults to first configured agent)
+        #[arg(long)]
+        agent: Option<String>,
     },
 }

@@ -90,6 +90,7 @@ async fn main() -> Result<()> {
         Command::Health => cmd_health(&config).await,
         Command::Worker { agent } => cmd_worker(&config, &agent).await,
         Command::Sidecar { agent } => cmd_sidecar(&config, agent).await,
+        Command::Setup(cmd) => cmd_setup(&config, cmd).await,
     }
 }
 
@@ -1152,6 +1153,168 @@ async fn cmd_init(config_path: &str) -> Result<()> {
     println!();
 
     Ok(())
+}
+
+// =========================================================================
+// Setup (MCP registration for AI coding agents)
+// =========================================================================
+
+async fn cmd_setup(config: &Config, cmd: cli::SetupCommand) -> Result<()> {
+    let (agent_override, target) = match &cmd {
+        cli::SetupCommand::ClaudeCode { agent, .. } => (agent.clone(), "claude-code"),
+        cli::SetupCommand::Cortex { agent } => (agent.clone(), "cortex"),
+        cli::SetupCommand::OpenClaw { agent } => (agent.clone(), "openclaw"),
+    };
+
+    let ag = resolve_agent(config, agent_override.as_deref())?;
+    let mp_binary = std::env::current_exe()?
+        .canonicalize()
+        .unwrap_or_else(|_| std::env::current_exe().unwrap());
+    let project_dir = std::env::current_dir()?;
+    let mp_bin_str = mp_binary.to_string_lossy().to_string();
+
+    match cmd {
+        cli::SetupCommand::ClaudeCode { global, .. } => {
+            let mcp_server_entry = serde_json::json!({
+                "command": &mp_bin_str,
+                "args": ["sidecar", "--agent", &ag.name],
+                "cwd": project_dir.to_string_lossy().as_ref()
+            });
+
+            let target_path = if global {
+                home_dir()?.join(".claude.json")
+            } else {
+                project_dir.join(".mcp.json")
+            };
+
+            upsert_json_mcp_config(&target_path, "mcpServers", "moneypenny", mcp_server_entry)?;
+
+            print_setup_success(target, &target_path, &mp_bin_str, &ag.name, &project_dir);
+            println!("  Next steps:");
+            println!("    1. Restart Claude Code (or run /mcp in the REPL to verify)");
+            println!("    2. Ask Claude: \"What Moneypenny tools do you have?\"");
+            println!();
+        }
+
+        cli::SetupCommand::Cortex { .. } => {
+            let status = std::process::Command::new("cortex")
+                .args(["mcp", "add", "moneypenny", &mp_bin_str, "sidecar", "--agent", &ag.name])
+                .status();
+
+            match status {
+                Ok(s) if s.success() => {
+                    println!();
+                    println!("  Moneypenny v{}", env!("CARGO_PKG_VERSION"));
+                    println!();
+                    println!("  \u{2713} Registered via `cortex mcp add`");
+                    println!();
+                    println!("  Binary:  {}", mp_binary.display());
+                    println!("  Agent:   {}", ag.name);
+                    println!("  Project: {}", project_dir.display());
+                    println!();
+                    println!("  Next steps:");
+                    println!("    1. Run `cortex mcp list` to verify");
+                    println!("    2. Ask Cortex: \"What Moneypenny tools do you have?\"");
+                    println!();
+                }
+                Ok(s) => {
+                    anyhow::bail!("`cortex mcp add` exited with status {s}. Is Cortex Code CLI installed?");
+                }
+                Err(e) => {
+                    anyhow::bail!("Failed to run `cortex`: {e}\nInstall Cortex Code CLI first: https://docs.snowflake.com/en/user-guide/cortex-code");
+                }
+            }
+        }
+
+        cli::SetupCommand::OpenClaw { .. } => {
+            let mcp_server_entry = serde_json::json!({
+                "command": &mp_bin_str,
+                "args": ["sidecar", "--agent", &ag.name]
+            });
+
+            let target_path = home_dir()?.join(".clawdbot").join("clawdbot.json");
+            if let Some(parent) = target_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+
+            upsert_json_mcp_config(&target_path, "mcp", "moneypenny", mcp_server_entry)?;
+
+            print_setup_success(target, &target_path, &mp_bin_str, &ag.name, &project_dir);
+            println!("  Next steps:");
+            println!("    1. Restart OpenClaw");
+            println!("    2. Ask your agent: \"What Moneypenny tools do you have?\"");
+            println!();
+        }
+    }
+
+    Ok(())
+}
+
+fn home_dir() -> Result<std::path::PathBuf> {
+    std::env::var("HOME")
+        .map(std::path::PathBuf::from)
+        .map_err(|_| anyhow::anyhow!("could not determine home directory"))
+}
+
+fn upsert_json_mcp_config(
+    path: &std::path::Path,
+    servers_key: &str,
+    server_name: &str,
+    entry: serde_json::Value,
+) -> Result<()> {
+    let mut root: serde_json::Value = if path.exists() {
+        let content = std::fs::read_to_string(path)?;
+        serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    let root_obj = root.as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("{} is not a JSON object", path.display()))?;
+
+    // OpenClaw nests under mcp.servers; Claude Code uses mcpServers directly
+    if servers_key == "mcp" {
+        let mcp = root_obj.entry("mcp").or_insert_with(|| serde_json::json!({}));
+        let mcp_obj = mcp.as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("\"mcp\" is not a JSON object in {}", path.display()))?;
+        let servers = mcp_obj.entry("servers").or_insert_with(|| serde_json::json!({}));
+        servers.as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("\"mcp.servers\" is not a JSON object"))?
+            .insert(server_name.to_string(), entry);
+    } else {
+        if let Some(servers) = root_obj.get_mut(servers_key) {
+            servers.as_object_mut()
+                .ok_or_else(|| anyhow::anyhow!("\"{servers_key}\" is not a JSON object"))?
+                .insert(server_name.to_string(), entry);
+        } else {
+            root_obj.insert(
+                servers_key.to_string(),
+                serde_json::json!({ server_name: entry }),
+            );
+        }
+    }
+
+    let formatted = serde_json::to_string_pretty(&root)?;
+    std::fs::write(path, format!("{formatted}\n"))?;
+    Ok(())
+}
+
+fn print_setup_success(
+    target: &str,
+    config_path: &std::path::Path,
+    binary: &str,
+    agent: &str,
+    project: &std::path::Path,
+) {
+    println!();
+    println!("  Moneypenny v{}", env!("CARGO_PKG_VERSION"));
+    println!();
+    println!("  \u{2713} Registered as MCP server for {target} in {}", config_path.display());
+    println!();
+    println!("  Binary:  {binary}");
+    println!("  Agent:   {agent}");
+    println!("  Project: {}", project.display());
+    println!();
 }
 
 // =========================================================================
