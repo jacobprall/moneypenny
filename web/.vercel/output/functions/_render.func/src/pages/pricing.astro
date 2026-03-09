@@ -1,0 +1,189 @@
+---
+export const prerender = false;
+
+import Base from "../layouts/Base.astro";
+
+const user = Astro.locals.user;
+const checkout = Astro.url.searchParams.get("checkout");
+
+const plans = [
+  {
+    id: "starter",
+    name: "Starter",
+    price: "$19",
+    description: "One agent, persistent memory, policy governance.",
+    features: ["1 agent", "1,000 facts", "500 searches/mo", "GitHub support"],
+  },
+  {
+    id: "pro",
+    name: "Pro",
+    price: "$49",
+    description: "Multiple agents with shared knowledge and sync.",
+    features: [
+      "5 agents",
+      "10,000 facts",
+      "5,000 searches/mo",
+      "CRDT sync",
+      "Priority support",
+    ],
+    popular: true,
+  },
+  {
+    id: "team",
+    name: "Team",
+    price: "$149",
+    description: "Full fleet with advanced governance and audit.",
+    features: [
+      "20 agents",
+      "50,000 facts",
+      "25,000 searches/mo",
+      "CRDT sync",
+      "Advanced policy engine",
+      "Dedicated support",
+    ],
+  },
+];
+---
+
+<Base title="Pricing — Moneypenny">
+  <nav
+    class="fixed top-0 z-50 w-full border-b border-zinc-800/50 bg-[#09090b]/80 backdrop-blur-xl"
+  >
+    <div
+      class="mx-auto flex h-14 max-w-5xl items-center justify-between px-6"
+    >
+      <a href="/" class="text-[15px] font-semibold tracking-tight">moneypenny</a>
+      <div class="flex items-center gap-5">
+        <a href="/docs/" class="text-[13px] text-zinc-400 transition-colors hover:text-zinc-50">Docs</a>
+        <a href="https://github.com/jacobprall/moneypenny" class="text-[13px] text-zinc-400 transition-colors hover:text-zinc-50">GitHub</a>
+        {user ? (
+          <a href="/dashboard" class="rounded-md bg-zinc-50 px-3.5 py-1.5 text-[13px] font-medium text-zinc-950 transition-colors hover:bg-zinc-200">Dashboard</a>
+        ) : (
+          <a href="/login" class="rounded-md bg-zinc-50 px-3.5 py-1.5 text-[13px] font-medium text-zinc-950 transition-colors hover:bg-zinc-200">Sign In</a>
+        )}
+      </div>
+    </div>
+  </nav>
+
+  <section class="pt-32 pb-24 sm:pt-44 sm:pb-32">
+    <div class="mx-auto max-w-5xl px-6">
+      <div class="text-center">
+        <h1 class="text-3xl font-bold tracking-tight sm:text-5xl">
+          Simple, flat-rate pricing
+        </h1>
+        <p class="mt-4 text-[17px] text-zinc-400">
+          Bring your own LLM key. Pay for the platform, not tokens.
+        </p>
+      </div>
+
+      {checkout === "cancelled" && (
+        <div class="mx-auto mt-8 max-w-md rounded-md border border-yellow-900/50 bg-yellow-900/10 px-4 py-3 text-center text-[13px] text-yellow-200/80">
+          Checkout was cancelled. Pick a plan to try again.
+        </div>
+      )}
+
+      <div class="mt-16 grid gap-6 lg:grid-cols-3">
+        {plans.map((plan) => (
+          <div
+            class:list={[
+              "relative flex flex-col rounded-lg border p-8",
+              plan.popular
+                ? "border-zinc-600 bg-zinc-900/80"
+                : "border-zinc-800 bg-zinc-900/30",
+            ]}
+          >
+            {plan.popular && (
+              <span class="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-zinc-50 px-3 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-950">
+                Popular
+              </span>
+            )}
+            <h3 class="text-lg font-semibold">{plan.name}</h3>
+            <p class="mt-1 text-[13px] text-zinc-400">{plan.description}</p>
+
+            <div class="mt-6">
+              <span class="text-4xl font-bold tracking-tight">{plan.price}</span>
+              <span class="text-[13px] text-zinc-500">/month</span>
+            </div>
+
+            <ul class="mt-8 flex-1 space-y-3">
+              {plan.features.map((f) => (
+                <li class="flex items-center gap-2 text-[13px] text-zinc-300">
+                  <svg class="h-3.5 w-3.5 shrink-0 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                  {f}
+                </li>
+              ))}
+            </ul>
+
+            <button
+              class:list={[
+                "checkout-btn mt-8 w-full rounded-md px-4 py-2.5 text-sm font-medium transition-colors",
+                plan.popular
+                  ? "bg-zinc-50 text-zinc-950 hover:bg-zinc-200"
+                  : "border border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:text-zinc-50",
+              ]}
+              data-plan={plan.id}
+            >
+              Get started
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <p class="mt-12 text-center text-[13px] text-zinc-500">
+        All plans include BYOK (bring your own key) for LLM access.
+        You pay your LLM provider directly.
+      </p>
+    </div>
+  </section>
+</Base>
+
+<script>
+  import { createSupabaseBrowser } from "../lib/supabase";
+
+  const buttons = document.querySelectorAll(".checkout-btn");
+
+  buttons.forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const plan = (btn as HTMLElement).dataset.plan;
+
+      const supabase = createSupabaseBrowser();
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session) {
+        window.location.href = `/login?redirect=/pricing`;
+        return;
+      }
+
+      (btn as HTMLButtonElement).disabled = true;
+      (btn as HTMLButtonElement).textContent = "Redirecting...";
+
+      try {
+        const res = await fetch(
+          `${import.meta.env.PUBLIC_SUPABASE_URL}/functions/v1/create-checkout`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({ plan }),
+          }
+        );
+
+        const data = await res.json();
+        if (data.url) {
+          window.location.href = data.url;
+        } else {
+          throw new Error(data.error ?? "Failed to create checkout");
+        }
+      } catch (err) {
+        console.error(err);
+        (btn as HTMLButtonElement).disabled = false;
+        (btn as HTMLButtonElement).textContent = "Get started";
+        alert("Something went wrong. Please try again.");
+      }
+    });
+  });
+</script>
