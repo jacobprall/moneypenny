@@ -4,7 +4,7 @@
 
 MPQ is a SQL-subset query language that serves as the single interface to Moneypenny. Every platform operation — memory, search, policy, jobs, audit, ingestion, agent admin — is expressible as an MPQ expression through one MCP tool.
 
-The 12 domain tools (`moneypenny.memory`, `moneypenny.policy`, etc.) are replaced by a single `moneypenny.query` tool. The tool description teaches the agent the syntax at runtime via patterns and examples.
+The 12 domain tools (`moneypenny.memory`, `moneypenny.policy`, etc.) have been removed from the MCP surface. The agent interacts through a single `moneypenny.query` tool. The tool description teaches the agent the syntax at runtime via patterns and examples. Legacy domain tool calls are still routed internally for graceful degradation.
 
 
 ## Core Principles
@@ -467,7 +467,8 @@ All audit records carry `session_id` and `correlation_id` (trace_id) for cross-r
 - Two-layer policy: top-level `sql_content` + per-statement verb-specific checks
 - Audit context with session/trace propagation
 - Hand-rolled recursive descent parser in `mp-core/src/dsl/`
-- `moneypenny.query` registered alongside domain tools (domain tools retained for backward compat)
+- Domain tools removed from MCP surface; `moneypenny.query` is the sole primary tool (+ `capabilities` + `execute` fallback)
+- Legacy domain tool routing preserved internally for graceful degradation
 
 ### v2
 - OR, NOT, and parenthesized filter grouping
