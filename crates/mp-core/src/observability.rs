@@ -212,6 +212,7 @@ mod tests {
             &conn,
             &crate::store::facts::NewFact {
                 agent_id: "a".into(),
+                scope: "shared".into(),
                 content: "test".into(),
                 summary: "t".into(),
                 pointer: "p".into(),

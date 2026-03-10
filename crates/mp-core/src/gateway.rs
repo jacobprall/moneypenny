@@ -11,6 +11,7 @@ pub struct AgentEntry {
     pub id: String,
     pub name: String,
     pub persona: Option<String>,
+    pub tags: Option<String>,
     pub trust_level: String,
     pub llm_provider: String,
     pub llm_model: Option<String>,
@@ -30,7 +31,7 @@ pub enum AgentStatus {
 /// Load all agents from the metadata database.
 pub fn list_agents(meta_conn: &Connection) -> anyhow::Result<Vec<AgentEntry>> {
     let mut stmt = meta_conn.prepare(
-        "SELECT id, name, persona, trust_level, llm_provider, llm_model, db_path, sync_enabled
+        "SELECT id, name, persona, tags, trust_level, llm_provider, llm_model, db_path, sync_enabled
          FROM agents ORDER BY name",
     )?;
     let agents = stmt
@@ -39,11 +40,12 @@ pub fn list_agents(meta_conn: &Connection) -> anyhow::Result<Vec<AgentEntry>> {
                 id: r.get(0)?,
                 name: r.get(1)?,
                 persona: r.get(2)?,
-                trust_level: r.get(3)?,
-                llm_provider: r.get(4)?,
-                llm_model: r.get(5)?,
-                db_path: r.get(6)?,
-                sync_enabled: r.get::<_, i64>(7).unwrap_or(1) != 0,
+                tags: r.get(3)?,
+                trust_level: r.get(4)?,
+                llm_provider: r.get(5)?,
+                llm_model: r.get(6)?,
+                db_path: r.get(7)?,
+                sync_enabled: r.get::<_, i64>(8).unwrap_or(1) != 0,
                 status: AgentStatus::Stopped,
             })
         })?
@@ -55,7 +57,7 @@ pub fn list_agents(meta_conn: &Connection) -> anyhow::Result<Vec<AgentEntry>> {
 pub fn get_agent(meta_conn: &Connection, name: &str) -> anyhow::Result<Option<AgentEntry>> {
     let entry = meta_conn
         .query_row(
-            "SELECT id, name, persona, trust_level, llm_provider, llm_model, db_path, sync_enabled
+            "SELECT id, name, persona, tags, trust_level, llm_provider, llm_model, db_path, sync_enabled
          FROM agents WHERE name = ?1",
             [name],
             |r| {
@@ -63,11 +65,12 @@ pub fn get_agent(meta_conn: &Connection, name: &str) -> anyhow::Result<Option<Ag
                     id: r.get(0)?,
                     name: r.get(1)?,
                     persona: r.get(2)?,
-                    trust_level: r.get(3)?,
-                    llm_provider: r.get(4)?,
-                    llm_model: r.get(5)?,
-                    db_path: r.get(6)?,
-                    sync_enabled: r.get::<_, i64>(7).unwrap_or(1) != 0,
+                    tags: r.get(3)?,
+                    trust_level: r.get(4)?,
+                    llm_provider: r.get(5)?,
+                    llm_model: r.get(6)?,
+                    db_path: r.get(7)?,
+                    sync_enabled: r.get::<_, i64>(8).unwrap_or(1) != 0,
                     status: AgentStatus::Stopped,
                 })
             },
@@ -218,8 +221,8 @@ mod tests {
 
     fn insert_agent(conn: &Connection, name: &str) {
         conn.execute(
-            "INSERT INTO agents (id, name, trust_level, llm_provider, db_path, created_at)
-             VALUES (?1, ?2, 'standard', 'local', ':memory:', 1)",
+            "INSERT INTO agents (id, name, trust_level, llm_provider, db_path, tags, created_at)
+             VALUES (?1, ?2, 'standard', 'local', ':memory:', NULL, 1)",
             params![name, name],
         )
         .unwrap();

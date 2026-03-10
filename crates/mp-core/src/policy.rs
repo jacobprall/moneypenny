@@ -1,6 +1,57 @@
 use rusqlite::{Connection, params};
 use uuid::Uuid;
 
+/// Canonical resource name constructors.
+///
+/// Every policy resource follows the convention `{domain}:{identifier}`.
+/// Use these helpers at every `PolicyRequest` callsite to keep patterns
+/// consistent with the names stored in `resource_pattern`.
+pub mod resource {
+    /// A tool resource: `tool:{name}` (e.g. `tool:shell_exec`).
+    pub fn tool(name: &str) -> String {
+        format!("tool:{name}")
+    }
+
+    /// A job resource with a specific name: `job:{name}`.
+    pub fn job(name: &str) -> String {
+        format!("job:{name}")
+    }
+
+    /// A knowledge resource, optionally qualified: `knowledge` or `knowledge:{subtype}`.
+    pub fn knowledge(subtype: Option<&str>) -> String {
+        match subtype {
+            Some(s) => format!("knowledge:{s}"),
+            None => "knowledge".into(),
+        }
+    }
+
+    pub const CONVERSATION: &str = "conversation";
+    pub const KNOWLEDGE: &str = "knowledge";
+    pub const MEMORY: &str = "memory";
+    pub const FACT: &str = "fact";
+    pub const POLICY: &str = "policy";
+    pub const AUDIT: &str = "audit";
+    pub const ACTIVITY: &str = "activity";
+    pub const SESSION: &str = "session";
+    pub const AGENT: &str = "agent";
+    pub const JS_TOOL: &str = "js_tool";
+    pub const SKILL: &str = "skill";
+    pub const JOB: &str = "job";
+    pub const JOB_RUN: &str = "job_run";
+    pub const JOB_SPEC: &str = "job_spec";
+    pub const POLICY_SPEC: &str = "policy_spec";
+    pub const EVENTS: &str = "events";
+    pub const EMBEDDING_QUEUE: &str = "embedding_queue";
+    pub const SHELL: &str = "tool:shell";
+    pub const MPQ: &str = "mpq";
+
+    /// Extract the identifier portion after the colon, if present.
+    /// `"tool:shell_exec"` → `"shell_exec"`, `"shell_exec"` → `"shell_exec"`.
+    pub fn extract_name(resource: &str) -> &str {
+        resource.split(':').last().unwrap_or(resource)
+    }
+}
+
 /// Result of a policy evaluation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
@@ -243,10 +294,7 @@ fn eval_rate_limit(
     let window = cfg["window_seconds"].as_i64().unwrap_or(300);
     let since = chrono::Utc::now().timestamp() - window;
 
-    let resource_pattern = format!(
-        "%{}%",
-        req.resource.split(':').last().unwrap_or(req.resource)
-    );
+    let resource_pattern = format!("%{}%", resource::extract_name(req.resource));
 
     let count: i64 = conn
         .query_row(
@@ -339,8 +387,8 @@ fn eval_time_window(config_json: &str) -> anyhow::Result<bool> {
 /// Generate a SQL WHERE clause fragment from policies for data-level filtering.
 /// For example, fact scope filtering based on agent identity.
 pub fn generate_sql_filter(conn: &Connection, agent_id: &str) -> anyhow::Result<String> {
-    // Base filter: agent sees its own private facts + all shared facts
-    let mut clauses: Vec<String> = vec![format!("(agent_id = '{agent_id}')")];
+    // Base filter: agent sees shared facts plus all of its own rows.
+    let mut clauses: Vec<String> = vec![format!("(scope = 'shared' OR agent_id = '{agent_id}')")];
 
     // Check for confidence threshold policies
     let threshold: Option<f64> = conn

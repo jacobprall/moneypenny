@@ -1,5 +1,6 @@
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 // =========================================================================
 // Types
@@ -315,17 +316,17 @@ pub fn has_running_run(conn: &Connection, job_id: &str) -> anyhow::Result<bool> 
 // =========================================================================
 
 /// Find all due jobs that should run now.
-pub fn poll_due_jobs(conn: &Connection, now: i64) -> anyhow::Result<Vec<Job>> {
+pub fn poll_due_jobs(conn: &Connection, agent_id: &str, now: i64) -> anyhow::Result<Vec<Job>> {
     let mut stmt = conn.prepare(
         "SELECT id, agent_id, name, description, schedule, next_run_at, last_run_at,
                 job_type, payload, max_retries, retry_delay_ms, timeout_ms, overlap_policy,
                 status, enabled, created_at, updated_at
          FROM jobs
-         WHERE enabled = 1 AND status = 'active' AND next_run_at <= ?1
+         WHERE enabled = 1 AND status = 'active' AND agent_id = ?1 AND next_run_at <= ?2
          ORDER BY next_run_at ASC",
     )?;
     let jobs = stmt
-        .query_map([now], row_to_job)?
+        .query_map(params![agent_id, now], row_to_job)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(jobs)
 }
@@ -348,10 +349,11 @@ pub fn dispatch_job(
     }
 
     // Policy check
+    let job_resource = crate::policy::resource::job(&job.name);
     let policy_req = crate::policy::PolicyRequest {
         actor: &job.agent_id,
         action: "execute",
-        resource: &format!("job:{}", job.name),
+        resource: &job_resource,
         sql_content: None,
         channel: None,
         arguments: None,
@@ -418,12 +420,33 @@ pub fn dispatch_job(
 
 fn update_schedule(conn: &Connection, job_id: &str) -> anyhow::Result<()> {
     let now = chrono::Utc::now().timestamp();
-    // Advance next_run_at by a fixed interval (simplified; real impl parses cron)
+    let schedule: String =
+        conn.query_row("SELECT schedule FROM jobs WHERE id = ?1", [job_id], |r| r.get(0))?;
+
+    let next_run_at = compute_next_run_at(&schedule, now).unwrap_or(now + 60);
     conn.execute(
-        "UPDATE jobs SET last_run_at = ?1, next_run_at = next_run_at + 60, updated_at = ?1 WHERE id = ?2",
-        params![now, job_id],
+        "UPDATE jobs SET last_run_at = ?1, next_run_at = ?2, updated_at = ?1 WHERE id = ?3",
+        params![now, next_run_at, job_id],
     )?;
     Ok(())
+}
+
+fn compute_next_run_at(schedule: &str, now_ts: i64) -> Option<i64> {
+    let normalized = normalize_cron_expr(schedule);
+    let parsed = cron::Schedule::from_str(&normalized).ok()?;
+    let now_dt = chrono::DateTime::<chrono::Utc>::from_timestamp(now_ts, 0)?;
+    parsed.after(&now_dt).next().map(|dt| dt.timestamp())
+}
+
+fn normalize_cron_expr(schedule: &str) -> String {
+    // Support standard 5-field cron expressions used by jobs (`m h dom mon dow`)
+    // by prepending a seconds field for the Rust `cron` crate parser.
+    let parts = schedule.split_whitespace().count();
+    if parts == 5 {
+        format!("0 {schedule}")
+    } else {
+        schedule.to_string()
+    }
 }
 
 /// Execute a job based on its `job_type`.
@@ -505,6 +528,7 @@ pub fn list_runs(
 mod tests {
     use super::*;
     use crate::{db, schema};
+    use chrono::{Datelike, TimeZone, Timelike};
 
     fn setup() -> Connection {
         let conn = db::open_memory().unwrap();
@@ -661,7 +685,7 @@ mod tests {
         )
         .unwrap();
 
-        let due = poll_due_jobs(&conn, 1000).unwrap();
+        let due = poll_due_jobs(&conn, "a", 1000).unwrap();
         assert_eq!(due.len(), 1);
         assert_eq!(due[0].name, "daily-digest");
     }
@@ -679,7 +703,7 @@ mod tests {
         .unwrap();
         pause_job(&conn, &id).unwrap();
 
-        let due = poll_due_jobs(&conn, 1000).unwrap();
+        let due = poll_due_jobs(&conn, "a", 1000).unwrap();
         assert!(due.is_empty());
     }
 
@@ -697,7 +721,7 @@ mod tests {
         conn.execute("UPDATE jobs SET enabled = 0 WHERE id = ?1", [&id])
             .unwrap();
 
-        let due = poll_due_jobs(&conn, 1000).unwrap();
+        let due = poll_due_jobs(&conn, "a", 1000).unwrap();
         assert!(due.is_empty());
     }
 
@@ -725,6 +749,48 @@ mod tests {
 
         let updated = get_job(&conn, &id).unwrap().unwrap();
         assert!(updated.last_run_at.is_some());
+    }
+
+    #[test]
+    fn compute_next_run_at_supports_five_field_cron() {
+        let now = chrono::Utc
+            .with_ymd_and_hms(2026, 3, 7, 9, 3, 10)
+            .single()
+            .unwrap()
+            .timestamp();
+        let next = compute_next_run_at("*/5 * * * *", now).unwrap();
+        let next_dt = chrono::DateTime::<chrono::Utc>::from_timestamp(next, 0).unwrap();
+        assert_eq!(next_dt.minute() % 5, 0);
+        assert!(next > now);
+    }
+
+    #[test]
+    fn compute_next_run_at_daily_schedule() {
+        let now = chrono::Utc
+            .with_ymd_and_hms(2026, 3, 7, 10, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp();
+        let next = compute_next_run_at("0 9 * * *", now).unwrap();
+        let next_dt = chrono::DateTime::<chrono::Utc>::from_timestamp(next, 0).unwrap();
+        assert_eq!(next_dt.hour(), 9);
+        assert_eq!(next_dt.minute(), 0);
+        assert!(next > now);
+    }
+
+    #[test]
+    fn compute_next_run_at_weekly_schedule() {
+        let now = chrono::Utc
+            .with_ymd_and_hms(2026, 3, 7, 10, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp();
+        let next = compute_next_run_at("0 0 * * MON", now).unwrap();
+        let next_dt = chrono::DateTime::<chrono::Utc>::from_timestamp(next, 0).unwrap();
+        assert_eq!(next_dt.weekday(), chrono::Weekday::Mon);
+        assert_eq!(next_dt.hour(), 0);
+        assert_eq!(next_dt.minute(), 0);
+        assert!(next > now);
     }
 
     #[test]

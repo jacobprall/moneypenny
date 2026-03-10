@@ -74,7 +74,7 @@ pub fn turn(
     let msg_policy = crate::policy::PolicyRequest {
         actor: &config.agent_id,
         action: "respond",
-        resource: "conversation",
+        resource: crate::policy::resource::CONVERSATION,
         sql_content: Some(user_message),
         channel: None,
         arguments: None,

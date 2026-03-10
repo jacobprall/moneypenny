@@ -6,8 +6,6 @@ import Base from "../layouts/Base.astro";
 const user = Astro.locals.user!;
 const supabase = Astro.locals.supabase;
 
-const checkoutStatus = Astro.url.searchParams.get("checkout");
-
 const { data: tenant } = await supabase
   .from("tenants")
   .select("*")
@@ -35,25 +33,12 @@ const { data: tenant } = await supabase
     <div class="mx-auto max-w-3xl px-6">
       <h1 class="text-2xl font-bold tracking-tight sm:text-3xl">Dashboard</h1>
 
-      {checkoutStatus === "success" && (
-        <div class="mt-6 rounded-md border border-emerald-900/50 bg-emerald-900/10 px-4 py-3 text-[13px] text-emerald-200/80">
-          Payment successful. Your agent is being provisioned -- this usually takes under 60 seconds.
-          Refresh this page to check status.
-        </div>
-      )}
-
       {!tenant || tenant.status === "pending" ? (
         <div class="mt-8 rounded-lg border border-zinc-800 bg-zinc-900/30 p-8">
-          <h2 class="text-lg font-semibold">No active plan</h2>
+          <h2 class="text-lg font-semibold">Agent not provisioned</h2>
           <p class="mt-2 text-[13px] text-zinc-400">
-            Choose a plan to get your Moneypenny agent provisioned.
+            Your Moneypenny agent hasn't been set up yet. Check back soon or contact support.
           </p>
-          <a
-            href="/pricing"
-            class="mt-6 inline-block rounded-md bg-zinc-50 px-4 py-2.5 text-sm font-medium text-zinc-950 transition-colors hover:bg-zinc-200"
-          >
-            View Plans
-          </a>
         </div>
       ) : tenant.status === "provision_failed" ? (
         <div class="mt-8 rounded-lg border border-red-900/50 bg-red-900/10 p-8">
@@ -78,11 +63,6 @@ const { data: tenant } = await supabase
             </div>
 
             <dl class="mt-6 space-y-4">
-              <div>
-                <dt class="text-[11px] font-medium uppercase tracking-wider text-zinc-500">Plan</dt>
-                <dd class="mt-1 text-sm capitalize text-zinc-200">{tenant.plan}</dd>
-              </div>
-
               <div>
                 <dt class="text-[11px] font-medium uppercase tracking-wider text-zinc-500">Fly App</dt>
                 <dd class="mt-1 font-mono text-sm text-zinc-200">

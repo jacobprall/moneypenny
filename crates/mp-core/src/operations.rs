@@ -205,7 +205,7 @@ fn op_job_create(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Op
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "create",
-            resource: "job",
+            resource: crate::policy::resource::JOB,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -260,7 +260,7 @@ fn op_job_list(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Oper
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "list",
-            resource: "job",
+            resource: crate::policy::resource::JOB,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -308,7 +308,7 @@ fn op_job_run(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Opera
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "run",
-            resource: "job",
+            resource: crate::policy::resource::JOB,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -361,7 +361,7 @@ fn op_job_history(conn: &Connection, req: &OperationRequest) -> anyhow::Result<O
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "list",
-            resource: "job_run",
+            resource: crate::policy::resource::JOB_RUN,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -408,7 +408,7 @@ fn op_job_pause(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Ope
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "pause",
-            resource: "job",
+            resource: crate::policy::resource::JOB,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -444,7 +444,7 @@ fn op_job_resume(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Op
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "resume",
-            resource: "job",
+            resource: crate::policy::resource::JOB,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -547,7 +547,7 @@ fn op_job_spec_plan(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "plan",
-            resource: "job_spec",
+            resource: crate::policy::resource::JOB_SPEC,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -620,7 +620,7 @@ fn op_job_spec_confirm(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "confirm",
-            resource: "job_spec",
+            resource: crate::policy::resource::JOB_SPEC,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -714,7 +714,7 @@ fn op_job_spec_apply(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "apply",
-            resource: "job_spec",
+            resource: crate::policy::resource::JOB_SPEC,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -832,7 +832,7 @@ fn op_policy_add(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Op
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "add",
-            resource: "policy",
+            resource: crate::policy::resource::POLICY,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -878,7 +878,7 @@ fn op_policy_list(conn: &Connection, req: &OperationRequest) -> anyhow::Result<O
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "list",
-            resource: "policy",
+            resource: crate::policy::resource::POLICY,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -944,7 +944,7 @@ fn op_policy_disable(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "disable",
-            resource: "policy",
+            resource: crate::policy::resource::POLICY,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -1087,7 +1087,7 @@ fn op_policy_spec_plan(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "plan",
-            resource: "policy_spec",
+            resource: crate::policy::resource::POLICY_SPEC,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -1173,7 +1173,7 @@ fn op_policy_spec_confirm(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "confirm",
-            resource: "policy_spec",
+            resource: crate::policy::resource::POLICY_SPEC,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -1262,7 +1262,7 @@ fn op_policy_spec_apply(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "apply",
-            resource: "policy_spec",
+            resource: crate::policy::resource::POLICY_SPEC,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -1439,7 +1439,7 @@ fn op_activity_query(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "query",
-            resource: "activity",
+            resource: crate::policy::resource::ACTIVITY,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -1616,13 +1616,19 @@ fn op_audit_query(conn: &Connection, req: &OperationRequest) -> anyhow::Result<O
     let resource = req.args["resource"].as_str().map(|s| s.to_string());
     let session_id = req.args["session_id"].as_str().map(|s| s.to_string());
     let query = req.args["query"].as_str().map(|q| format!("%{q}%"));
+    let since = req.args["since"]
+        .as_i64()
+        .or_else(|| req.args["from"].as_i64());
+    let until = req.args["until"]
+        .as_i64()
+        .or_else(|| req.args["to"].as_i64());
 
     let decision = evaluate_policy_with_request_context(
         conn,
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "query",
-            resource: "audit",
+            resource: crate::policy::resource::AUDIT,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -1645,12 +1651,16 @@ fn op_audit_query(conn: &Connection, req: &OperationRequest) -> anyhow::Result<O
              ?6 IS NULL OR
              reason LIKE ?6 OR actor LIKE ?6 OR action LIKE ?6 OR resource LIKE ?6 OR correlation_id LIKE ?6
            )
+           AND (?7 IS NULL OR created_at >= ?7)
+           AND (?8 IS NULL OR created_at <= ?8)
          ORDER BY created_at DESC
-         LIMIT ?7",
+         LIMIT ?9",
     )?;
     let rows = stmt
         .query_map(
-            rusqlite::params![effect, actor, action, resource, session_id, query, limit],
+            rusqlite::params![
+                effect, actor, action, resource, session_id, query, since, until, limit
+            ],
             |r| {
                 Ok(serde_json::json!({
                     "id": r.get::<_, String>(0)?,
@@ -1699,7 +1709,7 @@ fn op_audit_append(conn: &Connection, req: &OperationRequest) -> anyhow::Result<
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "append",
-            resource: "audit",
+            resource: crate::policy::resource::AUDIT,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -1765,7 +1775,7 @@ fn op_session_resolve(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "resolve",
-            resource: "session",
+            resource: crate::policy::resource::SESSION,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -1831,7 +1841,7 @@ fn op_session_list(conn: &Connection, req: &OperationRequest) -> anyhow::Result<
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "list",
-            resource: "session",
+            resource: crate::policy::resource::SESSION,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -1892,7 +1902,7 @@ fn op_js_tool_add(conn: &Connection, req: &OperationRequest) -> anyhow::Result<O
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "add",
-            resource: "js_tool",
+            resource: crate::policy::resource::JS_TOOL,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -1943,7 +1953,7 @@ fn op_js_tool_list(conn: &Connection, req: &OperationRequest) -> anyhow::Result<
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "list",
-            resource: "js_tool",
+            resource: crate::policy::resource::JS_TOOL,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -1991,7 +2001,7 @@ fn op_js_tool_delete(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "delete",
-            resource: "js_tool",
+            resource: crate::policy::resource::JS_TOOL,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -2038,18 +2048,23 @@ fn op_knowledge_ingest(
     let path = req.args["path"].as_str();
     let mut title = req.args["title"].as_str().map(str::to_string);
     let mut metadata = req.args["metadata"].as_str().map(str::to_string);
+    let scope = req.args["scope"].as_str().unwrap_or("shared");
 
     let is_url = path.map_or(false, |p| {
         p.starts_with("http://") || p.starts_with("https://")
     });
-    let resource = if is_url { "knowledge:url" } else { "knowledge" };
+    let knowledge_resource = if is_url {
+        crate::policy::resource::knowledge(Some("url"))
+    } else {
+        crate::policy::resource::knowledge(None)
+    };
 
     let decision = evaluate_policy_with_request_context(
         conn,
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "ingest",
-            resource,
+            resource: &knowledge_resource,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: if is_url { path } else { None },
@@ -2082,12 +2097,14 @@ fn op_knowledge_ingest(
     let content = content
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("missing 'content'"))?;
-    let (doc_id, chunk_count) = crate::store::knowledge::ingest(
+    let (doc_id, chunk_count) = crate::store::knowledge::ingest_scoped(
         conn,
         path,
         title.as_deref(),
         content,
         metadata.as_deref(),
+        Some(&req.actor.agent_id),
+        Some(scope),
     )?;
 
     Ok(OperationResponse {
@@ -2096,7 +2113,8 @@ fn op_knowledge_ingest(
         message: "knowledge ingested".into(),
         data: serde_json::json!({
             "document_id": doc_id,
-            "chunks_created": chunk_count
+            "chunks_created": chunk_count,
+            "scope": scope
         }),
         policy: Some(policy_meta(&decision)),
         audit: AuditMeta { recorded: true },
@@ -2172,7 +2190,7 @@ fn op_knowledge_search(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "search",
-            resource: "knowledge",
+            resource: crate::policy::resource::KNOWLEDGE,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -2214,7 +2232,7 @@ fn op_knowledge_list(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "list",
-            resource: "knowledge",
+            resource: crate::policy::resource::KNOWLEDGE,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -2231,6 +2249,8 @@ fn op_knowledge_list(
         .map(|d| {
             serde_json::json!({
                 "id": d.id,
+                "agent_id": d.agent_id,
+                "scope": d.scope,
                 "title": d.title,
                 "path": d.path,
                 "content_hash": d.content_hash,
@@ -2265,7 +2285,7 @@ fn op_memory_search(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "search",
-            resource: "memory",
+            resource: crate::policy::resource::MEMORY,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -2276,7 +2296,15 @@ fn op_memory_search(
         return Ok(denied_response(&decision));
     }
 
-    let rows = crate::search::search(conn, query, agent_id, limit, None, None)?;
+    let query_embedding = parse_query_embedding_blob(&req.args);
+    let rows = crate::search::search(
+        conn,
+        query,
+        agent_id,
+        limit,
+        None,
+        query_embedding.as_deref(),
+    )?;
     let data = rows
         .into_iter()
         .map(|r| {
@@ -2299,6 +2327,27 @@ fn op_memory_search(
     })
 }
 
+fn parse_query_embedding_blob(args: &serde_json::Value) -> Option<Vec<u8>> {
+    // Optional private arg injected by runtime callers for hybrid retrieval.
+    let arr = args
+        .get("__query_embedding")
+        .and_then(|v| v.as_array())
+        .or_else(|| args.get("query_embedding").and_then(|v| v.as_array()))?;
+    if arr.is_empty() || arr.len() > 8192 {
+        return None;
+    }
+
+    let mut blob = Vec::with_capacity(arr.len() * std::mem::size_of::<f32>());
+    for n in arr {
+        let value = n.as_f64()?;
+        if !value.is_finite() {
+            return None;
+        }
+        blob.extend_from_slice(&(value as f32).to_le_bytes());
+    }
+    Some(blob)
+}
+
 fn op_memory_fact_add(
     conn: &Connection,
     req: &OperationRequest,
@@ -2310,6 +2359,7 @@ fn op_memory_fact_add(
     let pointer = req.args["pointer"].as_str().unwrap_or(content);
     let confidence = req.args["confidence"].as_f64().unwrap_or(1.0);
     let agent_id = req.args["agent_id"].as_str().unwrap_or(&req.actor.agent_id);
+    let scope = req.args["scope"].as_str().unwrap_or("shared");
     let reason = req.args["reason"]
         .as_str()
         .or(Some("added via canonical operation"));
@@ -2320,7 +2370,7 @@ fn op_memory_fact_add(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "add",
-            resource: "fact",
+            resource: crate::policy::resource::FACT,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -2335,6 +2385,7 @@ fn op_memory_fact_add(
         conn,
         &crate::store::facts::NewFact {
             agent_id: agent_id.to_string(),
+            scope: scope.to_string(),
             content: content.to_string(),
             summary: summary.to_string(),
             pointer: pointer.to_string(),
@@ -2354,6 +2405,7 @@ fn op_memory_fact_add(
         data: serde_json::json!({
             "id": id,
             "agent_id": agent_id,
+            "scope": scope,
             "summary": summary,
             "pointer": pointer,
             "confidence": confidence
@@ -2385,7 +2437,7 @@ fn op_memory_fact_update(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "update",
-            resource: "fact",
+            resource: crate::policy::resource::FACT,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -2444,7 +2496,7 @@ fn op_memory_fact_get(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "read",
-            resource: "fact",
+            resource: crate::policy::resource::FACT,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -2469,6 +2521,27 @@ fn op_memory_fact_get(
         }
     };
 
+    let trust_level = resolve_fact_read_trust_level(conn, req);
+    let fact_scope = fact
+        .scope
+        .parse::<crate::gateway::FactScope>()
+        .unwrap_or(crate::gateway::FactScope::Shared);
+    if !crate::gateway::can_access_fact(
+        &trust_level,
+        &fact_scope,
+        &fact.agent_id,
+        &req.actor.agent_id,
+    ) {
+        return Ok(OperationResponse {
+            ok: false,
+            code: "not_found".into(),
+            message: format!("fact '{fact_id}' not found"),
+            data: serde_json::json!({}),
+            policy: Some(policy_meta(&decision)),
+            audit: AuditMeta { recorded: true },
+        });
+    }
+
     Ok(OperationResponse {
         ok: true,
         code: "ok".into(),
@@ -2479,6 +2552,7 @@ fn op_memory_fact_get(
             "content": fact.content,
             "summary": fact.summary,
             "pointer": fact.pointer,
+            "scope": fact.scope,
             "confidence": fact.confidence,
             "version": fact.version,
             "context_compact": fact.context_compact,
@@ -2489,6 +2563,38 @@ fn op_memory_fact_get(
         policy: Some(policy_meta(&decision)),
         audit: AuditMeta { recorded: true },
     })
+}
+
+fn resolve_fact_read_trust_level(conn: &Connection, req: &OperationRequest) -> String {
+    // Private/internal override for platform-controlled calls.
+    if let Some(level) = req
+        .args
+        .get("__trust_level")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return level.to_string();
+    }
+
+    // Backward-compatible public key (soft-deprecated).
+    if let Some(level) = req
+        .args
+        .get("trust_level")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return level.to_string();
+    }
+
+    // Best-effort lookup from local metadata if available.
+    conn.query_row(
+        "SELECT trust_level FROM agents WHERE name = ?1 OR id = ?1 LIMIT 1",
+        [req.actor.agent_id.as_str()],
+        |r| r.get::<_, String>(0),
+    )
+    .unwrap_or_else(|_| "standard".to_string())
 }
 
 fn op_memory_fact_compaction_reset(
@@ -2507,7 +2613,7 @@ fn op_memory_fact_compaction_reset(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "update",
-            resource: "fact",
+            resource: crate::policy::resource::FACT,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -2575,7 +2681,7 @@ fn op_skill_add(conn: &Connection, req: &OperationRequest) -> anyhow::Result<Ope
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "add",
-            resource: "skill",
+            resource: crate::policy::resource::SKILL,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -2613,7 +2719,7 @@ fn op_skill_promote(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "promote",
-            resource: "skill",
+            resource: crate::policy::resource::SKILL,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -2660,7 +2766,7 @@ fn op_fact_delete(conn: &Connection, req: &OperationRequest) -> anyhow::Result<O
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "delete",
-            resource: "fact",
+            resource: crate::policy::resource::FACT,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -2710,13 +2816,14 @@ fn op_agent_create(conn: &Connection, req: &OperationRequest) -> anyhow::Result<
     let llm_provider = req.args["llm_provider"].as_str().unwrap_or("local");
     let llm_model = req.args["llm_model"].as_str();
     let persona = req.args["persona"].as_str();
+    let tags = req.args["tags"].as_str();
 
     let decision = evaluate_policy_with_request_context(
         conn,
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "create",
-            resource: "agent",
+            resource: crate::policy::resource::AGENT,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -2752,9 +2859,9 @@ fn op_agent_create(conn: &Connection, req: &OperationRequest) -> anyhow::Result<
     let now = chrono::Utc::now().timestamp();
     let id = uuid::Uuid::new_v4().to_string();
     meta_conn.execute(
-        "INSERT INTO agents (id, name, persona, trust_level, llm_provider, llm_model, db_path, sync_enabled, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8)",
-        rusqlite::params![id, name, persona, trust_level, llm_provider, llm_model, db_path.to_string_lossy(), now],
+        "INSERT INTO agents (id, name, persona, tags, trust_level, llm_provider, llm_model, db_path, sync_enabled, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9)",
+        rusqlite::params![id, name, persona, tags, trust_level, llm_provider, llm_model, db_path.to_string_lossy(), now],
     )?;
 
     Ok(OperationResponse {
@@ -2784,7 +2891,7 @@ fn op_agent_delete(conn: &Connection, req: &OperationRequest) -> anyhow::Result<
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "delete",
-            resource: "agent",
+            resource: crate::policy::resource::AGENT,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -2846,7 +2953,7 @@ fn op_agent_config(conn: &Connection, req: &OperationRequest) -> anyhow::Result<
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "config",
-            resource: "agent",
+            resource: crate::policy::resource::AGENT,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -2906,6 +3013,12 @@ fn op_agent_config(conn: &Connection, req: &OperationRequest) -> anyhow::Result<
                 rusqlite::params![as_int, name],
             )?;
         }
+        "tags" => {
+            meta_conn.execute(
+                "UPDATE agents SET tags = ?1 WHERE name = ?2",
+                rusqlite::params![value, name],
+            )?;
+        }
         _ => {
             return Ok(fail_response(
                 "invalid_args",
@@ -2942,7 +3055,7 @@ fn op_ingest_events(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "ingest",
-            resource: "events",
+            resource: crate::policy::resource::EVENTS,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -3128,7 +3241,7 @@ fn op_ingest_replay(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "ingest",
-            resource: "events",
+            resource: crate::policy::resource::EVENTS,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -3190,7 +3303,7 @@ fn op_embedding_status(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "status",
-            resource: "embedding_queue",
+            resource: crate::policy::resource::EMBEDDING_QUEUE,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -3243,7 +3356,7 @@ fn op_embedding_retry_dead(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "retry_dead",
-            resource: "embedding_queue",
+            resource: crate::policy::resource::EMBEDDING_QUEUE,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -3281,7 +3394,7 @@ fn op_embedding_backfill_enqueue(
         &crate::policy::PolicyRequest {
             actor: &req.actor.agent_id,
             action: "backfill_enqueue",
-            resource: "embedding_queue",
+            resource: crate::policy::resource::EMBEDDING_QUEUE,
             sql_content: None,
             channel: req.actor.channel.as_deref(),
             arguments: None,
@@ -4815,6 +4928,66 @@ mod tests {
     }
 
     #[test]
+    fn memory_search_accepts_query_embedding_arg() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, created_at)
+             VALUES ('allow-all', 'allow all', 10, 'allow', '*', '*', '*', 1)",
+            [],
+        )
+        .unwrap();
+
+        let add = execute(
+            &conn,
+            &OperationRequest {
+                op: "memory.fact.add".into(),
+                op_version: Some("v1".into()),
+                request_id: Some("corr-memory-add-embed".into()),
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "content": "Kafka backs event ingestion",
+                    "summary": "event ingestion on kafka",
+                    "pointer": "kafka-ingestion"
+                }),
+            },
+        )
+        .unwrap();
+        assert!(add.ok);
+
+        let search = execute(
+            &conn,
+            &OperationRequest {
+                op: "memory.search".into(),
+                op_version: Some("v1".into()),
+                request_id: Some("corr-memory-search-embed".into()),
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "query": "kafka",
+                    "limit": 10,
+                    "__query_embedding": [1.0, 0.0, 0.0]
+                }),
+            },
+        )
+        .unwrap();
+        assert!(search.ok);
+        assert!(!search.data.as_array().unwrap().is_empty());
+    }
+
+    #[test]
     fn memory_fact_get_and_compaction_reset_work() {
         let conn = setup();
         conn.execute(
@@ -5024,6 +5197,76 @@ mod tests {
         assert!(query.ok);
         let rows = query.data.as_array().unwrap();
         assert!(!rows.is_empty());
+    }
+
+    #[test]
+    fn audit_query_supports_since_until_filters() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, created_at)
+             VALUES ('allow-all', 'allow all', 10, 'allow', '*', '*', '*', 1)",
+            [],
+        )
+        .unwrap();
+
+        let mk_append = |created_at: i64, reason: &str| {
+            execute(
+                &conn,
+                &OperationRequest {
+                    op: "audit.append".into(),
+                    op_version: Some("v1".into()),
+                    request_id: Some(format!("corr-audit-append-{created_at}")),
+                    idempotency_key: None,
+                    actor: ActorContext {
+                        agent_id: "main".into(),
+                        tenant_id: None,
+                        user_id: None,
+                        channel: Some("cli".into()),
+                    },
+                    context: OperationContext::default(),
+                    args: serde_json::json!({
+                        "actor": "agent:main",
+                        "action": "test.append",
+                        "resource": "audit",
+                        "effect": "audited",
+                        "reason": reason,
+                        "created_at": created_at
+                    }),
+                },
+            )
+            .unwrap();
+        };
+
+        mk_append(1_700_000_000, "older entry");
+        mk_append(1_700_000_100, "newer entry");
+
+        let query = execute(
+            &conn,
+            &OperationRequest {
+                op: "audit.query".into(),
+                op_version: Some("v1".into()),
+                request_id: Some("corr-audit-query-window".into()),
+                idempotency_key: None,
+                actor: ActorContext {
+                    agent_id: "main".into(),
+                    tenant_id: None,
+                    user_id: None,
+                    channel: Some("cli".into()),
+                },
+                context: OperationContext::default(),
+                args: serde_json::json!({
+                    "since": 1_700_000_050i64,
+                    "until": 1_700_000_200i64,
+                    "limit": 10
+                }),
+            },
+        )
+        .unwrap();
+
+        assert!(query.ok);
+        let rows = query.data.as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["reason"].as_str(), Some("newer entry"));
     }
 
     #[test]
@@ -6097,6 +6340,7 @@ mod tests {
             &conn,
             &crate::store::facts::NewFact {
                 agent_id: "main".into(),
+                scope: "shared".into(),
                 content: "fact".into(),
                 summary: "fact".into(),
                 pointer: "fact".into(),

@@ -124,7 +124,7 @@ pub fn process_candidate(
     let policy_req = crate::policy::PolicyRequest {
         actor: agent_id,
         action: "store_fact",
-        resource: "facts",
+        resource: crate::policy::resource::FACT,
         sql_content: Some(&candidate.content),
         channel: None,
         arguments: None,
@@ -147,6 +147,7 @@ pub fn process_candidate(
                 conn,
                 &crate::store::facts::NewFact {
                     agent_id: agent_id.to_string(),
+                    scope: "shared".to_string(),
                     content: candidate.content.clone(),
                     summary: candidate.summary.clone(),
                     pointer: candidate.pointer.clone(),
@@ -329,6 +330,7 @@ mod tests {
             &conn,
             &store::facts::NewFact {
                 agent_id: "a".into(),
+                scope: "shared".into(),
                 content: "ORDERS uses soft deletes".into(),
                 summary: "ORDERS soft deletes".into(),
                 pointer: "ORDERS: soft-delete".into(),
@@ -376,6 +378,7 @@ mod tests {
             &conn,
             &store::facts::NewFact {
                 agent_id: "a".into(),
+                scope: "shared".into(),
                 content: "the quick brown fox jumps over the lazy dog".into(),
                 summary: "fox/dog".into(),
                 pointer: "fox-dog".into(),
@@ -405,6 +408,7 @@ mod tests {
             &conn,
             &store::facts::NewFact {
                 agent_id: "a".into(),
+                scope: "shared".into(),
                 content: "completely unrelated topic about elephants".into(),
                 summary: "elephants".into(),
                 pointer: "elephants".into(),
@@ -467,6 +471,7 @@ mod tests {
             &conn,
             &store::facts::NewFact {
                 agent_id: "a".into(),
+                scope: "shared".into(),
                 content: "the quick brown fox jumps over the lazy dog in the park".into(),
                 summary: "fox/dog".into(),
                 pointer: "fox-dog".into(),
@@ -568,6 +573,7 @@ mod tests {
             &conn,
             &store::facts::NewFact {
                 agent_id: "a".into(),
+                scope: "shared".into(),
                 content: "deployment uses kubernetes pods containers".into(),
                 summary: "k8s deployment".into(),
                 pointer: "k8s".into(),

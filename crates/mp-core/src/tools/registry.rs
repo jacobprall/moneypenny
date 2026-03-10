@@ -221,10 +221,11 @@ pub fn execute(
     let start = std::time::Instant::now();
 
     // 1. Policy check
+    let tool_resource = crate::policy::resource::tool(tool_name);
     let request = crate::policy::PolicyRequest {
         actor: agent_id,
         action: "call",
-        resource: tool_name,
+        resource: &tool_resource,
         sql_content: None,
         channel: None,
         arguments: None,
@@ -1107,7 +1108,7 @@ mod tests {
         // Insert a deny policy for shell_exec at higher priority than allow-all
         conn.execute(
             "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, message, created_at)
-             VALUES ('p1', 'no-shell', 100, 'deny', '*', 'call', 'shell_exec', 'shell access denied', 1)",
+             VALUES ('p1', 'no-shell', 100, 'deny', '*', 'call', 'tool:shell_exec', 'shell access denied', 1)",
             [],
         ).unwrap();
 
@@ -1331,7 +1332,7 @@ mod tests {
 
         conn.execute(
             "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, message, created_at)
-             VALUES ('deny-facts', 'no fact writes', 100, 'deny', '*', 'call', 'fact_add', 'fact writes disabled', 1)",
+             VALUES ('deny-facts', 'no fact writes', 100, 'deny', '*', 'call', 'tool:fact_add', 'fact writes disabled', 1)",
             [],
         ).unwrap();
 
@@ -1493,5 +1494,35 @@ mod tests {
             seen.contains("overridden"),
             "args should be overridden: {seen}"
         );
+    }
+
+    #[test]
+    fn tool_glob_pattern_blocks_via_execute() {
+        let conn = setup();
+        insert_allow_all(&conn);
+        register_builtins(&conn).unwrap();
+        let sid = store::log::create_session(&conn, "a", None).unwrap();
+        let mid = store::log::append_message(&conn, &sid, "assistant", "calling tool").unwrap();
+
+        conn.execute(
+            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, message, created_at)
+             VALUES ('deny-shell', 'no shell', 100, 'deny', '*', 'call', 'tool:shell_*', 'shell blocked', 1)",
+            [],
+        ).unwrap();
+
+        let result = execute(
+            &conn,
+            "a",
+            &sid,
+            &mid,
+            "shell_exec",
+            r#"{"command":"echo hi"}"#,
+            &|_name, _args| panic!("executor should not be called"),
+            None,
+        )
+        .unwrap();
+
+        assert!(!result.success, "tool:shell_* pattern should block shell_exec");
+        assert!(result.output.contains("shell blocked"));
     }
 }

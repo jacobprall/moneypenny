@@ -7,6 +7,7 @@ const MIN_CONTEXT_COMPACT_WORDS: usize = 5;
 pub struct Fact {
     pub id: String,
     pub agent_id: String,
+    pub scope: String,
     pub content: String,
     pub summary: String,
     pub pointer: String,
@@ -47,6 +48,7 @@ pub struct FactAuditEntry {
 
 pub struct NewFact {
     pub agent_id: String,
+    pub scope: String,
     pub content: String,
     pub summary: String,
     pub pointer: String,
@@ -61,9 +63,9 @@ pub fn add(conn: &Connection, fact: &NewFact, reason: Option<&str>) -> anyhow::R
     let now = chrono::Utc::now().timestamp();
 
     conn.execute(
-        "INSERT INTO facts (id, agent_id, content, summary, pointer, keywords, source_message_id, confidence, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-        params![id, fact.agent_id, fact.content, fact.summary, fact.pointer, fact.keywords, fact.source_message_id, fact.confidence, now, now],
+        "INSERT INTO facts (id, agent_id, scope, content, summary, pointer, keywords, source_message_id, confidence, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params![id, fact.agent_id, fact.scope, fact.content, fact.summary, fact.pointer, fact.keywords, fact.source_message_id, fact.confidence, now, now],
     )?;
 
     let audit_id = Uuid::new_v4().to_string();
@@ -136,7 +138,7 @@ pub fn delete(conn: &Connection, fact_id: &str, reason: Option<&str>) -> anyhow:
 /// Get a fact by ID. Returns None if not found.
 pub fn get(conn: &Connection, fact_id: &str) -> anyhow::Result<Option<Fact>> {
     let mut stmt = conn.prepare(
-        "SELECT id, agent_id, content, summary, pointer, content_embedding, summary_embedding,
+        "SELECT id, agent_id, scope, content, summary, pointer, content_embedding, summary_embedding,
                 pointer_embedding, keywords, source_message_id, confidence,
                 created_at, updated_at, superseded_at, version,
                 context_compact, compaction_level, last_compacted_at
@@ -148,22 +150,23 @@ pub fn get(conn: &Connection, fact_id: &str) -> anyhow::Result<Option<Fact>> {
             Ok(Fact {
                 id: r.get(0)?,
                 agent_id: r.get(1)?,
-                content: r.get(2)?,
-                summary: r.get(3)?,
-                pointer: r.get(4)?,
-                content_embedding: r.get(5)?,
-                summary_embedding: r.get(6)?,
-                pointer_embedding: r.get(7)?,
-                keywords: r.get(8)?,
-                source_message_id: r.get(9)?,
-                confidence: r.get(10)?,
-                created_at: r.get(11)?,
-                updated_at: r.get(12)?,
-                superseded_at: r.get(13)?,
-                version: r.get(14)?,
-                context_compact: r.get(15)?,
-                compaction_level: r.get(16)?,
-                last_compacted_at: r.get(17)?,
+                scope: r.get(2)?,
+                content: r.get(3)?,
+                summary: r.get(4)?,
+                pointer: r.get(5)?,
+                content_embedding: r.get(6)?,
+                summary_embedding: r.get(7)?,
+                pointer_embedding: r.get(8)?,
+                keywords: r.get(9)?,
+                source_message_id: r.get(10)?,
+                confidence: r.get(11)?,
+                created_at: r.get(12)?,
+                updated_at: r.get(13)?,
+                superseded_at: r.get(14)?,
+                version: r.get(15)?,
+                context_compact: r.get(16)?,
+                compaction_level: r.get(17)?,
+                last_compacted_at: r.get(18)?,
             })
         })
         .ok();
@@ -174,7 +177,7 @@ pub fn get(conn: &Connection, fact_id: &str) -> anyhow::Result<Option<Fact>> {
 /// Get all active (non-superseded) facts for an agent.
 pub fn list_active(conn: &Connection, agent_id: &str) -> anyhow::Result<Vec<Fact>> {
     let mut stmt = conn.prepare(
-        "SELECT id, agent_id, content, summary, pointer, content_embedding, summary_embedding,
+        "SELECT id, agent_id, scope, content, summary, pointer, content_embedding, summary_embedding,
                 pointer_embedding, keywords, source_message_id, confidence,
                 created_at, updated_at, superseded_at, version,
                 context_compact, compaction_level, last_compacted_at
@@ -187,22 +190,23 @@ pub fn list_active(conn: &Connection, agent_id: &str) -> anyhow::Result<Vec<Fact
             Ok(Fact {
                 id: r.get(0)?,
                 agent_id: r.get(1)?,
-                content: r.get(2)?,
-                summary: r.get(3)?,
-                pointer: r.get(4)?,
-                content_embedding: r.get(5)?,
-                summary_embedding: r.get(6)?,
-                pointer_embedding: r.get(7)?,
-                keywords: r.get(8)?,
-                source_message_id: r.get(9)?,
-                confidence: r.get(10)?,
-                created_at: r.get(11)?,
-                updated_at: r.get(12)?,
-                superseded_at: r.get(13)?,
-                version: r.get(14)?,
-                context_compact: r.get(15)?,
-                compaction_level: r.get(16)?,
-                last_compacted_at: r.get(17)?,
+                scope: r.get(2)?,
+                content: r.get(3)?,
+                summary: r.get(4)?,
+                pointer: r.get(5)?,
+                content_embedding: r.get(6)?,
+                summary_embedding: r.get(7)?,
+                pointer_embedding: r.get(8)?,
+                keywords: r.get(9)?,
+                source_message_id: r.get(10)?,
+                confidence: r.get(11)?,
+                created_at: r.get(12)?,
+                updated_at: r.get(13)?,
+                superseded_at: r.get(14)?,
+                version: r.get(15)?,
+                context_compact: r.get(16)?,
+                compaction_level: r.get(17)?,
+                last_compacted_at: r.get(18)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -439,6 +443,7 @@ mod tests {
     fn sample() -> NewFact {
         NewFact {
             agent_id: "agent-main".into(),
+            scope: "shared".into(),
             content: "The ORDERS table uses soft deletes via deleted_at".into(),
             summary: "ORDERS uses soft deletes; filter WHERE deleted_at IS NULL".into(),
             pointer: "ORDERS: soft-delete filter".into(),
@@ -463,6 +468,7 @@ mod tests {
             "ORDERS uses soft deletes; filter WHERE deleted_at IS NULL"
         );
         assert_eq!(fact.pointer, "ORDERS: soft-delete filter");
+        assert_eq!(fact.scope, "shared");
         assert_eq!(fact.confidence, 1.0);
         assert_eq!(fact.version, 1);
         assert!(fact.superseded_at.is_none());
@@ -562,6 +568,7 @@ mod tests {
             &conn,
             &NewFact {
                 agent_id: "agent-main".into(),
+                scope: "shared".into(),
                 content: "Second fact".into(),
                 summary: "Second".into(),
                 pointer: "second".into(),
@@ -647,6 +654,7 @@ mod tests {
             &conn,
             &NewFact {
                 agent_id: "agent-main".into(),
+                scope: "shared".into(),
                 content: "Second".into(),
                 summary: "s".into(),
                 pointer: "p".into(),

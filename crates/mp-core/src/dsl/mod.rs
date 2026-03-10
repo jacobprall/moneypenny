@@ -116,7 +116,7 @@ pub fn run(
         &crate::policy::PolicyRequest {
             actor: &ctx.agent_id,
             action: "query",
-            resource: "mpq",
+            resource: crate::policy::resource::MPQ,
             sql_content: Some(expression),
             channel: ctx.channel.as_deref(),
             arguments: None,

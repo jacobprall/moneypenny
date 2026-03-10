@@ -6,6 +6,7 @@ pub mod db;
 pub mod dsl;
 pub mod encryption;
 pub mod extraction;
+pub mod fleet;
 pub mod gateway;
 pub mod ingest;
 pub mod mcp;

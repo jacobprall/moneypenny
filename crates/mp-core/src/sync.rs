@@ -26,7 +26,18 @@ use tracing::{debug, info, warn};
 // ---------------------------------------------------------------------------
 
 /// Default tables that get CRDT metadata on every new agent DB.
-pub const DEFAULT_SYNC_TABLES: &[&str] = &["facts", "fact_links", "skills", "policies"];
+pub const DEFAULT_SYNC_TABLES: &[&str] = &[
+    "facts",
+    "fact_links",
+    "skills",
+    "policies",
+    "documents",
+    "chunks",
+    "edges",
+    "jobs",
+];
+
+const MAX_SYNCED_CHUNK_CHARS: i64 = 20_000;
 
 // ---------------------------------------------------------------------------
 // Status types
@@ -181,6 +192,8 @@ pub fn status(conn: &Connection, tables: &[&str]) -> anyhow::Result<SyncStatus> 
 pub fn local_sync_bidirectional(
     conn_a: &Connection,
     conn_b: &Connection,
+    agent_a: &str,
+    agent_b: &str,
     tables: &[&str],
 ) -> anyhow::Result<SyncResult> {
     let tmp_dir = std::env::temp_dir();
@@ -189,8 +202,10 @@ pub fn local_sync_bidirectional(
 
     // Phase 1: A → B
     let sent = exchange_payload(conn_a, conn_b, &a_to_b, tables)?;
+    enforce_local_sync_constraints(conn_b, agent_b)?;
     // Phase 2: B → A
     let received = exchange_payload(conn_b, conn_a, &b_to_a, tables)?;
+    enforce_local_sync_constraints(conn_a, agent_a)?;
 
     let _ = std::fs::remove_file(&a_to_b);
     let _ = std::fs::remove_file(&b_to_a);
@@ -202,10 +217,12 @@ pub fn local_sync_bidirectional(
 pub fn local_sync_push(
     source: &Connection,
     target: &Connection,
+    target_agent: &str,
     tables: &[&str],
 ) -> anyhow::Result<SyncResult> {
     let tmp = std::env::temp_dir().join("mp_sync_push.bin");
     let sent = exchange_payload(source, target, &tmp, tables)?;
+    enforce_local_sync_constraints(target, target_agent)?;
     let _ = std::fs::remove_file(&tmp);
     Ok(SyncResult { sent, received: 0 })
 }
@@ -214,12 +231,127 @@ pub fn local_sync_push(
 pub fn local_sync_pull(
     local: &Connection,
     source: &Connection,
+    local_agent: &str,
     tables: &[&str],
 ) -> anyhow::Result<SyncResult> {
     let tmp = std::env::temp_dir().join("mp_sync_pull.bin");
     let received = exchange_payload(source, local, &tmp, tables)?;
+    enforce_local_sync_constraints(local, local_agent)?;
     let _ = std::fs::remove_file(&tmp);
     Ok(SyncResult { sent: 0, received })
+}
+
+fn enforce_local_sync_constraints(conn: &Connection, local_agent: &str) -> anyhow::Result<()> {
+    enforce_private_fact_locality(conn, local_agent)?;
+    enforce_document_scope_and_size(conn, local_agent)?;
+    enforce_job_run_locality(conn, local_agent)?;
+    Ok(())
+}
+
+fn enforce_private_fact_locality(conn: &Connection, local_agent: &str) -> anyhow::Result<()> {
+    let has_scope: bool = conn
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1
+                FROM pragma_table_info('facts')
+                WHERE name = 'scope'
+            )",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(false);
+    if !has_scope {
+        return Ok(());
+    }
+
+    conn.execute(
+        "DELETE FROM facts
+         WHERE scope = 'private' AND agent_id <> ?1",
+        params![local_agent],
+    )?;
+    // Cleanup orphaned links after dropping private facts not owned locally.
+    conn.execute(
+        "DELETE FROM fact_links
+         WHERE source_id NOT IN (SELECT id FROM facts)
+            OR target_id NOT IN (SELECT id FROM facts)",
+        [],
+    )?;
+    Ok(())
+}
+
+fn has_table_column(conn: &Connection, table: &str, column: &str) -> bool {
+    conn.query_row(
+        "SELECT EXISTS(
+            SELECT 1
+            FROM pragma_table_info(?1)
+            WHERE name = ?2
+        )",
+        params![table, column],
+        |r| r.get::<_, bool>(0),
+    )
+    .unwrap_or(false)
+}
+
+fn enforce_document_scope_and_size(conn: &Connection, local_agent: &str) -> anyhow::Result<()> {
+    let has_documents = has_table_column(conn, "documents", "id");
+    let has_chunks = has_table_column(conn, "chunks", "id");
+    if !has_documents && !has_chunks {
+        return Ok(());
+    }
+
+    let has_scope = has_table_column(conn, "documents", "scope");
+    let has_owner = has_table_column(conn, "documents", "agent_id");
+    if has_documents && has_scope && has_owner {
+        conn.execute(
+            "DELETE FROM documents
+             WHERE scope = 'private' AND agent_id <> ?1",
+            params![local_agent],
+        )?;
+    }
+
+    // Size policy: discard oversized remote chunks to keep sync payload practical.
+    if has_chunks && has_owner {
+        conn.execute(
+            "DELETE FROM chunks
+             WHERE document_id IN (
+                 SELECT d.id
+                 FROM documents d
+                 WHERE d.agent_id <> ?1
+             )
+               AND length(content) > ?2",
+            params![local_agent, MAX_SYNCED_CHUNK_CHARS],
+        )?;
+    } else if has_chunks {
+        conn.execute(
+            "DELETE FROM chunks WHERE length(content) > ?1",
+            params![MAX_SYNCED_CHUNK_CHARS],
+        )?;
+    }
+
+    if has_chunks && has_documents {
+        conn.execute(
+            "DELETE FROM chunks
+             WHERE document_id NOT IN (SELECT id FROM documents)",
+            [],
+        )?;
+        conn.execute(
+            "DELETE FROM documents
+             WHERE id NOT IN (SELECT document_id FROM chunks)",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+fn enforce_job_run_locality(conn: &Connection, local_agent: &str) -> anyhow::Result<()> {
+    if !has_table_column(conn, "job_runs", "agent_id") {
+        return Ok(());
+    }
+    conn.execute(
+        "DELETE FROM job_runs WHERE agent_id <> ?1",
+        params![local_agent],
+    )?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -361,6 +493,51 @@ mod tests {
                 enabled INTEGER NOT NULL DEFAULT 1,
                 rule_type TEXT NOT NULL DEFAULT 'static',
                 rule_config TEXT
+            );
+            CREATE TABLE documents (
+                id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL DEFAULT '',
+                scope TEXT NOT NULL DEFAULT 'shared',
+                path TEXT,
+                title TEXT,
+                content_hash TEXT NOT NULL DEFAULT '',
+                metadata TEXT,
+                created_at INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE chunks (
+                id TEXT PRIMARY KEY,
+                document_id TEXT NOT NULL,
+                content TEXT NOT NULL,
+                position INTEGER DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE edges (
+                source_id TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                relation TEXT NOT NULL,
+                PRIMARY KEY (source_id, target_id, relation)
+            );
+            CREATE TABLE jobs (
+                id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                schedule TEXT NOT NULL,
+                next_run_at INTEGER NOT NULL,
+                job_type TEXT NOT NULL DEFAULT 'tool',
+                payload TEXT NOT NULL DEFAULT '{}',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE job_runs (
+                id TEXT PRIMARY KEY,
+                job_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                started_at INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                created_at INTEGER NOT NULL DEFAULT 0
             );",
         )
         .unwrap();
@@ -437,7 +614,7 @@ mod tests {
             )
             .unwrap();
 
-        let result = local_sync_push(&source, &target, DEFAULT_SYNC_TABLES).unwrap();
+        let result = local_sync_push(&source, &target, "agent-b", DEFAULT_SYNC_TABLES).unwrap();
         let count: i64 = target
             .query_row("SELECT COUNT(*) FROM facts WHERE id='fact-1'", [], |r| {
                 r.get(0)

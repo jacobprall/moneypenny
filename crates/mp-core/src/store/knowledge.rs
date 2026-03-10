@@ -7,6 +7,8 @@ const DOC_MAX_CHARS: usize = 120_000;
 #[derive(Debug, Clone)]
 pub struct Document {
     pub id: String,
+    pub agent_id: String,
+    pub scope: String,
     pub path: Option<String>,
     pub title: Option<String>,
     pub content_hash: String,
@@ -48,6 +50,19 @@ pub fn ingest(
     content: &str,
     metadata: Option<&str>,
 ) -> anyhow::Result<(String, usize)> {
+    ingest_scoped(conn, path, title, content, metadata, None, None)
+}
+
+/// Ingest a document with optional owner/scope metadata for sync controls.
+pub fn ingest_scoped(
+    conn: &Connection,
+    path: Option<&str>,
+    title: Option<&str>,
+    content: &str,
+    metadata: Option<&str>,
+    agent_id: Option<&str>,
+    scope: Option<&str>,
+) -> anyhow::Result<(String, usize)> {
     let normalized_content = normalize_ingest_content(content);
     if normalized_content.trim().is_empty() {
         anyhow::bail!("ingest content is empty after normalization");
@@ -57,10 +72,13 @@ pub fn ingest(
     let doc_id = Uuid::new_v4().to_string();
     let hash = simple_hash(&normalized_content);
 
+    let owner = agent_id.unwrap_or_default();
+    let visibility = scope.unwrap_or("shared");
+
     conn.execute(
-        "INSERT INTO documents (id, path, title, content_hash, metadata, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![doc_id, path, title, hash, metadata, now, now],
+        "INSERT INTO documents (id, agent_id, scope, path, title, content_hash, metadata, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![doc_id, owner, visibility, path, title, hash, metadata, now, now],
     )?;
 
     let chunks = chunk_markdown(&normalized_content);
@@ -275,49 +293,53 @@ fn apply_content_budget(content: &str, max_chars: usize) -> String {
     truncated
 }
 
-/// Get a document by ID.
-pub fn get_document(conn: &Connection, doc_id: &str) -> anyhow::Result<Option<Document>> {
-    let doc = conn
-        .query_row(
-            "SELECT id, path, title, content_hash, metadata, created_at, updated_at
-         FROM documents WHERE id = ?1",
-            [doc_id],
-            |r| {
-                Ok(Document {
-                    id: r.get(0)?,
-                    path: r.get(1)?,
-                    title: r.get(2)?,
-                    content_hash: r.get(3)?,
-                    metadata: r.get(4)?,
-                    created_at: r.get(5)?,
-                    updated_at: r.get(6)?,
-                })
-            },
-        )
-        .ok();
-    Ok(doc)
-}
-
 /// List all documents.
 pub fn list_documents(conn: &Connection) -> anyhow::Result<Vec<Document>> {
     let mut stmt = conn.prepare(
-        "SELECT id, path, title, content_hash, metadata, created_at, updated_at
+        "SELECT id, agent_id, scope, path, title, content_hash, metadata, created_at, updated_at
          FROM documents ORDER BY created_at DESC",
     )?;
     let docs = stmt
         .query_map([], |r| {
             Ok(Document {
                 id: r.get(0)?,
-                path: r.get(1)?,
-                title: r.get(2)?,
-                content_hash: r.get(3)?,
-                metadata: r.get(4)?,
-                created_at: r.get(5)?,
-                updated_at: r.get(6)?,
+                agent_id: r.get(1)?,
+                scope: r.get(2)?,
+                path: r.get(3)?,
+                title: r.get(4)?,
+                content_hash: r.get(5)?,
+                metadata: r.get(6)?,
+                created_at: r.get(7)?,
+                updated_at: r.get(8)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(docs)
+}
+
+/// Get a document by ID.
+pub fn get_document(conn: &Connection, doc_id: &str) -> anyhow::Result<Option<Document>> {
+    let doc = conn
+        .query_row(
+            "SELECT id, agent_id, scope, path, title, content_hash, metadata, created_at, updated_at
+         FROM documents WHERE id = ?1",
+            [doc_id],
+            |r| {
+                Ok(Document {
+                    id: r.get(0)?,
+                    agent_id: r.get(1)?,
+                    scope: r.get(2)?,
+                    path: r.get(3)?,
+                    title: r.get(4)?,
+                    content_hash: r.get(5)?,
+                    metadata: r.get(6)?,
+                    created_at: r.get(7)?,
+                    updated_at: r.get(8)?,
+                })
+            },
+        )
+        .ok();
+    Ok(doc)
 }
 
 /// Get chunks for a document, ordered by position.

@@ -487,6 +487,7 @@ mod tests {
             &conn,
             &store::facts::NewFact {
                 agent_id: "a".into(),
+                scope: "shared".into(),
                 content: "ORDERS uses soft deletes with deleted_at audit and compliance history"
                     .into(),
                 summary: "ORDERS soft deletes".into(),
@@ -664,6 +665,7 @@ mod tests {
                 &conn,
                 &store::facts::NewFact {
                     agent_id: "a".into(),
+                    scope: "shared".into(),
                     content: format!("Fact {i} with some longer content to take up space"),
                     summary: format!("Fact {i}"),
                     pointer: format!("fact-{i}"),

@@ -5,8 +5,8 @@
 /// - **Metadata DB**: one per gateway, contains agent registry + routing
 use rusqlite::Connection;
 
-const AGENT_SCHEMA_VERSION: i64 = 13;
-const METADATA_SCHEMA_VERSION: i64 = 1;
+const AGENT_SCHEMA_VERSION: i64 = 16;
+const METADATA_SCHEMA_VERSION: i64 = 2;
 
 pub fn init_agent_db(conn: &Connection) -> anyhow::Result<()> {
     let current = get_schema_version(conn);
@@ -79,6 +79,29 @@ pub fn init_agent_db(conn: &Connection) -> anyhow::Result<()> {
         set_schema_version(conn, 13)?;
     }
 
+    if current < 14 {
+        conn.execute_batch(AGENT_SCHEMA_V14)?;
+        set_schema_version(conn, 14)?;
+    }
+
+    if current < 15 {
+        conn.execute_batch(AGENT_SCHEMA_V15)?;
+        set_schema_version(conn, 15)?;
+    }
+
+    if current < 16 {
+        if !table_has_column(conn, "documents", "agent_id") {
+            conn.execute_batch("ALTER TABLE documents ADD COLUMN agent_id TEXT NOT NULL DEFAULT '';")?;
+        }
+        if !table_has_column(conn, "documents", "scope") {
+            conn.execute_batch(
+                "ALTER TABLE documents ADD COLUMN scope TEXT NOT NULL DEFAULT 'shared';",
+            )?;
+        }
+        conn.execute_batch(AGENT_SCHEMA_V16)?;
+        set_schema_version(conn, 16)?;
+    }
+
     Ok(())
 }
 
@@ -123,9 +146,18 @@ pub fn init_metadata_db(conn: &Connection) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    conn.execute_batch(METADATA_SCHEMA_V1)?;
+    if current < 1 {
+        conn.execute_batch(METADATA_SCHEMA_V1)?;
+        set_schema_version(conn, 1)?;
+    }
 
-    set_schema_version(conn, METADATA_SCHEMA_VERSION)?;
+    if current < 2 {
+        if !table_has_column(conn, "agents", "tags") {
+            conn.execute_batch(METADATA_SCHEMA_V2)?;
+        }
+        set_schema_version(conn, 2)?;
+    }
+
     Ok(())
 }
 
@@ -231,6 +263,8 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 -- Knowledge store: documents, chunks, edges, skills
 CREATE TABLE IF NOT EXISTS documents (
     id                  TEXT PRIMARY KEY,
+    agent_id            TEXT NOT NULL DEFAULT '',
+    scope               TEXT NOT NULL DEFAULT 'shared',
     path                TEXT,
     title               TEXT,
     content_hash        TEXT NOT NULL,
@@ -745,6 +779,202 @@ CREATE INDEX IF NOT EXISTS idx_activity_log_conversation
 ON activity_log (conversation_id, created_at);
 ";
 
+const AGENT_SCHEMA_V14: &str = "
+-- Cross-store FTS5 indexes for hybrid lexical retrieval
+CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
+    id UNINDEXED,
+    content,
+    summary,
+    pointer,
+    keywords
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+    id UNINDEXED,
+    session_id UNINDEXED,
+    content
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS tool_calls_fts USING fts5(
+    id UNINDEXED,
+    session_id UNINDEXED,
+    tool_name,
+    arguments,
+    result,
+    status,
+    policy_decision
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS policy_audit_fts USING fts5(
+    id UNINDEXED,
+    actor UNINDEXED,
+    session_id UNINDEXED,
+    action,
+    resource,
+    effect,
+    reason
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+    id UNINDEXED,
+    document_id UNINDEXED,
+    content,
+    summary
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS scratch_fts USING fts5(
+    id UNINDEXED,
+    session_id UNINDEXED,
+    key,
+    content
+);
+
+-- Backfill existing rows
+INSERT INTO facts_fts (id, content, summary, pointer, keywords)
+SELECT id, content, summary, pointer, COALESCE(keywords, '')
+FROM facts
+WHERE superseded_at IS NULL;
+
+INSERT INTO messages_fts (id, session_id, content)
+SELECT id, session_id, content FROM messages;
+
+INSERT INTO tool_calls_fts (id, session_id, tool_name, arguments, result, status, policy_decision)
+SELECT id, session_id, tool_name, COALESCE(arguments, ''), COALESCE(result, ''), COALESCE(status, ''), COALESCE(policy_decision, '')
+FROM tool_calls;
+
+INSERT INTO policy_audit_fts (id, actor, session_id, action, resource, effect, reason)
+SELECT id, actor, COALESCE(session_id, ''), action, resource, effect, COALESCE(reason, '')
+FROM policy_audit;
+
+INSERT INTO chunks_fts (id, document_id, content, summary)
+SELECT id, document_id, content, COALESCE(summary, '')
+FROM chunks;
+
+INSERT INTO scratch_fts (id, session_id, key, content)
+SELECT id, session_id, key, content
+FROM scratch;
+
+-- Facts triggers
+CREATE TRIGGER IF NOT EXISTS trg_facts_fts_insert AFTER INSERT ON facts BEGIN
+  INSERT INTO facts_fts (id, content, summary, pointer, keywords)
+  SELECT NEW.id, NEW.content, NEW.summary, NEW.pointer, COALESCE(NEW.keywords, '')
+  WHERE NEW.superseded_at IS NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_facts_fts_update AFTER UPDATE ON facts BEGIN
+  DELETE FROM facts_fts WHERE id = OLD.id;
+  INSERT INTO facts_fts (id, content, summary, pointer, keywords)
+  SELECT NEW.id, NEW.content, NEW.summary, NEW.pointer, COALESCE(NEW.keywords, '')
+  WHERE NEW.superseded_at IS NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_facts_fts_delete AFTER DELETE ON facts BEGIN
+  DELETE FROM facts_fts WHERE id = OLD.id;
+END;
+
+-- Messages triggers
+CREATE TRIGGER IF NOT EXISTS trg_messages_fts_insert AFTER INSERT ON messages BEGIN
+  INSERT INTO messages_fts (id, session_id, content)
+  VALUES (NEW.id, NEW.session_id, NEW.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_messages_fts_update AFTER UPDATE ON messages BEGIN
+  DELETE FROM messages_fts WHERE id = OLD.id;
+  INSERT INTO messages_fts (id, session_id, content)
+  VALUES (NEW.id, NEW.session_id, NEW.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_messages_fts_delete AFTER DELETE ON messages BEGIN
+  DELETE FROM messages_fts WHERE id = OLD.id;
+END;
+
+-- Tool calls triggers
+CREATE TRIGGER IF NOT EXISTS trg_tool_calls_fts_insert AFTER INSERT ON tool_calls BEGIN
+  INSERT INTO tool_calls_fts (id, session_id, tool_name, arguments, result, status, policy_decision)
+  VALUES (NEW.id, NEW.session_id, NEW.tool_name, COALESCE(NEW.arguments, ''), COALESCE(NEW.result, ''), COALESCE(NEW.status, ''), COALESCE(NEW.policy_decision, ''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_tool_calls_fts_update AFTER UPDATE ON tool_calls BEGIN
+  DELETE FROM tool_calls_fts WHERE id = OLD.id;
+  INSERT INTO tool_calls_fts (id, session_id, tool_name, arguments, result, status, policy_decision)
+  VALUES (NEW.id, NEW.session_id, NEW.tool_name, COALESCE(NEW.arguments, ''), COALESCE(NEW.result, ''), COALESCE(NEW.status, ''), COALESCE(NEW.policy_decision, ''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_tool_calls_fts_delete AFTER DELETE ON tool_calls BEGIN
+  DELETE FROM tool_calls_fts WHERE id = OLD.id;
+END;
+
+-- Policy audit triggers
+CREATE TRIGGER IF NOT EXISTS trg_policy_audit_fts_insert AFTER INSERT ON policy_audit BEGIN
+  INSERT INTO policy_audit_fts (id, actor, session_id, action, resource, effect, reason)
+  VALUES (NEW.id, NEW.actor, COALESCE(NEW.session_id, ''), NEW.action, NEW.resource, NEW.effect, COALESCE(NEW.reason, ''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_policy_audit_fts_update AFTER UPDATE ON policy_audit BEGIN
+  DELETE FROM policy_audit_fts WHERE id = OLD.id;
+  INSERT INTO policy_audit_fts (id, actor, session_id, action, resource, effect, reason)
+  VALUES (NEW.id, NEW.actor, COALESCE(NEW.session_id, ''), NEW.action, NEW.resource, NEW.effect, COALESCE(NEW.reason, ''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_policy_audit_fts_delete AFTER DELETE ON policy_audit BEGIN
+  DELETE FROM policy_audit_fts WHERE id = OLD.id;
+END;
+
+-- Knowledge chunks triggers
+CREATE TRIGGER IF NOT EXISTS trg_chunks_fts_insert AFTER INSERT ON chunks BEGIN
+  INSERT INTO chunks_fts (id, document_id, content, summary)
+  VALUES (NEW.id, NEW.document_id, NEW.content, COALESCE(NEW.summary, ''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_chunks_fts_update AFTER UPDATE ON chunks BEGIN
+  DELETE FROM chunks_fts WHERE id = OLD.id;
+  INSERT INTO chunks_fts (id, document_id, content, summary)
+  VALUES (NEW.id, NEW.document_id, NEW.content, COALESCE(NEW.summary, ''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_chunks_fts_delete AFTER DELETE ON chunks BEGIN
+  DELETE FROM chunks_fts WHERE id = OLD.id;
+END;
+
+-- Scratch triggers
+CREATE TRIGGER IF NOT EXISTS trg_scratch_fts_insert AFTER INSERT ON scratch BEGIN
+  INSERT INTO scratch_fts (id, session_id, key, content)
+  VALUES (NEW.id, NEW.session_id, NEW.key, NEW.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_scratch_fts_update AFTER UPDATE ON scratch BEGIN
+  DELETE FROM scratch_fts WHERE id = OLD.id;
+  INSERT INTO scratch_fts (id, session_id, key, content)
+  VALUES (NEW.id, NEW.session_id, NEW.key, NEW.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_scratch_fts_delete AFTER DELETE ON scratch BEGIN
+  DELETE FROM scratch_fts WHERE id = OLD.id;
+END;
+";
+
+const AGENT_SCHEMA_V15: &str = "
+ALTER TABLE facts ADD COLUMN scope TEXT NOT NULL DEFAULT 'shared';
+CREATE INDEX IF NOT EXISTS idx_facts_scope ON facts (scope, agent_id, superseded_at);
+";
+
+const AGENT_SCHEMA_V16: &str = "
+CREATE INDEX IF NOT EXISTS idx_documents_scope ON documents (scope, agent_id, created_at);
+";
+
+fn table_has_column(conn: &Connection, table: &str, column: &str) -> bool {
+    conn.query_row(
+        "SELECT EXISTS(
+            SELECT 1
+            FROM pragma_table_info(?1)
+            WHERE name = ?2
+        )",
+        [table, column],
+        |r| r.get::<_, bool>(0),
+    )
+    .unwrap_or(false)
+}
+
 // ---------------------------------------------------------------------------
 // Metadata database — v1
 // ---------------------------------------------------------------------------
@@ -761,6 +991,10 @@ CREATE TABLE IF NOT EXISTS agents (
     sync_enabled        INTEGER DEFAULT 1,
     created_at          INTEGER
 );
+";
+
+const METADATA_SCHEMA_V2: &str = "
+ALTER TABLE agents ADD COLUMN tags TEXT;
 ";
 
 /// Exact table names to skip in schema summaries.
@@ -920,6 +1154,7 @@ mod tests {
         let expected = vec![
             "id",
             "agent_id",
+            "scope",
             "content",
             "summary",
             "pointer",
@@ -1244,6 +1479,8 @@ mod tests {
         let conn = setup_agent_db();
         let expected = vec![
             "id",
+            "agent_id",
+            "scope",
             "path",
             "title",
             "content_hash",
@@ -1263,7 +1500,7 @@ mod tests {
     fn documents_not_null_constraints() {
         let conn = setup_agent_db();
         let info = column_info(&conn, "documents");
-        for name in &["content_hash", "created_at", "updated_at"] {
+        for name in &["agent_id", "scope", "content_hash", "created_at", "updated_at"] {
             let col = info.iter().find(|c| c.0 == *name).unwrap();
             assert!(col.2, "documents.{name} should be NOT NULL");
         }
@@ -1772,6 +2009,7 @@ mod tests {
             "llm_model",
             "db_path",
             "sync_enabled",
+            "tags",
             "created_at",
         ];
         for col in &expected {

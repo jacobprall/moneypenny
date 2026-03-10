@@ -1,7 +1,7 @@
 import { defineMiddleware } from "astro:middleware";
 import { createSupabaseServer } from "./lib/supabase";
 
-const PROTECTED = ["/dashboard", "/pricing"];
+const PROTECTED = ["/dashboard"];
 
 export const onRequest = defineMiddleware(async (context, next) => {
   const url = import.meta.env.PUBLIC_SUPABASE_URL;

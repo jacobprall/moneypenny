@@ -19,7 +19,7 @@ pub fn dispatch(
         "fact_list" => fact_list(conn, agent_id),
         "scratch_set" => scratch_set(conn, session_id, arguments),
         "scratch_get" => scratch_get(conn, session_id, arguments),
-        "knowledge_ingest" => knowledge_ingest(conn, arguments),
+        "knowledge_ingest" => knowledge_ingest(conn, agent_id, arguments),
         "knowledge_list" => knowledge_list(conn),
         "job_create" => job_create(conn, agent_id, session_id, arguments),
         "job_list" => job_list(conn, agent_id, session_id),
@@ -374,9 +374,11 @@ fn fact_add(conn: &Connection, agent_id: &str, arguments: &str) -> anyhow::Resul
     let pointer = args["pointer"].as_str().unwrap_or(content);
     let keywords = args["keywords"].as_str();
     let confidence = args["confidence"].as_f64().unwrap_or(1.0);
+    let scope = args["scope"].as_str().unwrap_or("shared");
 
     let fact = crate::store::facts::NewFact {
         agent_id: agent_id.to_string(),
+        scope: scope.to_string(),
         content: content.to_string(),
         summary: summary.to_string(),
         pointer: pointer.to_string(),
@@ -495,7 +497,7 @@ fn scratch_get(conn: &Connection, session_id: &str, arguments: &str) -> anyhow::
 // Knowledge
 // =========================================================================
 
-fn knowledge_ingest(conn: &Connection, arguments: &str) -> anyhow::Result<ToolResult> {
+fn knowledge_ingest(conn: &Connection, agent_id: &str, arguments: &str) -> anyhow::Result<ToolResult> {
     let args: serde_json::Value = serde_json::from_str(arguments)?;
     let content = args["content"]
         .as_str()
@@ -503,7 +505,8 @@ fn knowledge_ingest(conn: &Connection, arguments: &str) -> anyhow::Result<ToolRe
     let title = args["title"].as_str();
     let path = args["path"].as_str();
 
-    let (doc_id, chunk_count) = crate::store::knowledge::ingest(conn, path, title, content, None)?;
+    let (doc_id, chunk_count) =
+        crate::store::knowledge::ingest_scoped(conn, path, title, content, None, Some(agent_id), None)?;
 
     Ok(ToolResult {
         output: serde_json::json!({
@@ -967,6 +970,7 @@ mod tests {
 
         let fact = crate::store::facts::NewFact {
             agent_id: "agent-1".into(),
+            scope: "shared".into(),
             content: "The billing system uses Stripe webhooks".into(),
             summary: "billing uses Stripe".into(),
             pointer: "billing: Stripe webhooks".into(),

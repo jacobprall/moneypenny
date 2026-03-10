@@ -174,6 +174,10 @@ pub enum Command {
     #[command(subcommand)]
     Sync(SyncCommand),
 
+    /// Fleet operations across multiple agents
+    #[command(subcommand)]
+    Fleet(FleetCommand),
+
     /// Execute an MPQ expression (Moneypenny Query DSL)
     #[command(name = "mpq")]
     Mpq {
@@ -565,6 +569,14 @@ pub enum AuditCommand {
     Search {
         /// Search query
         query: String,
+
+        /// Include entries created at or after this Unix timestamp (seconds)
+        #[arg(long)]
+        since: Option<i64>,
+
+        /// Include entries created at or before this Unix timestamp (seconds)
+        #[arg(long)]
+        until: Option<i64>,
     },
 
     /// Export audit trail
@@ -572,6 +584,14 @@ pub enum AuditCommand {
         /// Output format: sql, json, csv
         #[arg(long, default_value = "json")]
         format: String,
+
+        /// Include entries created at or after this Unix timestamp (seconds)
+        #[arg(long)]
+        since: Option<i64>,
+
+        /// Include entries created at or before this Unix timestamp (seconds)
+        #[arg(long)]
+        until: Option<i64>,
     },
 }
 
@@ -615,6 +635,91 @@ pub enum SyncCommand {
         url: String,
         /// Agent name (defaults to first configured agent)
         agent: Option<String>,
+    },
+}
+
+// -- Fleet subcommands --
+
+#[derive(Subcommand)]
+pub enum FleetCommand {
+    /// Provision agents from a fleet template
+    Init {
+        /// Template file (.json or .toml)
+        #[arg(long)]
+        template: String,
+
+        /// Optional scope filter by tags (comma-separated, e.g. "team:infra,env:prod")
+        #[arg(long)]
+        scope: Option<String>,
+
+        /// Validate and print planned changes only
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+    },
+
+    /// Push a signed policy bundle to scoped agents
+    PushPolicy {
+        /// Policy bundle file (.json or .toml)
+        #[arg(long)]
+        file: String,
+
+        /// Optional scope filter by tags (comma-separated)
+        #[arg(long)]
+        scope: Option<String>,
+
+        /// Optional file path to write rollback snapshot
+        #[arg(long)]
+        rollback_file: Option<String>,
+
+        /// Validate and print planned changes only
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+    },
+
+    /// Aggregate audit entries across scoped agents
+    Audit {
+        /// Optional scope filter by tags (comma-separated)
+        #[arg(long)]
+        scope: Option<String>,
+
+        /// Include entries created at or after this Unix timestamp (seconds)
+        #[arg(long)]
+        since: Option<i64>,
+
+        /// Include entries created at or before this Unix timestamp (seconds)
+        #[arg(long)]
+        until: Option<i64>,
+
+        /// Output format: json, csv
+        #[arg(long, default_value = "json")]
+        format: String,
+
+        /// Max rows per agent
+        #[arg(long, default_value_t = 200)]
+        limit: usize,
+    },
+
+    /// List agents in metadata registry (with tags)
+    List {
+        /// Optional scope filter by tags (comma-separated)
+        #[arg(long)]
+        scope: Option<String>,
+    },
+
+    /// Show fleet health + sync + drift summary
+    Status {
+        /// Optional scope filter by tags (comma-separated)
+        #[arg(long)]
+        scope: Option<String>,
+    },
+
+    /// Set tags for an agent (comma-separated)
+    Tag {
+        /// Agent name
+        agent: String,
+
+        /// Tags CSV, e.g. "team:infra,env:prod"
+        tags: String,
     },
 }
 

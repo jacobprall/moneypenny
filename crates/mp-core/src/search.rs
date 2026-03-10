@@ -81,6 +81,7 @@ enum SearchSourceId {
     Messages,
     ToolCalls,
     PolicyAudit,
+    Scratch,
     Knowledge,
 }
 
@@ -90,7 +91,7 @@ struct SearchSource {
     store: Store,
 }
 
-const SEARCH_SOURCES: [SearchSource; 5] = [
+const SEARCH_SOURCES: [SearchSource; 6] = [
     SearchSource {
         id: SearchSourceId::Facts,
         store: Store::Facts,
@@ -105,6 +106,10 @@ const SEARCH_SOURCES: [SearchSource; 5] = [
     },
     SearchSource {
         id: SearchSourceId::PolicyAudit,
+        store: Store::Log,
+    },
+    SearchSource {
+        id: SearchSourceId::Scratch,
         store: Store::Log,
     },
     SearchSource {
@@ -149,6 +154,15 @@ fn query_optional_string<P: Params>(
         .or_else(|_| Ok(None))
 }
 
+fn has_fts_table(conn: &Connection, table_name: &str) -> bool {
+    conn.query_row(
+        "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        [table_name],
+        |r| r.get::<_, bool>(0),
+    )
+    .unwrap_or(false)
+}
+
 // ---------------------------------------------------------------------------
 // FTS5 search per store
 // ---------------------------------------------------------------------------
@@ -160,21 +174,16 @@ pub fn fts5_search_facts(
     agent_id: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<(String, String, f64)>> {
-    // FTS5 requires a virtual table. If not present, fall back to LIKE.
-    let has_fts: bool = conn
-        .query_row(
-            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE name = 'facts_fts'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap_or(false);
+    let has_fts = has_fts_table(conn, "facts_fts");
 
     if has_fts {
         let mut stmt = conn.prepare(
             "SELECT f.id, f.content, fts.rank
              FROM facts_fts fts
-             JOIN facts f ON f.id = fts.rowid
-             WHERE facts_fts MATCH ?1 AND f.agent_id = ?2 AND f.superseded_at IS NULL
+             JOIN facts f ON f.id = fts.id
+             WHERE facts_fts MATCH ?1
+               AND f.superseded_at IS NULL
+               AND (f.scope = 'shared' OR f.agent_id = ?2)
              ORDER BY fts.rank
              LIMIT ?3",
         )?;
@@ -188,7 +197,8 @@ pub fn fts5_search_facts(
         let pattern = format!("%{query}%");
         let mut stmt = conn.prepare(
             "SELECT id, content, 1.0 FROM facts
-             WHERE agent_id = ?1 AND superseded_at IS NULL
+             WHERE superseded_at IS NULL
+               AND (scope = 'shared' OR agent_id = ?1)
                AND (content LIKE ?2 OR summary LIKE ?2 OR pointer LIKE ?2 OR keywords LIKE ?2)
              ORDER BY updated_at DESC
              LIMIT ?3",
@@ -209,17 +219,31 @@ pub fn fts5_search_messages(
     agent_id: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<(String, String, f64)>> {
-    let pattern = format!("%{query}%");
-    query_ranked_rows(
-        conn,
-        "SELECT m.id, m.content, 1.0
-         FROM messages m
-         JOIN sessions s ON s.id = m.session_id
-         WHERE s.agent_id = ?1 AND m.content LIKE ?2
-         ORDER BY m.created_at DESC
-         LIMIT ?3",
-        params![agent_id, pattern, limit],
-    )
+    if has_fts_table(conn, "messages_fts") {
+        query_ranked_rows(
+            conn,
+            "SELECT m.id, m.content, bm25(messages_fts) AS rank
+             FROM messages_fts
+             JOIN messages m ON m.id = messages_fts.id
+             JOIN sessions s ON s.id = m.session_id
+             WHERE messages_fts MATCH ?1 AND s.agent_id = ?2
+             ORDER BY rank
+             LIMIT ?3",
+            params![query, agent_id, limit],
+        )
+    } else {
+        let pattern = format!("%{query}%");
+        query_ranked_rows(
+            conn,
+            "SELECT m.id, m.content, 1.0
+             FROM messages m
+             JOIN sessions s ON s.id = m.session_id
+             WHERE s.agent_id = ?1 AND m.content LIKE ?2
+             ORDER BY m.created_at DESC
+             LIMIT ?3",
+            params![agent_id, pattern, limit],
+        )
+    }
 }
 
 /// Search projected tool call logs scoped to the agent's sessions.
@@ -229,26 +253,41 @@ pub fn fts5_search_tool_calls(
     agent_id: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<(String, String, f64)>> {
-    let pattern = format!("%{query}%");
     let projection = crate::store::log::tool_call_projection_expr("tc");
-    let sql = format!(
-        "SELECT tc.id,
-                ({projection}) AS content,
-                1.0
-         FROM tool_calls tc
-         JOIN sessions s ON s.id = tc.session_id
-         WHERE s.agent_id = ?1
-           AND (
-               tc.tool_name LIKE ?2 OR
-               tc.arguments LIKE ?2 OR
-               tc.result LIKE ?2 OR
-               tc.status LIKE ?2 OR
-               tc.policy_decision LIKE ?2
-           )
-         ORDER BY tc.created_at DESC
-         LIMIT ?3"
-    );
-    query_ranked_rows(conn, &sql, params![agent_id, pattern, limit])
+    if has_fts_table(conn, "tool_calls_fts") {
+        let sql = format!(
+            "SELECT tc.id,
+                    ({projection}) AS content,
+                    bm25(tool_calls_fts) AS rank
+             FROM tool_calls_fts
+             JOIN tool_calls tc ON tc.id = tool_calls_fts.id
+             JOIN sessions s ON s.id = tc.session_id
+             WHERE tool_calls_fts MATCH ?1 AND s.agent_id = ?2
+             ORDER BY rank
+             LIMIT ?3"
+        );
+        query_ranked_rows(conn, &sql, params![query, agent_id, limit])
+    } else {
+        let pattern = format!("%{query}%");
+        let sql = format!(
+            "SELECT tc.id,
+                    ({projection}) AS content,
+                    1.0
+             FROM tool_calls tc
+             JOIN sessions s ON s.id = tc.session_id
+             WHERE s.agent_id = ?1
+               AND (
+                   tc.tool_name LIKE ?2 OR
+                   tc.arguments LIKE ?2 OR
+                   tc.result LIKE ?2 OR
+                   tc.status LIKE ?2 OR
+                   tc.policy_decision LIKE ?2
+               )
+             ORDER BY tc.created_at DESC
+             LIMIT ?3"
+        );
+        query_ranked_rows(conn, &sql, params![agent_id, pattern, limit])
+    }
 }
 
 /// Search projected policy audit logs scoped to the agent (via session or actor).
@@ -258,28 +297,46 @@ pub fn fts5_search_policy_audit(
     agent_id: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<(String, String, f64)>> {
-    let pattern = format!("%{query}%");
     let projection = crate::store::log::policy_audit_projection_expr("pa");
-    let sql = format!(
-        "SELECT pa.id,
-                ({projection}) AS content,
-                1.0
-         FROM policy_audit pa
-         WHERE (
-                pa.actor = ?1 OR
-                pa.session_id IN (SELECT id FROM sessions WHERE agent_id = ?1)
+    if has_fts_table(conn, "policy_audit_fts") {
+        let sql = format!(
+            "SELECT pa.id,
+                    ({projection}) AS content,
+                    bm25(policy_audit_fts) AS rank
+             FROM policy_audit_fts
+             JOIN policy_audit pa ON pa.id = policy_audit_fts.id
+             WHERE policy_audit_fts MATCH ?1
+               AND (
+                    pa.actor = ?2 OR
+                    pa.session_id IN (SELECT id FROM sessions WHERE agent_id = ?2)
                )
-           AND (
-                pa.actor LIKE ?2 OR
-                pa.action LIKE ?2 OR
-                pa.resource LIKE ?2 OR
-                pa.effect LIKE ?2 OR
-                pa.reason LIKE ?2
-               )
-         ORDER BY pa.created_at DESC
-         LIMIT ?3"
-    );
-    query_ranked_rows(conn, &sql, params![agent_id, pattern, limit])
+             ORDER BY rank
+             LIMIT ?3"
+        );
+        query_ranked_rows(conn, &sql, params![query, agent_id, limit])
+    } else {
+        let pattern = format!("%{query}%");
+        let sql = format!(
+            "SELECT pa.id,
+                    ({projection}) AS content,
+                    1.0
+             FROM policy_audit pa
+             WHERE (
+                    pa.actor = ?1 OR
+                    pa.session_id IN (SELECT id FROM sessions WHERE agent_id = ?1)
+                   )
+               AND (
+                    pa.actor LIKE ?2 OR
+                    pa.action LIKE ?2 OR
+                    pa.resource LIKE ?2 OR
+                    pa.effect LIKE ?2 OR
+                    pa.reason LIKE ?2
+                   )
+             ORDER BY pa.created_at DESC
+             LIMIT ?3"
+        );
+        query_ranked_rows(conn, &sql, params![agent_id, pattern, limit])
+    }
 }
 
 /// Search knowledge chunks using LIKE fallback.
@@ -288,15 +345,63 @@ pub fn fts5_search_knowledge(
     query: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<(String, String, f64)>> {
-    let pattern = format!("%{query}%");
-    query_ranked_rows(
-        conn,
-        "SELECT id, content, 1.0 FROM chunks
-         WHERE content LIKE ?1
-         ORDER BY created_at DESC
-         LIMIT ?2",
-        params![pattern, limit],
-    )
+    if has_fts_table(conn, "chunks_fts") {
+        query_ranked_rows(
+            conn,
+            "SELECT c.id, c.content, bm25(chunks_fts) AS rank
+             FROM chunks_fts
+             JOIN chunks c ON c.id = chunks_fts.id
+             WHERE chunks_fts MATCH ?1
+             ORDER BY rank
+             LIMIT ?2",
+            params![query, limit],
+        )
+    } else {
+        let pattern = format!("%{query}%");
+        query_ranked_rows(
+            conn,
+            "SELECT id, content, 1.0 FROM chunks
+             WHERE content LIKE ?1
+             ORDER BY created_at DESC
+             LIMIT ?2",
+            params![pattern, limit],
+        )
+    }
+}
+
+/// Search session scratch scoped to agent sessions.
+pub fn fts5_search_scratch(
+    conn: &Connection,
+    query: &str,
+    agent_id: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<(String, String, f64)>> {
+    if has_fts_table(conn, "scratch_fts") {
+        query_ranked_rows(
+            conn,
+            "SELECT sc.id, (sc.key || ': ' || sc.content) AS content, bm25(scratch_fts) AS rank
+             FROM scratch_fts
+             JOIN scratch sc ON sc.id = scratch_fts.id
+             JOIN sessions s ON s.id = sc.session_id
+             WHERE scratch_fts MATCH ?1 AND s.agent_id = ?2
+             ORDER BY rank
+             LIMIT ?3",
+            params![query, agent_id, limit],
+        )
+    } else {
+        let pattern = format!("%{query}%");
+        query_ranked_rows(
+            conn,
+            "SELECT sc.id, (sc.key || ': ' || sc.content) AS content, 1.0
+             FROM scratch sc
+             JOIN sessions s ON s.id = sc.session_id
+             WHERE s.agent_id = ?1
+               AND (sc.key LIKE ?2 OR sc.content LIKE ?2)
+             ORDER BY sc.updated_at DESC
+             LIMIT ?3",
+            params![agent_id, pattern, limit],
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -408,14 +513,15 @@ pub fn vector_search_facts(
     limit: usize,
 ) -> anyhow::Result<Vec<(String, f64)>> {
     // vector_quantize_scan('facts', 'content_embedding', blob, k) returns (rowid, distance).
-    // We join on facts.rowid to get the id string and apply agent_id filter.
+    // We join on facts.rowid to get the id string and apply scope visibility.
     query_vector_rows(
         conn,
         "SELECT f.id, v.distance
          FROM facts AS f
          JOIN vector_quantize_scan('facts', 'content_embedding', ?1, ?2) AS v
            ON f.rowid = v.rowid
-         WHERE f.agent_id = ?3 AND f.superseded_at IS NULL
+         WHERE f.superseded_at IS NULL
+           AND (f.scope = 'shared' OR f.agent_id = ?3)
          ORDER BY v.distance ASC",
         rusqlite::params![query_blob, limit, agent_id],
     )
@@ -514,6 +620,7 @@ fn text_search_for_source(
         SearchSourceId::Messages => fts5_search_messages(conn, query, agent_id, limit),
         SearchSourceId::ToolCalls => fts5_search_tool_calls(conn, query, agent_id, limit),
         SearchSourceId::PolicyAudit => fts5_search_policy_audit(conn, query, agent_id, limit),
+        SearchSourceId::Scratch => fts5_search_scratch(conn, query, agent_id, limit),
         SearchSourceId::Knowledge => fts5_search_knowledge(conn, query, limit),
     }
 }
@@ -532,6 +639,7 @@ fn vector_search_for_source(
         SearchSourceId::PolicyAudit => {
             vector_search_policy_audit(conn, query_blob, agent_id, limit)
         }
+        SearchSourceId::Scratch => Ok(Vec::new()),
         SearchSourceId::Knowledge => vector_search_knowledge(conn, query_blob, limit),
     }
     .unwrap_or_default();
@@ -550,8 +658,12 @@ fn fetch_content_for_source(
     match source.id {
         SearchSourceId::Facts => query_optional_string(
             conn,
-            "SELECT content FROM facts WHERE id = ?1 AND superseded_at IS NULL",
-            rusqlite::params![id],
+            "SELECT content
+             FROM facts
+             WHERE id = ?1
+               AND superseded_at IS NULL
+               AND (scope = 'shared' OR agent_id = ?2)",
+            rusqlite::params![id, agent_id],
         ),
         SearchSourceId::Messages => query_optional_string(
             conn,
@@ -585,6 +697,14 @@ fn fetch_content_for_source(
             );
             query_optional_string(conn, &sql, rusqlite::params![id, agent_id])
         }
+        SearchSourceId::Scratch => query_optional_string(
+            conn,
+            "SELECT (sc.key || ': ' || sc.content)
+             FROM scratch sc
+             JOIN sessions s ON s.id = sc.session_id
+             WHERE sc.id = ?1 AND s.agent_id = ?2",
+            rusqlite::params![id, agent_id],
+        ),
         SearchSourceId::Knowledge => query_optional_string(
             conn,
             "SELECT content FROM chunks WHERE id = ?1",
@@ -940,6 +1060,7 @@ mod tests {
             &conn,
             &store::facts::NewFact {
                 agent_id: "a".into(),
+                scope: "shared".into(),
                 content: "ORDERS table uses soft deletes".into(),
                 summary: "ORDERS soft deletes".into(),
                 pointer: "ORDERS: soft-delete".into(),
@@ -1032,6 +1153,26 @@ mod tests {
     }
 
     #[test]
+    fn search_includes_scratch_source() {
+        let conn = setup();
+        let sid = store::log::create_session(&conn, "a", None).unwrap();
+        conn.execute(
+            "INSERT INTO scratch (id, session_id, key, content, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params!["sc-1", sid, "deploy_note", "rollout window is 02:00 UTC", 1_i64, 1_i64],
+        )
+        .unwrap();
+
+        let results = search(&conn, "rollout window", "a", 10, None, None).unwrap();
+        assert!(
+            results
+                .iter()
+                .any(|r| r.store == Store::Log && r.content.contains("deploy_note")),
+            "search should include scratch entries"
+        );
+    }
+
+    #[test]
     fn search_returns_empty_for_no_match() {
         let conn = setup();
         let results = search(&conn, "quantum entanglement", "a", 10, None, None).unwrap();
@@ -1046,6 +1187,7 @@ mod tests {
                 &conn,
                 &store::facts::NewFact {
                     agent_id: "a".into(),
+                    scope: "shared".into(),
                     content: format!("fact about topic {i}"),
                     summary: format!("topic {i}"),
                     pointer: format!("topic-{i}"),
@@ -1109,6 +1251,7 @@ mod tests {
             &conn,
             &store::facts::NewFact {
                 agent_id: "a".into(),
+                scope: "shared".into(),
                 content: "Unrelated fact".into(),
                 summary: "unrelated".into(),
                 pointer: "unrelated".into(),
