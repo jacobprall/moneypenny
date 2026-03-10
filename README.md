@@ -86,7 +86,7 @@ mp sync connect --url "..."  # cloud sync
 
 ## Integrations
 
-Moneypenny exposes its full surface area as an MCP server. Every operation is expressible as a short **MPQ (Moneypenny Query)** string — one tool, ~200 tokens of grammar, no JSON schemas to learn.
+Moneypenny exposes its full surface area as an MCP server.
 
 ### Cursor
 
