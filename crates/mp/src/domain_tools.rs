@@ -1,23 +1,24 @@
 use anyhow::Result;
 use serde_json::{Value, json};
 
-pub const TOOL_FACTS: &str = "moneypenny.facts";
-pub const TOOL_KNOWLEDGE: &str = "moneypenny.knowledge";
-pub const TOOL_POLICY: &str = "moneypenny.policy";
-pub const TOOL_ACTIVITY: &str = "moneypenny.activity";
-pub const TOOL_EXECUTE: &str = "moneypenny.execute";
+pub const TOOL_FACTS: &str = "moneypenny_facts";
+pub const TOOL_KNOWLEDGE: &str = "moneypenny_knowledge";
+pub const TOOL_POLICY: &str = "moneypenny_policy";
+pub const TOOL_ACTIVITY: &str = "moneypenny_activity";
+pub const TOOL_EXECUTE: &str = "moneypenny_execute";
 
 // Legacy constants — kept so routing still resolves old tool calls gracefully.
-pub const TOOL_QUERY: &str = "moneypenny.query";
-pub const TOOL_CAPABILITIES: &str = "moneypenny.capabilities";
-const TOOL_MEMORY: &str = "moneypenny.memory";
-const TOOL_JOBS: &str = "moneypenny.jobs";
-const TOOL_AUDIT: &str = "moneypenny.audit";
-const TOOL_INGEST: &str = "moneypenny.ingest";
-const TOOL_EMBEDDING: &str = "moneypenny.embedding";
-const TOOL_SESSION: &str = "moneypenny.session";
-const TOOL_AGENT: &str = "moneypenny.agent";
-const TOOL_TOOLS: &str = "moneypenny.tools";
+// Both dot and underscore prefixes are accepted by normalize_tool_name().
+pub const TOOL_QUERY: &str = "moneypenny_query";
+pub const TOOL_CAPABILITIES: &str = "moneypenny_capabilities";
+const TOOL_MEMORY: &str = "moneypenny_memory";
+const TOOL_JOBS: &str = "moneypenny_jobs";
+const TOOL_AUDIT: &str = "moneypenny_audit";
+const TOOL_INGEST: &str = "moneypenny_ingest";
+const TOOL_EMBEDDING: &str = "moneypenny_embedding";
+const TOOL_SESSION: &str = "moneypenny_session";
+const TOOL_AGENT: &str = "moneypenny_agent";
+const TOOL_TOOLS: &str = "moneypenny_tools";
 
 #[derive(Debug, Clone)]
 pub enum RoutedToolCall {
@@ -333,7 +334,7 @@ pub fn capabilities(domain_filter: Option<&str>) -> Value {
 
     json!({
         "domains": filtered,
-        "hint": "Use the domain tools (moneypenny.facts, moneypenny.knowledge, moneypenny.policy, moneypenny.activity) for common operations. Use moneypenny.execute for anything else."
+        "hint": "Use the domain tools (moneypenny_facts, moneypenny_knowledge, moneypenny_policy, moneypenny_activity) for common operations. Use moneypenny_execute for anything else."
     })
 }
 
@@ -647,6 +648,30 @@ mod tests {
         ).unwrap();
         match routed {
             RoutedToolCall::Operation { op, .. } => assert_eq!(op, "job.resume"),
+            _ => panic!("expected operation"),
+        }
+    }
+
+    #[test]
+    fn underscore_tool_names_route() {
+        let routed = route_tool_call(
+            "moneypenny_facts",
+            &json!({"action": "search", "input": {"query": "test"}}),
+        ).unwrap();
+        match routed {
+            RoutedToolCall::Operation { op, .. } => assert_eq!(op, "memory.search"),
+            _ => panic!("expected operation"),
+        }
+    }
+
+    #[test]
+    fn dotted_tool_names_still_route() {
+        let routed = route_tool_call(
+            "moneypenny.facts",
+            &json!({"action": "search", "input": {"query": "test"}}),
+        ).unwrap();
+        match routed {
+            RoutedToolCall::Operation { op, .. } => assert_eq!(op, "memory.search"),
             _ => panic!("expected operation"),
         }
     }

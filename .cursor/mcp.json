@@ -1,14 +1,14 @@
 {
   "mcpServers": {
     "moneypenny": {
+      "command": "/Users/jprall/.cargo/bin/mp",
       "args": [
         "--config",
-        "/Users/colossus/Desktop/untitled folder 2/moneypenny/moneypenny.toml",
-        "serve",
+        "/Users/jprall/moneypenny.toml",
+        "sidecar",
         "--agent",
         "main"
-      ],
-      "command": "/Users/colossus/Desktop/untitled folder 2/moneypenny/target/release/mp"
+      ]
     }
   }
 }
