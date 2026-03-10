@@ -795,6 +795,17 @@ pub enum SetupCommand {
         scope: String,
     },
 
+    /// Register Moneypenny as an MCP server in Cortex Code CLI
+    Cortex {
+        /// Agent name (defaults to first configured agent)
+        #[arg(long)]
+        agent: Option<String>,
+
+        /// Scope: "project" writes .cortex/settings.local.json, "user" writes ~/.snowflake/cortex/mcp.json
+        #[arg(long, default_value = "project")]
+        scope: String,
+    },
+
     /// Download embedding models required by configured agents
     Models,
 

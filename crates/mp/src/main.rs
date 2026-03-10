@@ -1437,9 +1437,11 @@ async fn cmd_init(config_path: &str) -> Result<()> {
     ui::blank();
     ui::info("Ready! Next steps:");
     ui::blank();
-    ui::hint("mp setup cursor --local            # register MCP server, hooks, and agent rules");
+    ui::hint("mp setup cursor --local            # register with Cursor");
+    ui::hint("mp setup cortex                    # register with Cortex Code CLI");
+    ui::hint("mp setup claude-code               # register with Claude Code");
     ui::blank();
-    ui::info("Then reload Cursor and ask: \"What Moneypenny tools do you have?\"");
+    ui::info("Then ask your agent: \"What Moneypenny tools do you have?\"");
     ui::blank();
     ui::info("CLI agent:");
     ui::hint("mp chat                            # interactive terminal chat");
@@ -1563,6 +1565,101 @@ async fn cmd_setup(config: &Config, config_path: &Path, cmd: cli::SetupCommand) 
             ui::info("Next steps:");
             ui::hint("1. Start Claude Code in this project directory");
             ui::hint("2. Ask: \"What Moneypenny tools do you have?\"");
+            ui::blank();
+            ui::info("CLI agent (same database, same agent):");
+            ui::hint("mp chat                            # interactive terminal chat");
+            ui::hint("mp send main \"remember X\"          # one-shot message");
+            ui::blank();
+
+            return Ok(());
+        }
+        cli::SetupCommand::Cortex { agent, scope } => {
+            let ag = resolve_agent(config, agent.as_deref())?;
+            let project_dir = std::env::current_dir()?;
+            let data_dir = project_dir.join("mp-data");
+            let config_abs = std::fs::canonicalize(config_path)
+                .unwrap_or_else(|_| project_dir.join(config_path));
+            let mp_binary = std::env::current_exe()?
+                .canonicalize()
+                .unwrap_or_else(|_| std::env::current_exe().unwrap());
+            let mp_bin_str = mp_binary.to_string_lossy().to_string();
+
+            let mcp_entry = serde_json::json!({
+                "type": "stdio",
+                "command": &mp_bin_str,
+                "args": [
+                    "--config", config_abs.to_string_lossy().as_ref(),
+                    "serve", "--agent", &ag.name
+                ]
+            });
+
+            let mcp_path = if scope == "user" {
+                let home = std::env::var("HOME")
+                    .or_else(|_| std::env::var("USERPROFILE"))
+                    .unwrap_or_else(|_| "~".to_string());
+                std::path::PathBuf::from(home).join(".snowflake/cortex/mcp.json")
+            } else {
+                project_dir.join(".cortex").join("mcp.json")
+            };
+
+            if let Some(parent) = mcp_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            upsert_json_mcp_config(&mcp_path, "moneypenny", mcp_entry)?;
+
+            // Write agent instructions as a Cortex skill
+            let skill_dir = if scope == "user" {
+                let home = std::env::var("HOME")
+                    .or_else(|_| std::env::var("USERPROFILE"))
+                    .unwrap_or_else(|_| "~".to_string());
+                std::path::PathBuf::from(home).join(".snowflake/cortex/skills/moneypenny")
+            } else {
+                project_dir.join(".cortex").join("skills").join("moneypenny")
+            };
+            std::fs::create_dir_all(&skill_dir)?;
+            let skill_path = skill_dir.join("SKILL.md");
+            let agent_conn = mp_core::db::open(&config.agent_db_path(&ag.name))
+                .ok()
+                .and_then(|c| mp_core::schema::init_agent_db(&c).ok().map(|_| c));
+            std::fs::write(&skill_path, generate_cortex_skill(agent_conn.as_ref()))?;
+
+            // Write hooks config
+            let hooks_config = generate_cortex_hooks_json(&mp_bin_str, &config_abs.to_string_lossy(), &ag.name);
+            let hooks_path = if scope == "user" {
+                let home = std::env::var("HOME")
+                    .or_else(|_| std::env::var("USERPROFILE"))
+                    .unwrap_or_else(|_| "~".to_string());
+                std::path::PathBuf::from(home).join(".snowflake/cortex/hooks.json")
+            } else {
+                project_dir.join(".cortex").join("settings.local.json")
+            };
+            if let Some(parent) = hooks_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            upsert_json_hooks_config(&hooks_path, &hooks_config)?;
+
+            std::fs::create_dir_all(&data_dir)?;
+
+            ui::banner();
+            ui::success(format!("Registered MCP server in {}", mcp_path.display()));
+            ui::success(format!("Wrote agent skill to {}", skill_path.display()));
+            ui::success(format!("Wrote hooks config to {}", hooks_path.display()));
+            ui::blank();
+            ui::field("Scope", 9, scope);
+            ui::field("Agent", 9, &ag.name);
+            ui::field("Binary", 9, &mp_bin_str);
+            ui::field("Data", 9, data_dir.display());
+            ui::field("Project", 9, project_dir.display());
+            ui::blank();
+            ui::info("What's configured:");
+            ui::hint("- MCP tools: moneypenny.facts, moneypenny.knowledge, moneypenny.policy, moneypenny.activity, moneypenny.execute");
+            ui::hint("- Hooks: audit trail + policy enforcement on every tool call");
+            ui::hint("- Skill: instructs Cortex Code how to use Moneypenny");
+            ui::blank();
+            ui::info("Next steps:");
+            ui::hint("1. Start Cortex Code in this project directory");
+            ui::hint("2. Verify with: cortex mcp list");
+            ui::hint("3. Ask: \"What Moneypenny tools do you have?\"");
             ui::blank();
             ui::info("CLI agent (same database, same agent):");
             ui::hint("mp chat                            # interactive terminal chat");
@@ -2130,6 +2227,145 @@ Each domain tool takes an `action` string and an `input` object.
     }
 
     md
+}
+
+fn generate_cortex_skill(agent_conn: Option<&rusqlite::Connection>) -> String {
+    let mut md = r#"---
+name: moneypenny
+description: Persistent facts, knowledge, governance, and activity tracking via Moneypenny MCP server
+tools:
+- mcp__moneypenny__moneypenny.facts
+- mcp__moneypenny__moneypenny.knowledge
+- mcp__moneypenny__moneypenny.policy
+- mcp__moneypenny__moneypenny.activity
+- mcp__moneypenny__moneypenny.execute
+---
+
+# When to Use
+
+- User says "mp ..." (e.g. "mp remember that we use Redis for caching")
+- Remembering things across sessions
+- Recalling context or searching memory
+- Ingesting documents into knowledge
+- Querying the activity/audit trail
+- Managing governance policies
+
+# What This Skill Provides
+
+Moneypenny is the intelligence and governance core for AI agents. It provides
+structured memory, policy-governed execution, explainable audit, and portable
+state — all in a single SQLite file per agent.
+
+# Instructions
+
+Translate natural-language requests into the appropriate MCP tool call and
+execute it immediately.
+
+## "mp" Prefix
+
+When the user starts a message with **"mp"**, treat it as a direct instruction
+to use Moneypenny. Examples:
+
+- "mp remember that we use Redis for caching" → `moneypenny.facts` action `add`
+- "mp search facts about auth" → `moneypenny.facts` action `search`
+- "mp ingest this doc" → `moneypenny.knowledge` action `ingest`
+
+## Tool Usage
+
+Each domain tool takes an `action` string and an `input` object.
+
+### moneypenny.facts
+- `search`: `{query, limit?}` — hybrid search across facts
+- `add`: `{content, summary?, keywords?, confidence?}` — store a new fact
+- `get`: `{id}` — retrieve a fact by ID
+- `update`: `{id, content, summary?}` — update an existing fact
+- `delete`: `{id, reason?}` — remove a fact
+
+### moneypenny.knowledge
+- `ingest`: `{path?, content?, title?}` — add a document (pass `path` as an HTTP URL to fetch a webpage, or provide `content` directly)
+- `search`: `{query, limit?}` — search ingested documents
+- `list`: `{}` — list all documents
+
+### moneypenny.policy
+- `add`: `{name, effect?, priority?, action_pattern?, resource_pattern?, sql_pattern?, message?}` — create a policy
+- `list`: `{enabled?, effect?, limit?}` — list policies
+- `disable`: `{id}` — disable a policy
+- `evaluate`: `{actor, action, resource}` — test if action is allowed
+
+### moneypenny.activity
+- `query`: `{source?, event?, action?, resource?, query?, limit?}` — query events and decisions
+
+### moneypenny.execute
+- `op`: canonical operation name (e.g. `job.create`, `ingest.events`)
+- `args`: operation-specific arguments
+
+## Best Practices
+
+- Search before inserting facts to avoid duplicates
+- Use specific keywords when inserting facts
+- Set confidence scores to reflect certainty (0.0 to 1.0)
+- Use `moneypenny.execute` only for operations not covered by domain tools
+"#.to_string();
+
+    if let Some(conn) = agent_conn {
+        md.push('\n');
+        md.push_str(&mp_core::schema::generate_schema_summary(conn));
+    }
+
+    md
+}
+
+fn generate_cortex_hooks_json(mp_bin: &str, config_path: &str, agent: &str) -> serde_json::Value {
+    let hook_entry = |event: &str, matcher: &str| -> serde_json::Value {
+        serde_json::json!({
+            "matcher": matcher,
+            "hooks": [{
+                "type": "command",
+                "command": format!("{} --config {} hook --event {} --agent {}", mp_bin, config_path, event, agent),
+                "timeout": 10
+            }]
+        })
+    };
+
+    serde_json::json!({
+        "hooks": {
+            "SessionStart": [hook_entry("sessionStart", "*")],
+            "Stop": [hook_entry("stop", "*")],
+            "PreToolUse": [hook_entry("preToolUse", "*")],
+            "PostToolUse": [hook_entry("postToolUse", "*")]
+        }
+    })
+}
+
+fn upsert_json_hooks_config(
+    path: &std::path::Path,
+    new_hooks: &serde_json::Value,
+) -> Result<()> {
+    let mut root: serde_json::Value = if path.exists() {
+        let content = std::fs::read_to_string(path)?;
+        serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    let root_obj = root
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("{} is not a JSON object", path.display()))?;
+
+    if let Some(new_hooks_obj) = new_hooks.get("hooks").and_then(|h| h.as_object()) {
+        let hooks = root_obj
+            .entry("hooks")
+            .or_insert_with(|| serde_json::json!({}));
+        if let Some(hooks_obj) = hooks.as_object_mut() {
+            for (event, entries) in new_hooks_obj {
+                hooks_obj.insert(event.clone(), entries.clone());
+            }
+        }
+    }
+
+    let formatted = serde_json::to_string_pretty(&root)?;
+    std::fs::write(path, format!("{formatted}\n"))?;
+    Ok(())
 }
 
 fn upsert_json_mcp_config(
@@ -6679,6 +6915,10 @@ async fn cmd_doctor(config: &Config, config_path: &Path) -> Result<()> {
 
     let project_cursor_mcp = std::env::current_dir()?.join(".cursor/mcp.json");
     let project_claude_mcp = std::env::current_dir()?.join(".mcp.json");
+    let project_cortex_mcp = std::env::current_dir()?.join(".cortex/mcp.json");
+    let user_cortex_mcp = std::env::var("HOME")
+        .map(|h| std::path::PathBuf::from(h).join(".snowflake/cortex/mcp.json"))
+        .unwrap_or_default();
     if project_cursor_mcp.exists() {
         ui::success(format!("Cursor MCP config found: {}", project_cursor_mcp.display()));
     }
@@ -6688,12 +6928,23 @@ async fn cmd_doctor(config: &Config, config_path: &Path) -> Result<()> {
             project_claude_mcp.display()
         ));
     }
-    if !project_cursor_mcp.exists() && !project_claude_mcp.exists() {
+    if project_cortex_mcp.exists() {
+        ui::success(format!("Cortex Code MCP config found: {}", project_cortex_mcp.display()));
+    } else if user_cortex_mcp.exists() {
+        let has_mp = std::fs::read_to_string(&user_cortex_mcp)
+            .map(|c| c.contains("moneypenny"))
+            .unwrap_or(false);
+        if has_mp {
+            ui::success(format!("Cortex Code MCP config found (user): {}", user_cortex_mcp.display()));
+        }
+    }
+    if !project_cursor_mcp.exists() && !project_claude_mcp.exists() && !project_cortex_mcp.exists() {
         warnings += 1;
         ui::warn("No local MCP config found in this project.");
         ui::hint("Run one of:");
         ui::hint("- mp setup cursor --local");
         ui::hint("- mp setup claude-code");
+        ui::hint("- mp setup cortex");
     }
 
     // Built-in verify: run a quick SEARCH against the first healthy agent.
