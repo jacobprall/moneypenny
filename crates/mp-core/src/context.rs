@@ -129,13 +129,18 @@ fn estimate_tokens(text: &str) -> usize {
     (text.len() + CHARS_PER_TOKEN - 1) / CHARS_PER_TOKEN
 }
 
+/// Truncate text to fit within a token budget, breaking at word boundaries
+/// to avoid corrupting context mid-word.
 fn truncate_to_budget(text: &str, max_tokens: usize) -> String {
     let max_chars = max_tokens * CHARS_PER_TOKEN;
     if text.len() <= max_chars {
-        text.to_string()
-    } else {
-        text[..max_chars].to_string()
+        return text.to_string();
     }
+    // Walk backwards from max_chars to find a word boundary.
+    let cut = text[..max_chars]
+        .rfind(|c: char| c.is_whitespace() || c == '\n')
+        .unwrap_or(max_chars);
+    text[..cut].trim_end().to_string()
 }
 
 /// Assemble the full context for an LLM call.
@@ -223,14 +228,55 @@ pub fn assemble(
     let effective_split = rebalance(&base_split, &rebalance_ctx);
     let alloc = allocate(budget, &effective_split);
 
-    // 4. Auto-expanded facts (Level 1 summaries by relevance)
+    // 4–7: Flexible segments with dynamic reallocation.
+    //
+    // Build raw content for each segment first, then redistribute unused
+    // budget from empty segments to those that can use it.
     let expanded_facts = crate::search::fts5_search_facts(conn, current_message, agent_id, 20)?;
-    if !expanded_facts.is_empty() {
-        let expanded_text: String = expanded_facts
+    let expanded_text: String = expanded_facts
+        .iter()
+        .map(|(_, content, _)| content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n---\n");
+
+    let scratch_text = if scratch_entries.is_empty() {
+        String::new()
+    } else {
+        scratch_entries
             .iter()
-            .map(|(_, content, _)| content.as_str())
+            .map(|e| format!("[{}] {}", e.key, e.content))
             .collect::<Vec<_>>()
-            .join("\n---\n");
+            .join("\n")
+    };
+
+    let recent = crate::store::log::get_recent_messages(conn, session_id, 20)?;
+    let log_text = if recent.is_empty() {
+        String::new()
+    } else {
+        recent
+            .iter()
+            .map(|m| format!("{}: {}", m.role, m.content))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let knowledge_results = crate::search::fts5_search_knowledge(conn, current_message, 10)?;
+    let knowledge_text: String = knowledge_results
+        .iter()
+        .map(|(_, content, _)| content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n---\n");
+
+    // Redistribute budget from empty segments to non-empty ones.
+    let alloc = redistribute_budget(
+        alloc,
+        &expanded_text,
+        &scratch_text,
+        &log_text,
+        &knowledge_text,
+    );
+
+    if !expanded_text.is_empty() && alloc.facts_expanded > 0 {
         let truncated = truncate_to_budget(&expanded_text, alloc.facts_expanded);
         if !truncated.is_empty() {
             segments.push(ContextSegment {
@@ -241,13 +287,7 @@ pub fn assemble(
         }
     }
 
-    // 5. Scratch
-    if !scratch_entries.is_empty() {
-        let scratch_text = scratch_entries
-            .iter()
-            .map(|e| format!("[{}] {}", e.key, e.content))
-            .collect::<Vec<_>>()
-            .join("\n");
+    if !scratch_text.is_empty() && alloc.scratch > 0 {
         let truncated = truncate_to_budget(&scratch_text, alloc.scratch);
         if !truncated.is_empty() {
             segments.push(ContextSegment {
@@ -258,14 +298,7 @@ pub fn assemble(
         }
     }
 
-    // 6. Log (recent messages from current session)
-    let recent = crate::store::log::get_recent_messages(conn, session_id, 20)?;
-    if !recent.is_empty() {
-        let log_text = recent
-            .iter()
-            .map(|m| format!("{}: {}", m.role, m.content))
-            .collect::<Vec<_>>()
-            .join("\n");
+    if !log_text.is_empty() && alloc.log > 0 {
         let truncated = truncate_to_budget(&log_text, alloc.log);
         if !truncated.is_empty() {
             segments.push(ContextSegment {
@@ -276,14 +309,7 @@ pub fn assemble(
         }
     }
 
-    // 7. Knowledge (search results)
-    let knowledge_results = crate::search::fts5_search_knowledge(conn, current_message, 10)?;
-    if !knowledge_results.is_empty() {
-        let knowledge_text = knowledge_results
-            .iter()
-            .map(|(_, content, _)| content.as_str())
-            .collect::<Vec<_>>()
-            .join("\n---\n");
+    if !knowledge_text.is_empty() && alloc.knowledge > 0 {
         let truncated = truncate_to_budget(&knowledge_text, alloc.knowledge);
         if !truncated.is_empty() {
             segments.push(ContextSegment {
@@ -302,6 +328,57 @@ pub fn assemble(
     });
 
     Ok(segments)
+}
+
+/// Move budget from segments with no content to segments that have content,
+/// proportionally to their existing allocations.
+fn redistribute_budget(
+    mut alloc: FlexibleAllocation,
+    facts_text: &str,
+    scratch_text: &str,
+    log_text: &str,
+    knowledge_text: &str,
+) -> FlexibleAllocation {
+    let slots: [(bool, usize); 4] = [
+        (!facts_text.is_empty(), alloc.facts_expanded),
+        (!scratch_text.is_empty(), alloc.scratch),
+        (!log_text.is_empty(), alloc.log),
+        (!knowledge_text.is_empty(), alloc.knowledge),
+    ];
+
+    let freed: usize = slots
+        .iter()
+        .filter(|(has_content, _)| !has_content)
+        .map(|(_, budget)| *budget)
+        .sum();
+
+    if freed == 0 {
+        return alloc;
+    }
+
+    let alive_total: usize = slots
+        .iter()
+        .filter(|(has_content, _)| *has_content)
+        .map(|(_, budget)| *budget)
+        .sum();
+
+    if alive_total == 0 {
+        return alloc;
+    }
+
+    // Distribute freed budget proportionally to non-empty segments.
+    let boost = |current: usize, has_content: bool| -> usize {
+        if !has_content {
+            return 0;
+        }
+        current + (freed as f64 * (current as f64 / alive_total as f64)) as usize
+    };
+
+    alloc.facts_expanded = boost(alloc.facts_expanded, !facts_text.is_empty());
+    alloc.scratch = boost(alloc.scratch, !scratch_text.is_empty());
+    alloc.log = boost(alloc.log, !log_text.is_empty());
+    alloc.knowledge = boost(alloc.knowledge, !knowledge_text.is_empty());
+    alloc
 }
 
 fn load_active_policies(conn: &Connection) -> anyhow::Result<String> {
@@ -704,5 +781,154 @@ mod tests {
         let long = "a".repeat(1000);
         let truncated = truncate_to_budget(&long, 10); // 10 tokens × 4 chars = 40 chars
         assert_eq!(truncated.len(), 40);
+    }
+
+    // ========================================================================
+    // Word-boundary truncation
+    // ========================================================================
+
+    #[test]
+    fn truncate_breaks_at_word_boundary() {
+        let text = "the quick brown fox jumps over the lazy dog";
+        // Budget = 3 tokens = 12 chars → "the quick brown fox" is 19 chars,
+        // so we should truncate to last word boundary before char 12.
+        let truncated = truncate_to_budget(text, 3);
+        assert!(
+            !truncated.ends_with(char::is_alphanumeric)
+                || truncated.len() <= 12
+                || text.starts_with(&truncated),
+            "should break at word boundary, got: '{truncated}'"
+        );
+        assert!(
+            !truncated.contains("  "),
+            "should not have trailing whitespace artifacts"
+        );
+    }
+
+    #[test]
+    fn truncate_no_trailing_whitespace() {
+        let text = "word1 word2 word3 word4 word5";
+        let truncated = truncate_to_budget(text, 3); // 12 chars
+        assert!(!truncated.ends_with(' '), "should trim trailing space");
+    }
+
+    #[test]
+    fn truncate_single_long_word_falls_through() {
+        let text = "supercalifragilisticexpialidocious";
+        let truncated = truncate_to_budget(text, 2); // 8 chars budget
+        assert!(
+            truncated.len() <= 8,
+            "single word: should truncate at char limit"
+        );
+    }
+
+    #[test]
+    fn truncate_short_text_unchanged() {
+        let text = "hello world";
+        let truncated = truncate_to_budget(text, 100);
+        assert_eq!(truncated, text);
+    }
+
+    // ========================================================================
+    // Dynamic budget reallocation
+    // ========================================================================
+
+    #[test]
+    fn redistribute_gives_empty_segments_zero() {
+        let alloc = FlexibleAllocation {
+            facts_expanded: 1000,
+            scratch: 500,
+            log: 1500,
+            knowledge: 2000,
+        };
+        let result = redistribute_budget(alloc, "has content", "", "has content", "");
+        assert_eq!(result.scratch, 0);
+        assert_eq!(result.knowledge, 0);
+        assert!(result.facts_expanded > 1000, "facts should get freed budget");
+        assert!(result.log > 1500, "log should get freed budget");
+    }
+
+    #[test]
+    fn redistribute_all_have_content_no_change() {
+        let alloc = FlexibleAllocation {
+            facts_expanded: 1000,
+            scratch: 500,
+            log: 1500,
+            knowledge: 2000,
+        };
+        let result = redistribute_budget(alloc, "a", "b", "c", "d");
+        assert_eq!(result.facts_expanded, 1000);
+        assert_eq!(result.scratch, 500);
+        assert_eq!(result.log, 1500);
+        assert_eq!(result.knowledge, 2000);
+    }
+
+    #[test]
+    fn redistribute_proportional_to_existing_allocation() {
+        let alloc = FlexibleAllocation {
+            facts_expanded: 1000,
+            scratch: 0,
+            log: 0,
+            knowledge: 3000,
+        };
+        // scratch=0 and log=0 are empty: nothing freed from those.
+        // But facts_text="" means facts_expanded (1000) is freed to knowledge.
+        let result = redistribute_budget(alloc, "", "no scratch content", "", "has knowledge");
+        assert_eq!(result.facts_expanded, 0);
+        assert_eq!(result.log, 0);
+        // knowledge should get all the freed budget from facts_expanded
+        assert!(
+            result.knowledge > 3000,
+            "knowledge should absorb freed budget"
+        );
+    }
+
+    #[test]
+    fn redistribute_all_empty_returns_original() {
+        let alloc = FlexibleAllocation {
+            facts_expanded: 1000,
+            scratch: 500,
+            log: 1500,
+            knowledge: 2000,
+        };
+        let result = redistribute_budget(alloc, "", "", "", "");
+        // All empty: no alive segments to receive freed budget → return unchanged.
+        // (The caller won't use them since it checks `!text.is_empty()`.)
+        assert_eq!(result.facts_expanded, 1000);
+        assert_eq!(result.scratch, 500);
+        assert_eq!(result.log, 1500);
+        assert_eq!(result.knowledge, 2000);
+    }
+
+    // ========================================================================
+    // Rebalancing edge cases
+    // ========================================================================
+
+    #[test]
+    fn rebalance_new_session_empty_scratch_combined() {
+        let split = rebalance(
+            &BudgetSplit::default(),
+            &RebalanceContext {
+                scratch_is_empty: true,
+                session_is_new: true,
+                session_message_count: 0,
+            },
+        );
+        assert_eq!(split.scratch_pct, 0.0);
+        assert_eq!(split.log_pct, 0.0);
+        // All freed budget should go to knowledge
+        let total = split.facts_expanded_pct + split.knowledge_pct;
+        assert!(
+            (total - 1.0).abs() < 0.01,
+            "total flexible should be ~1.0, got {total}"
+        );
+    }
+
+    #[test]
+    fn budget_zero_total_does_not_panic() {
+        let b = TokenBudget::new(0);
+        assert_eq!(b.flexible(), 0);
+        let alloc = allocate(&b, &BudgetSplit::default());
+        assert_eq!(alloc.total(), 0);
     }
 }

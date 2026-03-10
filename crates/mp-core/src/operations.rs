@@ -2305,14 +2305,32 @@ fn op_memory_search(
         None,
         query_embedding.as_deref(),
     )?;
+    let retrieval_mode = if query_embedding.is_some() {
+        "hybrid"
+    } else {
+        "text"
+    };
     let data = rows
         .into_iter()
         .map(|r| {
+            let store_label = match r.store {
+                crate::search::Store::Facts => "facts",
+                crate::search::Store::Knowledge => "knowledge",
+                crate::search::Store::Log => "log",
+            };
+            let relevance = if r.score >= 0.8 {
+                "high"
+            } else if r.score >= 0.4 {
+                "medium"
+            } else {
+                "low"
+            };
             serde_json::json!({
                 "id": r.id,
-                "store": format!("{:?}", r.store),
+                "store": store_label,
                 "content": r.content,
                 "score": r.score,
+                "relevance": relevance,
             })
         })
         .collect::<Vec<_>>();
@@ -2320,7 +2338,10 @@ fn op_memory_search(
     Ok(OperationResponse {
         ok: true,
         code: "ok".into(),
-        message: "memory search completed".into(),
+        message: format!(
+            "{} result(s) via {retrieval_mode} search",
+            data.len()
+        ),
         data: serde_json::json!(data),
         policy: Some(policy_meta(&decision)),
         audit: AuditMeta { recorded: true },
@@ -3462,14 +3483,26 @@ fn parse_policy_mode(mode: Option<&str>) -> Option<crate::policy::PolicyMode> {
 }
 
 fn denied_response(decision: &crate::policy::PolicyDecision) -> OperationResponse {
+    let reason = decision
+        .reason
+        .clone()
+        .unwrap_or_else(|| "operation denied by policy".into());
+
+    let hint = if decision.policy_id.is_none() {
+        "No matching policy rule exists. Add an allow rule with: \
+         mp policy add --effect allow --action '<action>' --resource '<resource>'"
+    } else {
+        "An explicit deny rule matched. Review policies with: mp policy list"
+    };
+
     OperationResponse {
         ok: false,
         code: "policy_denied".into(),
-        message: decision
-            .reason
-            .clone()
-            .unwrap_or_else(|| "operation denied by policy".into()),
-        data: serde_json::json!({}),
+        message: reason,
+        data: serde_json::json!({
+            "policy_id": decision.policy_id,
+            "hint": hint,
+        }),
         policy: Some(policy_meta(decision)),
         audit: AuditMeta { recorded: true },
     }

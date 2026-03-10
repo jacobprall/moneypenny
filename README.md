@@ -52,9 +52,12 @@ cd moneypenny
 cargo build --release
 ./target/release/mp init
 ./target/release/mp setup cursor --local
+./target/release/mp doctor
 ```
 
-Restart Cursor (or reload the window). Done. Everything else happens through conversation:
+Restart Cursor (or reload the window). Done. If doctor reports missing setup, follow the suggested command and rerun `mp doctor`.
+
+Everything else happens through conversation:
 
 ```
 You: Remember that deploys happen Tuesday and Thursday via ArgoCD with canary at 5%

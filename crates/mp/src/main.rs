@@ -47,7 +47,7 @@ async fn main() -> Result<()> {
         Command::Serve { agent } => cmd_serve(&config, config_path, agent).await,
         Command::Stop => cmd_stop(&config).await,
         Command::Agent(cmd) => cmd_agent(&config, cmd).await,
-        Command::Chat { agent, session_id } => cmd_chat(&config, agent, session_id).await,
+        Command::Chat { agent, session_id, new } => cmd_chat(&config, agent, session_id, new).await,
         Command::Send {
             agent,
             message,
@@ -109,6 +109,7 @@ async fn main() -> Result<()> {
         Command::Mpq { expression, agent, dry_run } => cmd_mpq(&config, &expression, agent, dry_run).await,
         Command::Db(cmd) => cmd_db(&config, cmd).await,
         Command::Health => cmd_health(&config).await,
+        Command::Doctor => cmd_doctor(&config, config_path).await,
         Command::Worker { agent } => cmd_worker(&config, &agent).await,
         Command::Sidecar { agent } => cmd_sidecar(&config, agent).await,
         Command::Setup(cmd) => cmd_setup(&config, config_path, cmd).await,
@@ -131,17 +132,50 @@ fn resolve_agent<'a>(
             .agents
             .iter()
             .find(|a| a.name == n)
-            .ok_or_else(|| anyhow::anyhow!("Agent '{n}' not found in config")),
+            .ok_or_else(|| {
+                let available: Vec<&str> = config.agents.iter().map(|a| a.name.as_str()).collect();
+                if available.is_empty() {
+                    anyhow::anyhow!(
+                        "Agent '{n}' not found — no agents configured.\n\
+                         Fix: run `mp init` to create a default configuration."
+                    )
+                } else {
+                    anyhow::anyhow!(
+                        "Agent '{n}' not found. Available agents: {}\n\
+                         Fix: use one of the names above, or add '{n}' to moneypenny.toml.",
+                        available.join(", ")
+                    )
+                }
+            }),
         None => config
             .agents
             .first()
-            .ok_or_else(|| anyhow::anyhow!("No agents configured")),
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No agents configured in moneypenny.toml.\n\
+                     Fix: run `mp init` to create a default configuration with a starter agent."
+                )
+            }),
     }
 }
 
 fn open_agent_db(config: &Config, agent_name: &str) -> Result<rusqlite::Connection> {
     let db_path = config.agent_db_path(agent_name);
-    let conn = mp_core::db::open(&db_path)?;
+    let conn = mp_core::db::open(&db_path).map_err(|e| {
+        if !db_path.exists() {
+            anyhow::anyhow!(
+                "Agent database not found at {}\n\
+                 Fix: run `mp init` to initialize the project and create agent databases.",
+                db_path.display()
+            )
+        } else {
+            anyhow::anyhow!(
+                "Failed to open agent database at {}: {e}\n\
+                 Fix: run `mp doctor` to diagnose the issue.",
+                db_path.display()
+            )
+        }
+    })?;
     mp_core::schema::init_agent_db(&conn)?;
     mp_ext::init_all_extensions(&conn)?;
     if let Some(agent) = config.agents.iter().find(|a| a.name == agent_name) {
@@ -173,6 +207,15 @@ fn build_provider(agent: &mp_core::config::AgentConfig) -> Result<Box<dyn LlmPro
         agent.llm.api_key.as_deref(),
         agent.llm.model.as_deref(),
     )
+    .map_err(|e| {
+        let provider = &agent.llm.provider;
+        let hint = match provider.as_str() {
+            "anthropic" => "Fix: set ANTHROPIC_API_KEY in your environment or .env file.",
+            "openai" => "Fix: set OPENAI_API_KEY in your environment or .env file.",
+            _ => "Fix: check the LLM provider configuration in moneypenny.toml.",
+        };
+        anyhow::anyhow!("LLM provider '{provider}' failed to initialize: {e}\n{hint}")
+    })
 }
 
 fn build_embedding_provider(
@@ -3028,12 +3071,17 @@ async fn cmd_worker(config: &Config, agent_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Resolve an existing session or create a new one.
+///
+/// Priority: explicit `--session-id` > auto-resume recent > create new.
+/// Set `force_new` to skip auto-resume.
 fn resolve_or_create_session(
     conn: &rusqlite::Connection,
     agent_name: &str,
     channel: Option<&str>,
     requested_session_id: Option<String>,
-) -> Result<String> {
+    force_new: bool,
+) -> Result<(String, bool)> {
     if let Some(sid) = requested_session_id {
         let exists: i64 = conn.query_row(
             "SELECT COUNT(*) FROM sessions WHERE id = ?1 AND agent_id = ?2",
@@ -3041,13 +3089,73 @@ fn resolve_or_create_session(
             |r| r.get(0),
         )?;
         if exists > 0 {
-            return Ok(sid);
+            return Ok((sid, true));
         }
-        anyhow::bail!(
-            "Session '{sid}' not found for agent '{agent_name}'. Use /session in chat to copy a valid ID, or omit --session-id to create a new session."
-        );
+
+        let recent: Vec<String> = conn
+            .prepare(
+                "SELECT id FROM sessions WHERE agent_id = ?1 ORDER BY started_at DESC LIMIT 3",
+            )?
+            .query_map([agent_name], |r| r.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let hint = if recent.is_empty() {
+            "No sessions exist yet. Omit --session-id to create one.".to_string()
+        } else {
+            format!(
+                "Recent sessions: {}\nFix: use one of the IDs above, or omit --session-id.",
+                recent.join(", ")
+            )
+        };
+        anyhow::bail!("Session '{sid}' not found for agent '{agent_name}'.\n{hint}");
     }
-    mp_core::store::log::create_session(conn, agent_name, channel)
+
+    if !force_new {
+        if let Ok(sid) = find_recent_resumable_session(conn, agent_name, channel) {
+            return Ok((sid, true));
+        }
+    }
+
+    let sid = mp_core::store::log::create_session(conn, agent_name, channel)?;
+    Ok((sid, false))
+}
+
+fn find_recent_resumable_session(
+    conn: &rusqlite::Connection,
+    agent_name: &str,
+    channel: Option<&str>,
+) -> Result<String> {
+    let cutoff = chrono::Utc::now().timestamp() - 24 * 3600;
+    let sid: String = if let Some(ch) = channel {
+        conn.query_row(
+            "SELECT s.id
+             FROM sessions s
+             LEFT JOIN messages m ON m.session_id = s.id
+             WHERE s.agent_id = ?1 AND s.channel = ?2
+               AND s.ended_at IS NULL
+             GROUP BY s.id
+             HAVING COALESCE(MAX(m.created_at), s.started_at) >= ?3
+             ORDER BY COALESCE(MAX(m.created_at), s.started_at) DESC
+             LIMIT 1",
+            rusqlite::params![agent_name, ch, cutoff],
+            |r| r.get(0),
+        )?
+    } else {
+        conn.query_row(
+            "SELECT s.id
+             FROM sessions s
+             LEFT JOIN messages m ON m.session_id = s.id
+             WHERE s.agent_id = ?1
+               AND s.ended_at IS NULL
+             GROUP BY s.id
+             HAVING COALESCE(MAX(m.created_at), s.started_at) >= ?2
+             ORDER BY COALESCE(MAX(m.created_at), s.started_at) DESC
+             LIMIT 1",
+            rusqlite::params![agent_name, cutoff],
+            |r| r.get(0),
+        )?
+    };
+    Ok(sid)
 }
 
 // =========================================================================
@@ -3274,12 +3382,14 @@ async fn cmd_chat(
     config: &Config,
     agent: Option<String>,
     session_id: Option<String>,
+    force_new: bool,
 ) -> Result<()> {
     let ag = resolve_agent(config, agent.as_deref())?;
     let conn = open_agent_db(config, &ag.name)?;
     let provider = build_provider(ag)?;
     let embed = build_embedding_provider(config, ag).ok();
-    let sid = resolve_or_create_session(&conn, &ag.name, Some("cli"), session_id)?;
+    let (mut sid, resumed) =
+        resolve_or_create_session(&conn, &ag.name, Some("cli"), session_id, force_new)?;
 
     ui::blank();
     if ui::styled() {
@@ -3306,6 +3416,18 @@ async fn cmd_chat(
         "{} ({}, {}D)",
         ag.embedding.provider, ag.embedding.model, ag.embedding.dimensions
     ));
+    if resumed {
+        let msg_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE session_id = ?1",
+                [&sid],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        ui::dim(format!(
+            "Resumed session ({msg_count} messages). Use /new for a fresh session."
+        ));
+    }
     ui::info("Type /help for commands, Ctrl-C to exit.");
     ui::blank();
 
@@ -3328,6 +3450,7 @@ async fn cmd_chat(
                 ui::info("/facts    — list stored facts");
                 ui::info("/scratch  — list scratch entries");
                 ui::info("/session  — show session info");
+                ui::info("/new      — start a fresh session");
                 ui::info("/quit     — exit chat");
                 ui::blank();
                 continue;
@@ -3361,6 +3484,12 @@ async fn cmd_chat(
                 let msgs = mp_core::store::log::get_messages(&conn, &sid)?;
                 ui::info(format!("Session: {sid}"));
                 ui::info(format!("Messages: {}", msgs.len()));
+                ui::blank();
+                continue;
+            }
+            "/new" => {
+                sid = mp_core::store::log::create_session(&conn, &ag.name, Some("cli"))?;
+                ui::success("Started fresh session.");
                 ui::blank();
                 continue;
             }
@@ -3422,7 +3551,7 @@ async fn cmd_send(
     let conn = open_agent_db(config, &agent.name)?;
     let provider = build_provider(agent)?;
     let embed = build_embedding_provider(config, agent).ok();
-    let sid = resolve_or_create_session(&conn, &agent.name, Some("cli"), session_id)?;
+    let (sid, _) = resolve_or_create_session(&conn, &agent.name, Some("cli"), session_id, false)?;
 
     let response = agent_turn(
         &conn,
@@ -6448,6 +6577,171 @@ async fn cmd_health(config: &Config) -> Result<()> {
         }
     }
 
+    ui::blank();
+    Ok(())
+}
+
+async fn cmd_doctor(config: &Config, config_path: &Path) -> Result<()> {
+    ui::banner();
+    ui::info("Moneypenny doctor checks");
+    ui::blank();
+
+    let mut warnings = 0usize;
+
+    if config_path.exists() {
+        ui::success(format!("Config file found: {}", config_path.display()));
+    } else {
+        warnings += 1;
+        ui::warn(format!(
+            "Config file missing: {} (run `mp init`)",
+            config_path.display()
+        ));
+    }
+
+    if config.agents.is_empty() {
+        warnings += 1;
+        ui::warn("No agents configured in moneypenny.toml.");
+    }
+
+    let meta_path = config.metadata_db_path();
+    if meta_path.exists() {
+        match mp_core::db::open(&meta_path).and_then(|c| mp_core::schema::init_metadata_db(&c)) {
+            Ok(()) => ui::success(format!("Metadata DB OK: {}", meta_path.display())),
+            Err(e) => {
+                warnings += 1;
+                ui::warn(format!("Metadata DB error at {}: {e}", meta_path.display()));
+            }
+        }
+    } else {
+        warnings += 1;
+        ui::warn(format!(
+            "Metadata DB missing at {} (run `mp init`)",
+            meta_path.display()
+        ));
+    }
+
+    for agent in &config.agents {
+        let db_path = config.agent_db_path(&agent.name);
+        if !db_path.exists() {
+            warnings += 1;
+            ui::warn(format!(
+                "Agent \"{}\" DB missing at {}",
+                agent.name,
+                db_path.display()
+            ));
+            continue;
+        }
+
+        match mp_core::db::open(&db_path) {
+            Ok(conn) => {
+                if let Err(e) = mp_core::schema::init_agent_db(&conn) {
+                    warnings += 1;
+                    ui::warn(format!("Agent \"{}\" schema error: {e}", agent.name));
+                    continue;
+                }
+                let facts: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM facts WHERE superseded_at IS NULL",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0);
+                let sessions: i64 = conn
+                    .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+                    .unwrap_or(0);
+                ui::success(format!(
+                    "Agent \"{}\" DB OK (facts={}, sessions={})",
+                    agent.name, facts, sessions
+                ));
+            }
+            Err(e) => {
+                warnings += 1;
+                ui::warn(format!("Agent \"{}\" DB open failed: {e}", agent.name));
+            }
+        }
+
+        let model_path = agent.embedding.resolve_model_path(&config.models_dir());
+        if model_path.exists() {
+            ui::info(format!(
+                "Embedding model present for \"{}\": {}",
+                agent.name,
+                model_path.display()
+            ));
+        } else {
+            warnings += 1;
+            ui::warn(format!(
+                "Embedding model missing for \"{}\": {} (run `mp setup models`)",
+                agent.name,
+                model_path.display()
+            ));
+        }
+    }
+
+    let project_cursor_mcp = std::env::current_dir()?.join(".cursor/mcp.json");
+    let project_claude_mcp = std::env::current_dir()?.join(".mcp.json");
+    if project_cursor_mcp.exists() {
+        ui::success(format!("Cursor MCP config found: {}", project_cursor_mcp.display()));
+    }
+    if project_claude_mcp.exists() {
+        ui::success(format!(
+            "Claude Code MCP config found: {}",
+            project_claude_mcp.display()
+        ));
+    }
+    if !project_cursor_mcp.exists() && !project_claude_mcp.exists() {
+        warnings += 1;
+        ui::warn("No local MCP config found in this project.");
+        ui::hint("Run one of:");
+        ui::hint("- mp setup cursor --local");
+        ui::hint("- mp setup claude-code");
+    }
+
+    // Built-in verify: run a quick SEARCH against the first healthy agent.
+    if let Some(agent) = config.agents.first() {
+        let db_path = config.agent_db_path(&agent.name);
+        if db_path.exists() {
+            if let Ok(conn) = mp_core::db::open(&db_path) {
+                let _ = mp_core::schema::init_agent_db(&conn);
+                let req = op_request(
+                    &agent.name,
+                    "memory.search",
+                    serde_json::json!({ "query": "test", "limit": 3 }),
+                );
+                match mp_core::operations::execute(&conn, &req) {
+                    Ok(resp) if resp.ok => {
+                        let count = resp.data.as_array().map(|a| a.len()).unwrap_or(0);
+                        ui::success(format!(
+                            "Verify query OK — memory.search returned {count} result(s)."
+                        ));
+                    }
+                    Ok(resp) => {
+                        warnings += 1;
+                        ui::warn(format!(
+                            "Verify query failed: {} ({})",
+                            resp.message, resp.code
+                        ));
+                        if resp.code == "policy_denied" {
+                            ui::hint(
+                                "This usually means no allow policy exists. Run `mp init` to seed bootstrap policies.",
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warnings += 1;
+                        ui::warn(format!("Verify query error: {e}"));
+                    }
+                }
+            }
+        }
+    }
+
+    ui::blank();
+    if warnings == 0 {
+        ui::success("All doctor checks passed. Moneypenny is ready.");
+    } else {
+        ui::warn(format!("Doctor completed with {warnings} warning(s)."));
+        ui::hint("Fix the warnings above, then rerun `mp doctor`.");
+    }
     ui::blank();
     Ok(())
 }

@@ -43,9 +43,13 @@ pub enum Command {
         /// Agent name (defaults to first configured agent)
         agent: Option<String>,
 
-        /// Resume an existing session by ID (if omitted, creates a new session)
+        /// Resume an existing session by ID (if omitted, resumes the most recent session)
         #[arg(long)]
         session_id: Option<String>,
+
+        /// Force a new session instead of resuming the last one
+        #[arg(long, default_value_t = false)]
+        new: bool,
     },
 
     /// Send a one-off message and print the response
@@ -199,6 +203,9 @@ pub enum Command {
 
     /// Show system health
     Health,
+
+    /// Run setup diagnostics and suggested fixes
+    Doctor,
 
     /// Internal: run as an agent worker process (used by `mp start`)
     #[command(hide = true)]

@@ -49,29 +49,113 @@ impl Default for StoreWeights {
     }
 }
 
-/// Detect intent from query keywords and return appropriate weights.
+/// Detect intent from query keywords and return appropriate store weights.
+///
+/// Uses cascading pattern checks ordered from most specific to broadest.
+/// Falls back to a word-level heuristic when no phrase pattern matches:
+/// count words that suggest each store and blend the default weights
+/// toward the dominant signal.
 pub fn detect_intent(query: &str) -> StoreWeights {
     let q = query.to_lowercase();
-    if q.contains("know about") || q.contains("what do") || q.contains("what is") {
-        StoreWeights {
+
+    // --- phrase-level patterns (highest confidence) ---
+
+    // Fact recall: "what do we know", "what is", "tell me about", "remember"
+    let facts_phrases = [
+        "know about",
+        "what do we",
+        "what is",
+        "what are",
+        "tell me about",
+        "remind me",
+        "do you remember",
+        "what was",
+        "who is",
+        "who are",
+    ];
+    // Log / history: "when did", "last time", "did we discuss", "earlier"
+    let log_phrases = [
+        "when did",
+        "discuss",
+        "last time",
+        "earlier today",
+        "yesterday",
+        "previously",
+        "conversation history",
+        "did we",
+        "did i",
+        "what happened",
+    ];
+    // Knowledge / how-to: "how do", "guide", "documentation", "example"
+    let knowledge_phrases = [
+        "how do",
+        "how to",
+        "how can",
+        "guide",
+        "documentation",
+        "docs",
+        "example of",
+        "tutorial",
+        "explain how",
+        "step by step",
+        "walkthrough",
+    ];
+
+    if facts_phrases.iter().any(|p| q.contains(p)) {
+        return StoreWeights {
             facts: 0.6,
             log: 0.1,
             knowledge: 0.3,
-        }
-    } else if q.contains("when did") || q.contains("discuss") || q.contains("last time") {
-        StoreWeights {
+        };
+    }
+    if log_phrases.iter().any(|p| q.contains(p)) {
+        return StoreWeights {
             facts: 0.1,
             log: 0.7,
             knowledge: 0.2,
-        }
-    } else if q.contains("how do") || q.contains("how to") || q.contains("guide") {
-        StoreWeights {
+        };
+    }
+    if knowledge_phrases.iter().any(|p| q.contains(p)) {
+        return StoreWeights {
             facts: 0.2,
             log: 0.1,
             knowledge: 0.7,
-        }
-    } else {
-        StoreWeights::default()
+        };
+    }
+
+    // --- word-level heuristic fallback ---
+    let fact_words = [
+        "remember", "fact", "known", "stored", "table", "column", "schema", "config",
+        "convention", "rule", "policy", "setting",
+    ];
+    let log_words = [
+        "said", "told", "asked", "replied", "message", "chat", "session", "recent",
+    ];
+    let knowledge_words = [
+        "doc", "readme", "guide", "api", "spec", "reference", "code", "function", "module",
+    ];
+
+    let words: Vec<&str> = q.split_whitespace().collect();
+    let f_hits = words.iter().filter(|w| fact_words.contains(w)).count();
+    let l_hits = words.iter().filter(|w| log_words.contains(w)).count();
+    let k_hits = words.iter().filter(|w| knowledge_words.contains(w)).count();
+    let total = f_hits + l_hits + k_hits;
+
+    if total == 0 {
+        return StoreWeights::default();
+    }
+
+    // Blend: shift default weights toward the dominant store.
+    let base = StoreWeights::default();
+    let blend = 0.3; // how much to shift toward the signal
+    let f_ratio = f_hits as f64 / total as f64;
+    let l_ratio = l_hits as f64 / total as f64;
+    let k_ratio = k_hits as f64 / total as f64;
+
+    StoreWeights {
+        facts: base.facts + blend * (f_ratio - base.facts),
+        log: base.log + blend * (l_ratio - base.log),
+        knowledge: base.knowledge + blend * (k_ratio - base.knowledge),
     }
 }
 
@@ -714,6 +798,49 @@ fn fetch_content_for_source(
 }
 
 // ---------------------------------------------------------------------------
+// Recency boost
+// ---------------------------------------------------------------------------
+
+/// Maximum recency multiplier applied to fused scores (1.0 = no boost, 1.15 = +15%).
+const RECENCY_MAX_BOOST: f64 = 1.15;
+/// How quickly recency decays. Items older than this (seconds) get no boost.
+const RECENCY_HALF_LIFE_SECS: f64 = 7.0 * 86_400.0; // 7 days
+
+/// Build a mapping of id → recency multiplier in [1.0, RECENCY_MAX_BOOST].
+///
+/// Queries `facts.updated_at` and `messages.created_at` for IDs in the fused
+/// results. Items without a timestamp get a neutral 1.0 multiplier.
+fn build_recency_map(
+    conn: &Connection,
+    fused: &[(String, f64)],
+    now: i64,
+) -> HashMap<String, f64> {
+    let mut map = HashMap::new();
+    for (id, _) in fused {
+        let ts: Option<i64> = conn
+            .query_row(
+                "SELECT updated_at FROM facts WHERE id = ?1
+                 UNION ALL
+                 SELECT created_at FROM messages WHERE id = ?1
+                 LIMIT 1",
+                [id.as_str()],
+                |r| r.get(0),
+            )
+            .ok();
+
+        let boost = if let Some(ts) = ts {
+            let age_secs = (now - ts).max(0) as f64;
+            // Exponential decay: boost = 1 + (MAX_BOOST - 1) * e^(-age / half_life)
+            1.0 + (RECENCY_MAX_BOOST - 1.0) * (-age_secs / RECENCY_HALF_LIFE_SECS).exp()
+        } else {
+            1.0
+        };
+        map.insert(id.clone(), boost);
+    }
+    map
+}
+
+// ---------------------------------------------------------------------------
 // Cross-store search (unified)
 // ---------------------------------------------------------------------------
 
@@ -777,7 +904,12 @@ pub fn search(
         }
     }
 
-    // Apply store weights to fused scores
+    // Recency boost: gently favor recently-updated items.
+    // Look up updated_at for facts/messages so newer content ranks slightly higher.
+    let now = chrono::Utc::now().timestamp();
+    let recency_map = build_recency_map(conn, &fused, now);
+
+    // Apply store weights and recency boost to fused scores.
     let mut weighted_results: Vec<SearchResult> = fused
         .into_iter()
         .filter_map(|(id, score)| {
@@ -787,11 +919,12 @@ pub fn search(
                 Store::Log => weights.log,
                 Store::Knowledge => weights.knowledge,
             };
+            let recency = recency_map.get(&id).copied().unwrap_or(1.0);
             Some(SearchResult {
                 id,
                 store,
                 content,
-                score: score * weight,
+                score: score * weight * recency,
                 sources: vec![store],
             })
         })
@@ -1315,5 +1448,170 @@ mod tests {
     fn store_priority_order() {
         assert!(Store::Facts.priority() > Store::Knowledge.priority());
         assert!(Store::Knowledge.priority() > Store::Log.priority());
+    }
+
+    // ========================================================================
+    // Expanded intent detection
+    // ========================================================================
+
+    #[test]
+    fn intent_remind_me_favors_facts() {
+        let w = detect_intent("remind me about the deployment conventions");
+        assert!(w.facts > w.log, "remind me → facts");
+        assert!(w.facts > w.knowledge, "remind me → facts");
+    }
+
+    #[test]
+    fn intent_who_is_favors_facts() {
+        let w = detect_intent("who is the oncall engineer?");
+        assert!(w.facts > w.log);
+    }
+
+    #[test]
+    fn intent_yesterday_favors_log() {
+        let w = detect_intent("what did we talk about yesterday?");
+        assert!(w.log > w.facts, "yesterday → log");
+        assert!(w.log > w.knowledge, "yesterday → log");
+    }
+
+    #[test]
+    fn intent_explain_how_favors_knowledge() {
+        let w = detect_intent("explain how the CI pipeline works");
+        assert!(w.knowledge > w.facts, "explain how → knowledge");
+        assert!(w.knowledge > w.log, "explain how → knowledge");
+    }
+
+    #[test]
+    fn intent_documentation_favors_knowledge() {
+        let w = detect_intent("where is the documentation for the API?");
+        assert!(w.knowledge > w.log, "documentation → knowledge");
+    }
+
+    #[test]
+    fn intent_word_level_fallback_blends() {
+        let w = detect_intent("stored schema config for the function module");
+        // "stored", "schema", "config" → fact_words; "function", "module" → knowledge_words
+        // Should blend toward facts but also have some knowledge weight.
+        assert!(w.facts >= StoreWeights::default().facts - 0.1);
+    }
+
+    #[test]
+    fn intent_pure_default_for_neutral_query() {
+        let w = detect_intent("hello");
+        let d = StoreWeights::default();
+        assert!((w.facts - d.facts).abs() < 0.01);
+        assert!((w.log - d.log).abs() < 0.01);
+        assert!((w.knowledge - d.knowledge).abs() < 0.01);
+    }
+
+    // ========================================================================
+    // RRF edge cases
+    // ========================================================================
+
+    #[test]
+    fn rrf_tie_breaking_is_stable() {
+        let lists = vec![
+            vec![("a".into(), 1.0), ("b".into(), 1.0)],
+            vec![("c".into(), 1.0), ("d".into(), 1.0)],
+        ];
+        let fused = rrf_fuse(&lists);
+        assert_eq!(fused.len(), 4, "all items present");
+        // All should have the same score (rank 0 in one list each, except none overlap)
+        let scores: Vec<f64> = fused.iter().map(|(_, s)| *s).collect();
+        for i in 1..scores.len() {
+            assert!(
+                (scores[0] - scores[i]).abs() < 0.001,
+                "tie: all should have equal RRF score"
+            );
+        }
+    }
+
+    #[test]
+    fn rrf_many_lists_amplifies_consensus() {
+        let lists: Vec<Vec<(String, f64)>> = (0..5)
+            .map(|_| vec![("consensus".into(), 1.0), ("noise".into(), 0.5)])
+            .collect();
+        let fused = rrf_fuse(&lists);
+        let consensus_score = fused.iter().find(|(id, _)| id == "consensus").unwrap().1;
+        let noise_score = fused.iter().find(|(id, _)| id == "noise").unwrap().1;
+        assert!(
+            consensus_score > noise_score,
+            "consensus across all lists should rank highest"
+        );
+    }
+
+    // ========================================================================
+    // MMR diversity
+    // ========================================================================
+
+    #[test]
+    fn mmr_diversifies_near_duplicates() {
+        let results = vec![
+            SearchResult {
+                id: "a".into(),
+                store: Store::Facts,
+                content: "the database uses soft deletes with deleted_at".into(),
+                score: 0.9,
+                sources: vec![Store::Facts],
+            },
+            SearchResult {
+                id: "b".into(),
+                store: Store::Facts,
+                content: "the database uses soft deletes with the deleted_at column".into(),
+                score: 0.88,
+                sources: vec![Store::Facts],
+            },
+            SearchResult {
+                id: "c".into(),
+                store: Store::Knowledge,
+                content: "deployment runs ArgoCD canary releases at five percent".into(),
+                score: 0.82,
+                sources: vec![Store::Knowledge],
+            },
+        ];
+
+        let reranked = mmr_rerank(&results, 2, Some(0.5));
+        assert_eq!(reranked.len(), 2);
+        // "a" ranks first by relevance. For the second pick at lambda=0.5,
+        // "b" is nearly identical to "a" (Jaccard ~0.87) so it gets a heavy
+        // diversity penalty, while "c" has low overlap with "a" (Jaccard ~0.2).
+        let ids: Vec<&str> = reranked.iter().map(|r| r.id.as_str()).collect();
+        assert!(
+            ids.contains(&"a"),
+            "highest relevance 'a' should be first pick"
+        );
+        assert!(
+            ids.contains(&"c"),
+            "diverse 'c' should beat near-duplicate 'b' at lambda=0.5"
+        );
+    }
+
+    // ========================================================================
+    // Recency boost
+    // ========================================================================
+
+    #[test]
+    fn recency_boost_favors_recent() {
+        let now = 1_000_000i64;
+        let recent_ts = now - 3600; // 1 hour ago
+        let old_ts = now - 30 * 86400; // 30 days ago
+
+        let recent_age = (now - recent_ts) as f64;
+        let old_age = (now - old_ts) as f64;
+
+        let recent_boost =
+            1.0 + (RECENCY_MAX_BOOST - 1.0) * (-recent_age / RECENCY_HALF_LIFE_SECS).exp();
+        let old_boost =
+            1.0 + (RECENCY_MAX_BOOST - 1.0) * (-old_age / RECENCY_HALF_LIFE_SECS).exp();
+
+        assert!(
+            recent_boost > old_boost,
+            "recent item ({recent_boost:.4}) should get higher boost than old ({old_boost:.4})"
+        );
+        assert!(
+            recent_boost <= RECENCY_MAX_BOOST,
+            "boost should not exceed max"
+        );
+        assert!(old_boost >= 1.0, "old item should still get >= 1.0 boost");
     }
 }

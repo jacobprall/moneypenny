@@ -78,8 +78,33 @@ pub fn parse_candidates(json_text: &str) -> anyhow::Result<Vec<CandidateFact>> {
     Ok(candidates)
 }
 
+/// Common English stop-words removed before similarity comparison to reduce
+/// noise and let content words drive the signal.
+const STOP_WORDS: &[&str] = &[
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "shall",
+    "should", "may", "might", "must", "can", "could", "of", "in", "to",
+    "for", "with", "on", "at", "by", "from", "as", "into", "through",
+    "and", "but", "or", "not", "no", "if", "then", "than", "that",
+    "this", "it", "its", "we", "they", "he", "she", "i", "you",
+];
+
+/// Normalize text for similarity comparison: lowercase, remove stop-words,
+/// collapse whitespace.
+fn normalize_for_similarity(text: &str) -> String {
+    let stop: std::collections::HashSet<&str> = STOP_WORDS.iter().copied().collect();
+    text.to_lowercase()
+        .split_whitespace()
+        .filter(|w| !stop.contains(w))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Deduplicate a candidate against existing facts.
-/// Uses keyword/text overlap as a proxy for vector similarity until embeddings are available.
+///
+/// Uses normalized Jaccard similarity (lowercased, stop-words removed) plus
+/// pointer overlap as a secondary signal. This catches rephrasings of the same
+/// fact even when exact wording differs.
 pub fn find_similar_fact(
     conn: &Connection,
     agent_id: &str,
@@ -87,21 +112,27 @@ pub fn find_similar_fact(
 ) -> anyhow::Result<Option<(String, f64)>> {
     let active = crate::store::facts::list_active(conn, agent_id)?;
 
-    let candidate_words: std::collections::HashSet<&str> =
-        candidate.content.split_whitespace().collect();
+    let norm_candidate = normalize_for_similarity(&candidate.content);
+    let norm_pointer = normalize_for_similarity(&candidate.pointer);
 
     let mut best: Option<(String, f64)> = None;
     for fact in &active {
-        let fact_words: std::collections::HashSet<&str> = fact.content.split_whitespace().collect();
-        let sim = crate::search::jaccard_similarity(
-            &candidate_words
-                .iter()
-                .copied()
-                .collect::<Vec<_>>()
-                .join(" "),
-            &fact_words.iter().copied().collect::<Vec<_>>().join(" "),
-        );
-        if sim > 0.5 {
+        let norm_fact = normalize_for_similarity(&fact.content);
+        let content_sim = crate::search::jaccard_similarity(&norm_candidate, &norm_fact);
+
+        // Pointer overlap as a secondary signal: same "concept label" is a strong
+        // indicator of duplication even when phrasing changed.
+        let pointer_sim = if !norm_pointer.is_empty() {
+            let norm_fp = normalize_for_similarity(&fact.pointer);
+            crate::search::jaccard_similarity(&norm_pointer, &norm_fp)
+        } else {
+            0.0
+        };
+
+        // Weighted blend: content dominates, pointer is a tiebreaker.
+        let sim = content_sim * 0.8 + pointer_sim * 0.2;
+
+        if sim > 0.4 {
             match &best {
                 Some((_, best_sim)) if sim <= *best_sim => {}
                 _ => best = Some((fact.id.clone(), sim)),
@@ -219,9 +250,9 @@ pub fn run_pipeline(
         let similar = find_similar_fact(&tx, agent_id, candidate)?;
 
         let (decision, existing_id) = match similar {
-            Some((id, sim)) if sim > 0.8 => (DeduplicationDecision::Update, Some(id)),
-            Some((id, sim)) if sim > 0.5 => (DeduplicationDecision::Noop, Some(id)),
-            _ => (DeduplicationDecision::Add, None),
+            Some((id, sim)) if sim > 0.7 => (DeduplicationDecision::Update, Some(id)),
+            Some((id, _)) => (DeduplicationDecision::Noop, Some(id)),
+            None => (DeduplicationDecision::Add, None),
         };
 
         let outcome = process_candidate(
@@ -623,5 +654,159 @@ mod tests {
         let audit = store::facts::get_audit(&conn, fact_id).unwrap();
         assert!(!audit.is_empty(), "should have audit entry");
         assert_eq!(audit[0].operation, "add");
+    }
+
+    // ========================================================================
+    // Normalized deduplication
+    // ========================================================================
+
+    #[test]
+    fn normalize_for_similarity_lowercases_and_strips_stops() {
+        let result = normalize_for_similarity("The ORDERS table uses soft deletes");
+        assert!(!result.contains("the"));
+        assert!(result.contains("orders"));
+        assert!(result.contains("soft"));
+        assert!(result.contains("deletes"));
+    }
+
+    #[test]
+    fn find_similar_detects_rephrasings() {
+        let conn = setup();
+        store::facts::add(
+            &conn,
+            &store::facts::NewFact {
+                agent_id: "a".into(),
+                scope: "shared".into(),
+                content: "The ORDERS table uses soft deletes via deleted_at column".into(),
+                summary: "ORDERS soft deletes".into(),
+                pointer: "ORDERS: soft-delete".into(),
+                keywords: None,
+                source_message_id: None,
+                confidence: 1.0,
+            },
+            None,
+        )
+        .unwrap();
+
+        // Rephrased version of the same fact
+        let candidate = CandidateFact {
+            content: "Soft deletes are used in the ORDERS table through the deleted_at field"
+                .into(),
+            summary: "orders soft delete".into(),
+            pointer: "ORDERS: soft-delete".into(),
+            keywords: None,
+            confidence: 0.9,
+        };
+        let similar = find_similar_fact(&conn, "a", &candidate).unwrap();
+        assert!(
+            similar.is_some(),
+            "should detect rephrased version as similar"
+        );
+    }
+
+    #[test]
+    fn find_similar_pointer_overlap_helps() {
+        let conn = setup();
+        store::facts::add(
+            &conn,
+            &store::facts::NewFact {
+                agent_id: "a".into(),
+                scope: "shared".into(),
+                content: "Deploy pipeline uses ArgoCD with canary strategy at five percent"
+                    .into(),
+                summary: "ArgoCD canary deploy".into(),
+                pointer: "deploy: ArgoCD canary".into(),
+                keywords: None,
+                source_message_id: None,
+                confidence: 1.0,
+            },
+            None,
+        )
+        .unwrap();
+
+        // Different wording but same pointer concept
+        let candidate = CandidateFact {
+            content: "ArgoCD runs canary deployments with a five percent rollout".into(),
+            summary: "ArgoCD canary".into(),
+            pointer: "deploy: ArgoCD canary".into(),
+            keywords: None,
+            confidence: 0.9,
+        };
+        let similar = find_similar_fact(&conn, "a", &candidate).unwrap();
+        assert!(
+            similar.is_some(),
+            "shared pointer should help detect similarity"
+        );
+    }
+
+    #[test]
+    fn find_similar_unrelated_still_returns_none() {
+        let conn = setup();
+        store::facts::add(
+            &conn,
+            &store::facts::NewFact {
+                agent_id: "a".into(),
+                scope: "shared".into(),
+                content: "The payment service uses Stripe webhooks for billing".into(),
+                summary: "Stripe billing".into(),
+                pointer: "billing: stripe".into(),
+                keywords: None,
+                source_message_id: None,
+                confidence: 1.0,
+            },
+            None,
+        )
+        .unwrap();
+
+        let candidate = CandidateFact {
+            content: "Kubernetes pods have memory limits configured at 512Mi".into(),
+            summary: "k8s memory limits".into(),
+            pointer: "k8s: memory".into(),
+            keywords: None,
+            confidence: 0.9,
+        };
+        let similar = find_similar_fact(&conn, "a", &candidate).unwrap();
+        assert!(similar.is_none(), "completely unrelated should not match");
+    }
+
+    #[test]
+    fn pipeline_deduplicates_case_insensitive() {
+        let conn = setup();
+        allow_all(&conn);
+        let sid = store::log::create_session(&conn, "a", None).unwrap();
+
+        store::facts::add(
+            &conn,
+            &store::facts::NewFact {
+                agent_id: "a".into(),
+                scope: "shared".into(),
+                content: "ORDERS table uses SOFT DELETES".into(),
+                summary: "orders soft deletes".into(),
+                pointer: "orders-soft-delete".into(),
+                keywords: None,
+                source_message_id: None,
+                confidence: 1.0,
+            },
+            None,
+        )
+        .unwrap();
+
+        let candidates = vec![CandidateFact {
+            content: "orders table uses soft deletes".into(),
+            summary: "orders soft deletes".into(),
+            pointer: "orders-soft-delete".into(),
+            keywords: None,
+            confidence: 0.9,
+        }];
+
+        let outcomes = run_pipeline(&conn, "a", &sid, &candidates, None).unwrap();
+        assert!(
+            matches!(
+                outcomes[0].decision,
+                DeduplicationDecision::Update | DeduplicationDecision::Noop
+            ),
+            "case-only difference should be detected as duplicate, got {:?}",
+            outcomes[0].decision
+        );
     }
 }

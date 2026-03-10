@@ -234,10 +234,16 @@ pub fn execute(
 
     if matches!(decision.effect, crate::policy::Effect::Deny) {
         let duration_ms = start.elapsed().as_millis() as u64;
+        let reason = decision.reason.as_deref().unwrap_or("policy denied");
+        let policy_ref = decision
+            .policy_id
+            .as_deref()
+            .map(|id| format!(" (policy: {id})"))
+            .unwrap_or_default();
         let result = ToolResult {
             output: format!(
-                "Tool call denied: {}",
-                decision.reason.as_deref().unwrap_or("policy denied")
+                "Tool '{tool_name}' denied: {reason}{policy_ref}. \
+                 Review policies with `mp policy list`."
             ),
             success: false,
             duration_ms,
