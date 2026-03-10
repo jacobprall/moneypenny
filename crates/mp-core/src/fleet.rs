@@ -152,3 +152,41 @@ pub fn matches_scope(tags_csv: Option<&str>, scope: Option<&str>) -> bool {
     let required = parse_tags_csv(scope_expr);
     required.iter().all(|t| provided_set.contains(t.as_str()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matches_scope_requires_all_tags() {
+        assert!(matches_scope(
+            Some("team:infra,env:prod,region:us"),
+            Some("team:infra,env:prod")
+        ));
+        assert!(!matches_scope(
+            Some("team:infra,env:staging"),
+            Some("team:infra,env:prod")
+        ));
+    }
+
+    #[test]
+    fn verify_policy_bundle_signature_sha256() {
+        let policies = vec![serde_json::json!({
+            "name": "allow-all",
+            "effect": "allow",
+            "priority": 1
+        })];
+        let canonical = serde_json::to_string(&policies).unwrap();
+        let mut hasher = Sha256::new();
+        hasher.update(canonical.as_bytes());
+        let digest = format!("{:x}", hasher.finalize());
+        let bundle = PolicyBundle {
+            policies,
+            signature: Some(PolicyBundleSignature {
+                algo: "sha256".into(),
+                value: digest,
+            }),
+        };
+        assert!(verify_policy_bundle_signature(&bundle).is_ok());
+    }
+}
