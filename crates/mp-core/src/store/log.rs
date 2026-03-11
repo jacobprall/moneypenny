@@ -7,8 +7,8 @@ pub mod tool_calls;
 
 pub use messages::{
     Message, Session, append_message, create_session, end_session, get_messages,
-    get_recent_messages, get_session, messages_without_embedding, set_message_embedding,
-    set_message_embedding_with_meta, update_summary,
+    get_recent_messages, get_session, messages_without_embedding, resolve_brain_id,
+    set_message_embedding, set_message_embedding_with_meta, update_summary,
 };
 pub use policy_audit::{
     policy_audit_projection_expr, policy_audit_without_embedding, set_policy_audit_embedding,

@@ -47,9 +47,9 @@ pub fn turn(
     // 1. Store user message
     let _user_msg_id = crate::store::log::append_message(conn, session_id, "user", user_message)?;
 
-    // 2. Assemble context
+    // 2. Assemble context (via compose for composition_logs audit trail)
     let budget = crate::context::TokenBudget::new(config.token_budget);
-    let segments = crate::context::assemble(
+    let segments = crate::context::compose(
         conn,
         &config.agent_id,
         session_id,

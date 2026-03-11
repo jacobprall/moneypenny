@@ -107,6 +107,7 @@ pub fn op_request(
             channel: Some("cli".into()),
         },
         context: mp_core::operations::OperationContext {
+            brain_id: None,
             session_id: None,
             trace_id: Some(request_id),
             timestamp: Some(chrono::Utc::now().timestamp()),

@@ -258,6 +258,23 @@ pub fn start_run(conn: &Connection, job_id: &str, agent_id: &str) -> anyhow::Res
          VALUES (?1, ?2, ?3, ?4, 'running', ?5)",
         params![id, job_id, agent_id, now, now],
     )?;
+
+    if !agent_id.is_empty() {
+        let _ = crate::store::events::append(
+            conn,
+            &crate::store::events::AppendInput {
+                brain_id: agent_id.to_string(),
+                event_type: "job_run.start".to_string(),
+                action: "start".to_string(),
+                resource: Some(format!("job_run:{id}")),
+                actor: None,
+                session_id: None,
+                correlation_id: None,
+                detail: Some(format!("job_id={job_id}")),
+            },
+        );
+    }
+
     Ok(id)
 }
 
@@ -274,6 +291,34 @@ pub fn finish_run(
          WHERE id = ?5",
         params![now, status, result, policy_decision, run_id],
     )?;
+
+    let agent_id: Option<String> = conn
+        .query_row("SELECT agent_id FROM job_runs WHERE id = ?1", [run_id], |r| r.get::<_, String>(0))
+        .ok();
+    if let Some(agent_id) = agent_id {
+        if !agent_id.is_empty() {
+            let detail = match (result, policy_decision) {
+                (Some(r), Some(p)) => Some(format!("status={status} result={r} policy={p}")),
+                (Some(r), None) => Some(format!("status={status} result={r}")),
+                (None, Some(p)) => Some(format!("status={status} policy={p}")),
+                _ => Some(format!("status={status}")),
+            };
+            let _ = crate::store::events::append(
+                conn,
+                &crate::store::events::AppendInput {
+                    brain_id: agent_id,
+                    event_type: "job_run.finish".to_string(),
+                    action: "finish".to_string(),
+                    resource: Some(format!("job_run:{run_id}")),
+                    actor: None,
+                    session_id: None,
+                    correlation_id: None,
+                    detail,
+                },
+            );
+        }
+    }
+
     Ok(())
 }
 

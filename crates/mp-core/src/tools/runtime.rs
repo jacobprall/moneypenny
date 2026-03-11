@@ -54,6 +54,7 @@ fn build_tool_op_request(
             channel: Some("agent-tool".into()),
         },
         context: crate::operations::OperationContext {
+            brain_id: None,
             session_id: Some(session_id.to_string()),
             trace_id: Some(request_id),
             timestamp: Some(chrono::Utc::now().timestamp()),
@@ -650,6 +651,7 @@ fn policy_add(
             channel: Some("agent".into()),
         },
         context: crate::operations::OperationContext {
+            brain_id: None,
             session_id: Some(session_id.to_string()),
             trace_id: None,
             timestamp: Some(chrono::Utc::now().timestamp()),

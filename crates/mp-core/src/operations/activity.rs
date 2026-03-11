@@ -323,6 +323,23 @@ pub(super) fn op_audit_append(conn: &Connection, req: &OperationRequest) -> anyh
         ],
     )?;
 
+    let brain_id = req.context.brain_id.as_deref().unwrap_or(&req.actor.agent_id);
+    if !brain_id.is_empty() {
+        let _ = crate::store::events::append(
+            conn,
+            &crate::store::events::AppendInput {
+                brain_id: brain_id.to_string(),
+                event_type: "policy.decision".to_string(),
+                action: action.to_string(),
+                resource: Some(resource.to_string()),
+                actor: Some(actor.to_string()),
+                session_id: req.args["session_id"].as_str().or(req.context.session_id.as_deref()).map(String::from),
+                correlation_id: req.args["correlation_id"].as_str().or(req.request_id.as_deref()).or(req.context.trace_id.as_deref()).map(String::from),
+                detail: reason.map(|s| format!("effect={effect} reason={s}")),
+            },
+        );
+    }
+
     Ok(OperationResponse {
         ok: true,
         code: "ok".into(),

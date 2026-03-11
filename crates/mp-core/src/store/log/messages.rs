@@ -54,6 +54,22 @@ pub fn update_summary(conn: &Connection, session_id: &str, summary: &str) -> any
     Ok(())
 }
 
+/// Resolve brain_id for a session. Uses session.brain_id if set, else agent_id.
+/// Returns fallback_agent_id if session not found.
+pub fn resolve_brain_id(
+    conn: &Connection,
+    session_id: &str,
+    fallback_agent_id: &str,
+) -> String {
+    conn.query_row(
+        "SELECT COALESCE(NULLIF(brain_id,''), agent_id) FROM sessions WHERE id = ?1",
+        [session_id],
+        |r| r.get::<_, String>(0),
+    )
+    .map(|s| if s.is_empty() { fallback_agent_id.to_string() } else { s })
+    .unwrap_or_else(|_| fallback_agent_id.to_string())
+}
+
 /// Get a session by ID.
 pub fn get_session(conn: &Connection, session_id: &str) -> anyhow::Result<Option<Session>> {
     let session = conn
@@ -88,6 +104,32 @@ pub fn append_message(
         "INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
         params![id, session_id, role, content, now],
     )?;
+
+    let brain_id: Option<String> = conn
+        .query_row(
+            "SELECT COALESCE(NULLIF(brain_id,''), agent_id) FROM sessions WHERE id = ?1",
+            [session_id],
+            |r| r.get::<_, String>(0),
+        )
+        .ok();
+    if let Some(brain_id) = brain_id {
+        if !brain_id.is_empty() {
+            let _ = crate::store::events::append(
+                conn,
+                &crate::store::events::AppendInput {
+                    brain_id,
+                    event_type: "message.append".to_string(),
+                    action: "append".to_string(),
+                    resource: Some(format!("message:{id}")),
+                    actor: None,
+                    session_id: Some(session_id.to_string()),
+                    correlation_id: None,
+                    detail: Some(format!("role={role} len={}", content.len())),
+                },
+            );
+        }
+    }
+
     Ok(id)
 }
 

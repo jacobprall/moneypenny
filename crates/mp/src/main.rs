@@ -51,6 +51,9 @@ async fn main() -> Result<()> {
         Command::Serve { agent } => commands::serve::run(&config, config_path, agent).await,
         Command::Stop => commands::stop::run(&config).await,
         Command::Agent(cmd) => commands::agent::run(&config, cmd).await,
+        Command::Brain(cmd) => commands::brain::run(&config, cmd).await,
+        Command::Experience(cmd) => commands::experience::run(&config, cmd).await,
+        Command::Focus(cmd) => commands::focus::run(&config, cmd).await,
         Command::Chat { agent, session_id, new } => {
             commands::chat::run(&config, agent, session_id, new).await
         }

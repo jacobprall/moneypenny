@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use crate::tools::{domain_allowed_actions, route_domain_action};
 
 // Re-export registry constants for consumers (sidecar, etc.)
-pub use crate::tools::{TOOL_ACTIVITY, TOOL_EXECUTE, TOOL_FACTS, TOOL_KNOWLEDGE, TOOL_POLICY};
+pub use crate::tools::{TOOL_ACTIVITY, TOOL_BRAIN, TOOL_EVENTS, TOOL_EXECUTE, TOOL_EXPERIENCE, TOOL_FACTS, TOOL_FOCUS, TOOL_KNOWLEDGE, TOOL_POLICY};
 
 // Legacy constants — kept so routing still resolves old tool calls gracefully.
 // Both dot and underscore prefixes are accepted by normalize_tool_name().
@@ -104,7 +104,7 @@ pub fn route_tool_call(tool_name: &str, arguments: &Value) -> Result<RoutedToolC
         .ok_or_else(|| anyhow::anyhow!("tool call requires string field 'action'"))?;
 
     let (op, args, domain_name) = match normalized.as_str() {
-        "facts" | "knowledge" | "policy" | "activity" => {
+        "facts" | "knowledge" | "policy" | "activity" | "experience" | "events" | "focus" | "brain" => {
             if let Some((routed_op, tool_name)) = route_domain_action(normalized.as_str(), action) {
                 (routed_op.to_string(), input, tool_name)
             } else {
@@ -187,6 +187,26 @@ pub fn covered_ops() -> &'static [&'static str] {
         "agent.create",
         "agent.delete",
         "agent.config",
+        "brain.memories.experience.record",
+        "brain.memories.experience.match",
+        "brain.memories.experience.resolve",
+        "brain.memories.experience.ignore",
+        "brain.memories.experience.search",
+        "brain.memories.experience.stats",
+        "brain.memories.experience.compact",
+        "brain.memories.events.append",
+        "brain.memories.events.query",
+        "brain.memories.events.compact",
+        "brain.focus.set",
+        "brain.focus.get",
+        "brain.focus.list",
+        "brain.focus.clear",
+        "brain.focus.compose",
+        "brain.focus.composition.log",
+        "brain.focus.composition.last",
+        "brain.checkpoint",
+        "brain.restore",
+        "brain.export",
         "skill.add",
         "skill.promote",
         "js.tool.add",
@@ -203,10 +223,14 @@ pub fn next_actions(_domain_tool: &str, _action: &str) -> Vec<Value> {
 
 pub fn capabilities(domain_filter: Option<&str>) -> Value {
     let cards = vec![
+        card("brain", TOOL_BRAIN, &["create", "get", "list", "update", "delete", "checkpoint", "restore", "export"], "Brain lifecycle — snapshot, restore, export."),
         card("facts", TOOL_FACTS, &["search", "add", "get", "update", "delete"], "Durable facts — persistent knowledge across sessions."),
         card("knowledge", TOOL_KNOWLEDGE, &["ingest", "search", "list"], "Document ingestion and retrieval."),
         card("policy", TOOL_POLICY, &["add", "list", "disable", "evaluate"], "Governance policy management."),
         card("activity", TOOL_ACTIVITY, &["query"], "Session history and audit trail."),
+        card("experience", TOOL_EXPERIENCE, &["record", "match", "resolve", "ignore", "search", "stats", "compact"], "Curated learned priors — failure patterns, command outcomes."),
+        card("events", TOOL_EVENTS, &["append", "query", "compact"], "Unified event log — append and query brain events."),
+        card("focus", TOOL_FOCUS, &["set", "get", "list", "clear", "compose", "composition_log", "composition_last"], "Focus working set + context composition."),
         card("execute", TOOL_EXECUTE, &["(any canonical operation)"], "Direct operation call — escape hatch."),
     ];
 
@@ -364,11 +388,15 @@ mod tests {
     fn tools_list_exposes_domain_surface() {
         let list = tools_list();
         let tools = list["tools"].as_array().cloned().unwrap_or_default();
-        assert_eq!(tools.len(), 5, "MCP surface: facts + knowledge + policy + activity + execute");
+        assert_eq!(tools.len(), 9, "MCP surface: brain + facts + knowledge + policy + activity + experience + events + focus + execute");
+        assert!(tools.iter().any(|t| t["name"] == TOOL_BRAIN));
         assert!(tools.iter().any(|t| t["name"] == TOOL_FACTS));
         assert!(tools.iter().any(|t| t["name"] == TOOL_KNOWLEDGE));
         assert!(tools.iter().any(|t| t["name"] == TOOL_POLICY));
         assert!(tools.iter().any(|t| t["name"] == TOOL_ACTIVITY));
+        assert!(tools.iter().any(|t| t["name"] == TOOL_EXPERIENCE));
+        assert!(tools.iter().any(|t| t["name"] == TOOL_EVENTS));
+        assert!(tools.iter().any(|t| t["name"] == TOOL_FOCUS));
         assert!(tools.iter().any(|t| t["name"] == TOOL_EXECUTE));
         // DSL/query tool should NOT be on the MCP surface
         assert!(!tools.iter().any(|t| t["name"] == TOOL_QUERY));

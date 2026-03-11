@@ -3,6 +3,6 @@
 mod registry;
 
 pub use registry::{
-    all_tools, domain_allowed_actions, route_domain_action, ToolDef, TOOL_ACTIVITY, TOOL_EXECUTE,
-    TOOL_FACTS, TOOL_KNOWLEDGE, TOOL_POLICY,
+    all_tools, domain_allowed_actions, route_domain_action, ToolDef, TOOL_ACTIVITY, TOOL_BRAIN,
+    TOOL_EVENTS, TOOL_EXECUTE, TOOL_EXPERIENCE, TOOL_FACTS, TOOL_FOCUS, TOOL_KNOWLEDGE, TOOL_POLICY,
 };

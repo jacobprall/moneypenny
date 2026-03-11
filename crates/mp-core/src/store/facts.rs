@@ -75,6 +75,22 @@ pub fn add(conn: &Connection, fact: &NewFact, reason: Option<&str>) -> anyhow::R
         params![audit_id, id, fact.content, reason, fact.source_message_id, now],
     )?;
 
+    if !fact.agent_id.is_empty() {
+        let _ = crate::store::events::append(
+            conn,
+            &crate::store::events::AppendInput {
+                brain_id: fact.agent_id.clone(),
+                event_type: "fact.audit".to_string(),
+                action: "add".to_string(),
+                resource: Some(format!("fact:{id}")),
+                actor: None,
+                session_id: None,
+                correlation_id: None,
+                detail: reason.map(String::from),
+            },
+        );
+    }
+
     Ok(id)
 }
 
@@ -108,6 +124,29 @@ pub fn update(
         params![audit_id, fact_id, old_content, new_content, reason, source_message_id, now],
     )?;
 
+    let brain_id: Option<String> = conn
+        .query_row(
+            "SELECT COALESCE(NULLIF(brain_id,''), agent_id) FROM facts WHERE id = ?1",
+            [fact_id],
+            |r| r.get::<_, String>(0),
+        )
+        .ok();
+    if let Some(bid) = brain_id.filter(|s| !s.is_empty()) {
+        let _ = crate::store::events::append(
+            conn,
+            &crate::store::events::AppendInput {
+                brain_id: bid,
+                event_type: "fact.audit".to_string(),
+                action: "update".to_string(),
+                resource: Some(format!("fact:{fact_id}")),
+                actor: None,
+                session_id: None,
+                correlation_id: None,
+                detail: reason.map(String::from),
+            },
+        );
+    }
+
     Ok(())
 }
 
@@ -131,6 +170,29 @@ pub fn delete(conn: &Connection, fact_id: &str, reason: Option<&str>) -> anyhow:
          VALUES (?1, ?2, 'delete', ?3, ?4, ?5)",
         params![audit_id, fact_id, old_content, reason, now],
     )?;
+
+    let brain_id: Option<String> = conn
+        .query_row(
+            "SELECT COALESCE(NULLIF(brain_id,''), agent_id) FROM facts WHERE id = ?1",
+            [fact_id],
+            |r| r.get::<_, String>(0),
+        )
+        .ok();
+    if let Some(bid) = brain_id.filter(|s| !s.is_empty()) {
+        let _ = crate::store::events::append(
+            conn,
+            &crate::store::events::AppendInput {
+                brain_id: bid,
+                event_type: "fact.audit".to_string(),
+                action: "delete".to_string(),
+                resource: Some(format!("fact:{fact_id}")),
+                actor: None,
+                session_id: None,
+                correlation_id: None,
+                detail: reason.map(String::from),
+            },
+        );
+    }
 
     Ok(())
 }

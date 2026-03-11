@@ -27,6 +27,7 @@ use tracing::{debug, info, warn};
 
 /// Default tables that get CRDT metadata on every new agent DB.
 pub const DEFAULT_SYNC_TABLES: &[&str] = &[
+    "brains",
     "facts",
     "fact_links",
     "skills",
@@ -35,6 +36,10 @@ pub const DEFAULT_SYNC_TABLES: &[&str] = &[
     "chunks",
     "edges",
     "jobs",
+    "experience_cases",
+    "experience_attempts",
+    "experience_fixes",
+    "events",
 ];
 
 const MAX_SYNCED_CHUNK_CHARS: i64 = 20_000;

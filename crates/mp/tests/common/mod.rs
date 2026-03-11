@@ -102,15 +102,20 @@ pub fn enable_http_channel(
 /// and CLI disabled (e.g. via `enable_http_channel`). Returns the child process handle;
 /// caller must kill it when done (e.g. `child.kill()`).
 pub fn spawn_gateway(config_path: &Path) -> std::io::Result<Child> {
-    let cwd = config_path.parent().unwrap_or(Path::new("."));
+    let cwd = config_path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .canonicalize()
+        .unwrap_or_else(|_| config_path.parent().unwrap_or(Path::new(".")).to_path_buf());
     let config_canonical = std::fs::canonicalize(config_path).unwrap_or_else(|_| config_path.to_path_buf());
     let mut cmd = Command::new(MP_BIN);
     cmd.args(["--config", config_canonical.to_str().unwrap(), "start"])
-        .current_dir(cwd)
+        .current_dir(&cwd)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     cmd.env_remove("RUST_LOG");
+    cmd.env_remove("MP_CONFIG");
     cmd.env_remove("MP_DATA_DIR");
     cmd.env_remove("MP_MODELS_DIR");
     cmd.spawn()

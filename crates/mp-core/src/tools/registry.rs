@@ -1,5 +1,6 @@
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Tool source type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,6 +203,40 @@ pub fn discover(conn: &Connection, intent: &str, limit: usize) -> anyhow::Result
 /// # Execution order
 ///
 /// 1. **Policy check** — deny immediately if the policy engine blocks this call.
+/// Extract a command-like string from tool args for experience matching.
+/// e.g. shell_exec: {"command": "ls -la"} or {"cmd": "ls"}
+fn truncate_error_signature(s: &str, max_len: usize) -> String {
+    let trimmed = s.trim();
+    if trimmed.len() <= max_len {
+        trimmed.to_string()
+    } else {
+        format!("{}...", &trimmed[..max_len.saturating_sub(3)])
+    }
+}
+
+fn truncate_for_context(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max_len.saturating_sub(3)])
+    }
+}
+
+fn extract_command_hint(tool_name: &str, arguments: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(arguments).ok()?;
+    let obj = v.as_object()?;
+    let key = if matches!(tool_name, "shell_exec" | "run_terminal_cmd") {
+        "command"
+    } else {
+        "cmd"
+    };
+    obj.get(key)
+        .or_else(|| obj.get("command"))
+        .or_else(|| obj.get("cmd"))
+        .and_then(|v| v.as_str())
+        .map(String::from)
+}
+
 /// 2. **Pre-hooks** — any hook that aborts produces an immediate denied-style result.
 ///    A hook that overrides args substitutes them for this execution only.
 /// 3. **Tool dispatch** — runtime tools or the provided `executor` closure.
@@ -299,6 +334,20 @@ pub fn execute(
         std::borrow::Cow::Borrowed(arguments)
     };
 
+    // 2.5. Pre-action experience lookup
+    let brain_id = crate::store::log::resolve_brain_id(conn, session_id, agent_id);
+    let command_hint = extract_command_hint(tool_name, arguments);
+    let prior_cases = crate::store::experience::r#match(
+        conn,
+        &brain_id,
+        None,
+        Some(tool_name),
+        command_hint.as_deref(),
+        None,
+        Some(5),
+    )
+    .unwrap_or_default();
+
     // 3. Execute — dispatch in priority order:
     //    a) runtime tools (need the DB connection)
     //    b) MCP tools (spawn the registered server subprocess)
@@ -318,6 +367,35 @@ pub fn execute(
     match exec_result {
         Ok(mut result) => {
             result.duration_ms = duration_ms;
+
+            // 3.5. Post-action learning: record failures for experience
+            if !result.success {
+                let error_sig = truncate_error_signature(&result.output, 200);
+                let _ = crate::store::experience::record(
+                    conn,
+                    &crate::store::experience::RecordInput {
+                        brain_id: brain_id.clone(),
+                        case_type: "tool_failure".to_string(),
+                        tool: Some(tool_name.to_string()),
+                        command: command_hint.clone(),
+                        error_signature: Some(error_sig),
+                        context: format!("tool={tool_name} args={}", truncate_for_context(arguments, 500)),
+                        outcome: result.output.chars().take(1000).collect(),
+                        confidence: Some(0.9),
+                    },
+                );
+            }
+
+            // 3.6. Prepend prior experience to output if we had matches
+            if !prior_cases.is_empty() {
+                let prior_text: String = prior_cases
+                    .iter()
+                    .take(3)
+                    .map(|c| format!("[Prior] {}: {}", c.case_type, c.outcome))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                result.output = format!("{}\n\n---\n\n{}", prior_text, result.output);
+            }
 
             // 4. Post-hooks
             if let Some(h) = hooks {
@@ -351,8 +429,36 @@ pub fn execute(
             Ok(result)
         }
         Err(e) => {
+            let err_output = crate::store::redact::redact(&e.to_string());
+
+            // Post-action learning: record execution failure
+            let _ = crate::store::experience::record(
+                conn,
+                &crate::store::experience::RecordInput {
+                    brain_id: brain_id.clone(),
+                    case_type: "tool_failure".to_string(),
+                    tool: Some(tool_name.to_string()),
+                    command: command_hint.clone(),
+                    error_signature: Some(truncate_error_signature(&err_output, 200)),
+                    context: format!("tool={tool_name} args={}", truncate_for_context(arguments, 500)),
+                    outcome: err_output.chars().take(1000).collect(),
+                    confidence: Some(0.9),
+                },
+            );
+
+            let mut output = err_output;
+            if !prior_cases.is_empty() {
+                let prior_text: String = prior_cases
+                    .iter()
+                    .take(3)
+                    .map(|c| format!("[Prior] {}: {}", c.case_type, c.outcome))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                output = format!("{}\n\n---\n\n{}", prior_text, output);
+            }
+
             let result = ToolResult {
-                output: crate::store::redact::redact(&e.to_string()),
+                output,
                 success: false,
                 duration_ms,
             };

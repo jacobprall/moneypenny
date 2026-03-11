@@ -737,11 +737,15 @@ mod tests {
     fn sidecar_mcp_tools_list_exposes_domain_tools() {
         let result = mcp_tools_list_result();
         let tools = result["tools"].as_array().cloned().unwrap_or_default();
-        assert_eq!(tools.len(), 5, "MCP surface: facts + knowledge + policy + activity + execute");
+        assert_eq!(tools.len(), 9, "MCP surface: brain + facts + knowledge + policy + activity + experience + events + focus + execute");
+        assert!(tools.iter().any(|t| t["name"] == "moneypenny_brain"));
         assert!(tools.iter().any(|t| t["name"] == "moneypenny_facts"));
         assert!(tools.iter().any(|t| t["name"] == "moneypenny_knowledge"));
         assert!(tools.iter().any(|t| t["name"] == "moneypenny_policy"));
         assert!(tools.iter().any(|t| t["name"] == "moneypenny_activity"));
+        assert!(tools.iter().any(|t| t["name"] == "moneypenny_experience"));
+        assert!(tools.iter().any(|t| t["name"] == "moneypenny_events"));
+        assert!(tools.iter().any(|t| t["name"] == "moneypenny_focus"));
         assert!(tools.iter().any(|t| t["name"] == "moneypenny_execute"));
         assert!(!tools.iter().any(|t| t["name"] == "moneypenny_query"));
     }

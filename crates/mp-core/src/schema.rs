@@ -5,8 +5,8 @@
 /// - **Metadata DB**: one per gateway, contains agent registry + routing
 use rusqlite::Connection;
 
-const AGENT_SCHEMA_VERSION: i64 = 16;
-const METADATA_SCHEMA_VERSION: i64 = 2;
+const AGENT_SCHEMA_VERSION: i64 = 21;
+const METADATA_SCHEMA_VERSION: i64 = 3;
 
 pub fn init_agent_db(conn: &Connection) -> anyhow::Result<()> {
     let current = get_schema_version(conn);
@@ -102,6 +102,48 @@ pub fn init_agent_db(conn: &Connection) -> anyhow::Result<()> {
         set_schema_version(conn, 16)?;
     }
 
+    if current < 17 {
+        conn.execute_batch(AGENT_SCHEMA_V17)?;
+        for table in &["facts", "fact_links", "documents", "chunks", "skills", "policies", "jobs", "job_specs", "policy_specs", "sessions", "scratch", "edges"] {
+            add_brain_id_if_missing(conn, table)?;
+        }
+        for (table, agent_col) in &[
+            ("facts", "agent_id"),
+            ("documents", "agent_id"),
+            ("policies", "agent_id"),
+            ("jobs", "agent_id"),
+            ("job_specs", "agent_id"),
+            ("policy_specs", "agent_id"),
+            ("sessions", "agent_id"),
+        ] {
+            backfill_brain_id_from_agent_id(conn, table, agent_col)?;
+        }
+        backfill_brain_id_for_scratch(conn)?;
+        backfill_brain_id_for_chunks(conn)?;
+        backfill_brain_id_for_fact_links(conn)?;
+        set_schema_version(conn, 17)?;
+    }
+
+    if current < 18 {
+        conn.execute_batch(AGENT_SCHEMA_V18)?;
+        set_schema_version(conn, 18)?;
+    }
+
+    if current < 19 {
+        conn.execute_batch(AGENT_SCHEMA_V19)?;
+        set_schema_version(conn, 19)?;
+    }
+
+    if current < 20 {
+        conn.execute_batch(AGENT_SCHEMA_V20)?;
+        set_schema_version(conn, 20)?;
+    }
+
+    if current < 21 {
+        conn.execute_batch(AGENT_SCHEMA_V21)?;
+        set_schema_version(conn, 21)?;
+    }
+
     Ok(())
 }
 
@@ -156,6 +198,13 @@ pub fn init_metadata_db(conn: &Connection) -> anyhow::Result<()> {
             conn.execute_batch(METADATA_SCHEMA_V2)?;
         }
         set_schema_version(conn, 2)?;
+    }
+
+    if current < 3 {
+        if !table_has_column(conn, "agents", "default_brain_id") {
+            conn.execute_batch(METADATA_SCHEMA_V3)?;
+        }
+        set_schema_version(conn, 3)?;
     }
 
     Ok(())
@@ -962,6 +1011,224 @@ const AGENT_SCHEMA_V16: &str = "
 CREATE INDEX IF NOT EXISTS idx_documents_scope ON documents (scope, agent_id, created_at);
 ";
 
+// ---------------------------------------------------------------------------
+// Agent database — v17: Brain domain (brains table + brain_id on artifacts)
+// ---------------------------------------------------------------------------
+
+const AGENT_SCHEMA_V17: &str = "
+CREATE TABLE IF NOT EXISTS brains (
+    id                  TEXT NOT NULL PRIMARY KEY,
+    name                TEXT NOT NULL DEFAULT '',
+    mission             TEXT,
+    config              TEXT,
+    created_at          INTEGER NOT NULL DEFAULT 0,
+    updated_at          INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_brains_created ON brains (created_at);
+";
+
+// ---------------------------------------------------------------------------
+// Agent database — v18: Experience engine (curated learned priors)
+// ---------------------------------------------------------------------------
+
+const AGENT_SCHEMA_V18: &str = "
+CREATE TABLE IF NOT EXISTS experience_cases (
+    id                  TEXT NOT NULL PRIMARY KEY,
+    brain_id            TEXT NOT NULL DEFAULT '',
+    type                TEXT NOT NULL DEFAULT 'failure',
+    fingerprint         TEXT NOT NULL,
+    tool                TEXT,
+    command             TEXT,
+    error_signature     TEXT,
+    context             TEXT NOT NULL DEFAULT '',
+    outcome             TEXT NOT NULL DEFAULT '',
+    confidence          REAL NOT NULL DEFAULT 1.0,
+    status              TEXT NOT NULL DEFAULT 'open',
+    hit_count           INTEGER NOT NULL DEFAULT 1,
+    last_hit_at         INTEGER,
+    created_at          INTEGER NOT NULL DEFAULT 0,
+    updated_at          INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_experience_cases_brain_type ON experience_cases (brain_id, type);
+CREATE INDEX IF NOT EXISTS idx_experience_cases_fingerprint ON experience_cases (brain_id, fingerprint);
+CREATE INDEX IF NOT EXISTS idx_experience_cases_status ON experience_cases (brain_id, status);
+CREATE INDEX IF NOT EXISTS idx_experience_cases_last_hit ON experience_cases (brain_id, last_hit_at);
+
+CREATE TABLE IF NOT EXISTS experience_attempts (
+    id                  TEXT NOT NULL PRIMARY KEY,
+    case_id             TEXT NOT NULL,
+    action              TEXT NOT NULL DEFAULT '',
+    result              TEXT,
+    success             INTEGER NOT NULL DEFAULT 0,
+    created_at          INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (case_id) REFERENCES experience_cases(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_experience_attempts_case ON experience_attempts (case_id);
+
+CREATE TABLE IF NOT EXISTS experience_fixes (
+    id                  TEXT NOT NULL PRIMARY KEY,
+    case_id             TEXT NOT NULL,
+    fix_text            TEXT NOT NULL DEFAULT '',
+    fix_type            TEXT NOT NULL DEFAULT 'workaround',
+    applied_count       INTEGER NOT NULL DEFAULT 0,
+    success_rate        REAL,
+    created_at          INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (case_id) REFERENCES experience_cases(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_experience_fixes_case ON experience_fixes (case_id);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS experience_cases_fts USING fts5(
+    context,
+    outcome,
+    content='experience_cases',
+    content_rowid='rowid'
+);
+
+CREATE TRIGGER IF NOT EXISTS trg_experience_cases_fts_insert AFTER INSERT ON experience_cases BEGIN
+  INSERT INTO experience_cases_fts (rowid, context, outcome) VALUES (NEW.rowid, NEW.context, NEW.outcome);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_experience_cases_fts_update AFTER UPDATE ON experience_cases BEGIN
+  DELETE FROM experience_cases_fts WHERE rowid = OLD.rowid;
+  INSERT INTO experience_cases_fts (rowid, context, outcome) VALUES (NEW.rowid, NEW.context, NEW.outcome);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_experience_cases_fts_delete AFTER DELETE ON experience_cases BEGIN
+  DELETE FROM experience_cases_fts WHERE rowid = OLD.rowid;
+END;
+";
+
+// ---------------------------------------------------------------------------
+// Agent database — v19: Unified events table (append-only log)
+// ---------------------------------------------------------------------------
+
+const AGENT_SCHEMA_V19: &str = "
+CREATE TABLE IF NOT EXISTS events (
+    id                  TEXT NOT NULL PRIMARY KEY,
+    brain_id            TEXT NOT NULL DEFAULT '',
+    event_type          TEXT NOT NULL DEFAULT '',
+    action              TEXT NOT NULL DEFAULT '',
+    resource            TEXT,
+    actor               TEXT,
+    session_id          TEXT,
+    correlation_id      TEXT,
+    detail              TEXT,
+    created_at          INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_brain_created ON events (brain_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_events_type ON events (brain_id, event_type);
+CREATE INDEX IF NOT EXISTS idx_events_session ON events (brain_id, session_id);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
+    event_type,
+    action,
+    resource,
+    detail,
+    content='events',
+    content_rowid='rowid'
+);
+
+CREATE TRIGGER IF NOT EXISTS trg_events_fts_insert AFTER INSERT ON events BEGIN
+  INSERT INTO events_fts (rowid, event_type, action, resource, detail) VALUES (NEW.rowid, NEW.event_type, NEW.action, COALESCE(NEW.resource,''), COALESCE(NEW.detail,''));
+END;
+CREATE TRIGGER IF NOT EXISTS trg_events_fts_update AFTER UPDATE ON events BEGIN
+  DELETE FROM events_fts WHERE rowid = OLD.rowid;
+  INSERT INTO events_fts (rowid, event_type, action, resource, detail) VALUES (NEW.rowid, NEW.event_type, NEW.action, COALESCE(NEW.resource,''), COALESCE(NEW.detail,''));
+END;
+CREATE TRIGGER IF NOT EXISTS trg_events_fts_delete AFTER DELETE ON events BEGIN
+  DELETE FROM events_fts WHERE rowid = OLD.rowid;
+END;
+";
+
+// ---------------------------------------------------------------------------
+// Agent database — v20: Composition logs (context assembly audit)
+// ---------------------------------------------------------------------------
+
+const AGENT_SCHEMA_V20: &str = "
+CREATE TABLE IF NOT EXISTS composition_logs (
+    id                  TEXT NOT NULL PRIMARY KEY,
+    brain_id            TEXT NOT NULL DEFAULT '',
+    session_id          TEXT,
+    task_hint           TEXT,
+    max_tokens          INTEGER NOT NULL DEFAULT 0,
+    segments_json       TEXT,
+    total_tokens        INTEGER NOT NULL DEFAULT 0,
+    created_at          INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_composition_logs_brain ON composition_logs (brain_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_composition_logs_session ON composition_logs (session_id, created_at);
+";
+
+// ---------------------------------------------------------------------------
+// Agent database — v21: Checkpoints (brain snapshot metadata)
+// ---------------------------------------------------------------------------
+
+const AGENT_SCHEMA_V21: &str = "
+CREATE TABLE IF NOT EXISTS checkpoints (
+    id                  TEXT NOT NULL PRIMARY KEY,
+    brain_id            TEXT NOT NULL DEFAULT '',
+    name                TEXT NOT NULL DEFAULT '',
+    path                TEXT NOT NULL DEFAULT '',
+    include_domains     TEXT,
+    created_at          INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_checkpoints_brain ON checkpoints (brain_id, created_at);
+";
+
+fn add_brain_id_if_missing(conn: &Connection, table: &str) -> anyhow::Result<()> {
+    if !table_has_column(conn, table, "brain_id") {
+        conn.execute_batch(&format!(
+            "ALTER TABLE {table} ADD COLUMN brain_id TEXT NOT NULL DEFAULT '';"
+        ))?;
+    }
+    Ok(())
+}
+
+fn backfill_brain_id_from_agent_id(conn: &Connection, table: &str, agent_col: &str) -> anyhow::Result<()> {
+    if table_has_column(conn, table, "brain_id") && table_has_column(conn, table, agent_col) {
+        conn.execute(
+            &format!("UPDATE {table} SET brain_id = {agent_col} WHERE brain_id = '' OR brain_id IS NULL"),
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+fn backfill_brain_id_for_scratch(conn: &Connection) -> anyhow::Result<()> {
+    if table_has_column(conn, "scratch", "brain_id") && table_has_column(conn, "scratch", "session_id") {
+        conn.execute(
+            "UPDATE scratch SET brain_id = (SELECT brain_id FROM sessions WHERE sessions.id = scratch.session_id) WHERE (brain_id = '' OR brain_id IS NULL) AND session_id IN (SELECT id FROM sessions)",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+fn backfill_brain_id_for_chunks(conn: &Connection) -> anyhow::Result<()> {
+    if table_has_column(conn, "chunks", "brain_id") && table_has_column(conn, "chunks", "document_id") {
+        conn.execute(
+            "UPDATE chunks SET brain_id = (SELECT brain_id FROM documents WHERE documents.id = chunks.document_id) WHERE (brain_id = '' OR brain_id IS NULL) AND document_id IN (SELECT id FROM documents)",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+fn backfill_brain_id_for_fact_links(conn: &Connection) -> anyhow::Result<()> {
+    if table_has_column(conn, "fact_links", "brain_id") && table_has_column(conn, "fact_links", "source_id") {
+        conn.execute(
+            "UPDATE fact_links SET brain_id = (SELECT brain_id FROM facts WHERE facts.id = fact_links.source_id) WHERE (brain_id = '' OR brain_id IS NULL) AND source_id IN (SELECT id FROM facts)",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
 fn table_has_column(conn: &Connection, table: &str, column: &str) -> bool {
     conn.query_row(
         "SELECT EXISTS(
@@ -995,6 +1262,10 @@ CREATE TABLE IF NOT EXISTS agents (
 
 const METADATA_SCHEMA_V2: &str = "
 ALTER TABLE agents ADD COLUMN tags TEXT;
+";
+
+const METADATA_SCHEMA_V3: &str = "
+ALTER TABLE agents ADD COLUMN default_brain_id TEXT;
 ";
 
 /// Exact table names to skip in schema summaries.
@@ -1815,6 +2086,62 @@ mod tests {
     }
 
     #[test]
+    fn checkpoints_table_has_all_columns() {
+        let conn = setup_agent_db();
+        let expected = vec!["id", "brain_id", "name", "path", "include_domains", "created_at"];
+        for col in &expected {
+            assert!(
+                has_column(&conn, "checkpoints", col),
+                "checkpoints missing column: {col}"
+            );
+        }
+    }
+
+    #[test]
+    fn composition_logs_table_has_all_columns() {
+        let conn = setup_agent_db();
+        let expected = vec![
+            "id",
+            "brain_id",
+            "session_id",
+            "task_hint",
+            "max_tokens",
+            "segments_json",
+            "total_tokens",
+            "created_at",
+        ];
+        for col in &expected {
+            assert!(
+                has_column(&conn, "composition_logs", col),
+                "composition_logs missing column: {col}"
+            );
+        }
+    }
+
+    #[test]
+    fn events_table_has_all_columns() {
+        let conn = setup_agent_db();
+        let expected = vec![
+            "id",
+            "brain_id",
+            "event_type",
+            "action",
+            "resource",
+            "actor",
+            "session_id",
+            "correlation_id",
+            "detail",
+            "created_at",
+        ];
+        for col in &expected {
+            assert!(
+                has_column(&conn, "events", col),
+                "events missing column: {col}"
+            );
+        }
+    }
+
+    #[test]
     fn external_events_table_has_normalized_projection_columns() {
         let conn = setup_agent_db();
         let expected = vec![
@@ -2059,6 +2386,10 @@ mod tests {
     fn agent_db_has_all_tables() {
         let conn = setup_agent_db();
         let expected_tables = vec![
+            "brains",
+            "experience_cases",
+            "experience_attempts",
+            "experience_fixes",
             "facts",
             "fact_links",
             "fact_audit",
@@ -2076,6 +2407,9 @@ mod tests {
             "job_runs",
             "job_specs",
             "policy_specs",
+            "events",
+            "composition_logs",
+            "checkpoints",
             "external_events",
             "ingest_runs",
             "operation_idempotency",

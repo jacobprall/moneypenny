@@ -1,4 +1,7 @@
+pub mod brain;
 pub mod embedding;
+pub mod events;
+pub mod experience;
 pub mod facts;
 pub mod knowledge;
 pub mod log;

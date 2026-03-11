@@ -106,6 +106,38 @@ pub fn record_tool_call(
             now
         ],
     )?;
+
+    let brain_id: Option<String> = conn
+        .query_row(
+            "SELECT COALESCE(NULLIF(brain_id,''), agent_id) FROM sessions WHERE id = ?1",
+            [session_id],
+            |r| r.get::<_, String>(0),
+        )
+        .ok();
+    if let Some(brain_id) = brain_id {
+        if !brain_id.is_empty() {
+            let detail = match (status, policy_decision) {
+                (Some(s), Some(p)) => Some(format!("status={s} policy={p}")),
+                (Some(s), None) => Some(format!("status={s}")),
+                (None, Some(p)) => Some(format!("policy={p}")),
+                _ => None,
+            };
+            let _ = crate::store::events::append(
+                conn,
+                &crate::store::events::AppendInput {
+                    brain_id,
+                    event_type: "tool_call.record".to_string(),
+                    action: "record".to_string(),
+                    resource: Some(format!("tool_call:{id}")),
+                    actor: None,
+                    session_id: Some(session_id.to_string()),
+                    correlation_id: None,
+                    detail,
+                },
+            );
+        }
+    }
+
     Ok(id)
 }
 

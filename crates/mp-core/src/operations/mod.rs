@@ -1,5 +1,9 @@
 mod activity;
 mod agent_ops;
+mod brain_ops;
+mod events_ops;
+mod experience_ops;
+mod focus_ops;
 mod ingest;
 mod job;
 mod knowledge;
@@ -20,6 +24,7 @@ pub struct ActorContext {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OperationContext {
+    pub brain_id: Option<String>,
     pub session_id: Option<String>,
     pub trace_id: Option<String>,
     pub timestamp: Option<i64>,
@@ -177,6 +182,31 @@ fn dispatch_operation(
         "agent.create" => agent_ops::op_agent_create(conn, req),
         "agent.delete" => agent_ops::op_agent_delete(conn, req),
         "agent.config" => agent_ops::op_agent_config(conn, req),
+        "brain.create" => brain_ops::op_brain_create(conn, req),
+        "brain.get" => brain_ops::op_brain_get(conn, req),
+        "brain.list" => brain_ops::op_brain_list(conn, req),
+        "brain.update" => brain_ops::op_brain_update(conn, req),
+        "brain.delete" => brain_ops::op_brain_delete(conn, req),
+        "brain.checkpoint" => brain_ops::op_brain_checkpoint(conn, req),
+        "brain.restore" => brain_ops::op_brain_restore(conn, req),
+        "brain.export" => brain_ops::op_brain_export(conn, req),
+        "brain.memories.events.append" => events_ops::op_events_append(conn, req),
+        "brain.memories.events.query" => events_ops::op_events_query(conn, req),
+        "brain.memories.events.compact" => events_ops::op_events_compact(conn, req),
+        "brain.memories.experience.record" => experience_ops::op_experience_record(conn, req),
+        "brain.memories.experience.match" => experience_ops::op_experience_match(conn, req),
+        "brain.memories.experience.resolve" => experience_ops::op_experience_resolve(conn, req),
+        "brain.memories.experience.ignore" => experience_ops::op_experience_ignore(conn, req),
+        "brain.memories.experience.search" => experience_ops::op_experience_search(conn, req),
+        "brain.memories.experience.stats" => experience_ops::op_experience_stats(conn, req),
+        "brain.memories.experience.compact" => experience_ops::op_experience_compact(conn, req),
+        "brain.focus.set" => focus_ops::op_focus_set(conn, req),
+        "brain.focus.get" => focus_ops::op_focus_get(conn, req),
+        "brain.focus.list" => focus_ops::op_focus_list(conn, req),
+        "brain.focus.clear" => focus_ops::op_focus_clear(conn, req),
+        "brain.focus.compose" => focus_ops::op_focus_compose(conn, req),
+        "brain.focus.composition.log" => focus_ops::op_focus_composition_log(conn, req),
+        "brain.focus.composition.last" => focus_ops::op_focus_composition_last(conn, req),
         "ingest.events" => ingest::op_ingest_events(conn, req),
         "ingest.status" => ingest::op_ingest_status(conn, req),
         "ingest.replay" => ingest::op_ingest_replay(conn, req),

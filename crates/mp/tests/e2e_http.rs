@@ -31,19 +31,29 @@ fn run_sidecar_once(
     config_path: &std::path::Path,
     request: &serde_json::Value,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    let cwd = config_path.parent().unwrap_or(std::path::Path::new("."));
+    let cwd = config_path
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .canonicalize()
+        .unwrap_or_else(|_| config_path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf());
+    let config_canonical = std::fs::canonicalize(config_path)
+        .unwrap_or_else(|_| config_path.to_path_buf());
     let mut child = Command::new(env!("CARGO_BIN_EXE_mp"))
         .args([
             "--config",
-            config_path.to_str().unwrap_or("moneypenny.toml"),
+            config_canonical.to_str().unwrap_or("moneypenny.toml"),
             "sidecar",
             "--agent",
             "main",
         ])
-        .current_dir(cwd)
+        .current_dir(&cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .env_remove("RUST_LOG")
+        .env_remove("MP_CONFIG")
+        .env_remove("MP_DATA_DIR")
+        .env_remove("MP_MODELS_DIR")
         .spawn()?;
 
     if let Some(mut stdin) = child.stdin.take() {

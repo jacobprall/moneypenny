@@ -28,6 +28,14 @@ pub fn set(
         )
         .ok();
 
+    let brain_id: String = conn
+        .query_row(
+            "SELECT COALESCE(NULLIF(brain_id,''), agent_id) FROM sessions WHERE id = ?1",
+            [session_id],
+            |r| r.get(0),
+        )
+        .unwrap_or_else(|_| String::new());
+
     match existing_id {
         Some(id) => {
             conn.execute(
@@ -39,9 +47,9 @@ pub fn set(
         None => {
             let id = Uuid::new_v4().to_string();
             conn.execute(
-                "INSERT INTO scratch (id, session_id, key, content, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![id, session_id, key, content, now, now],
+                "INSERT INTO scratch (id, session_id, key, content, brain_id, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![id, session_id, key, content, brain_id, now, now],
             )?;
             Ok(id)
         }

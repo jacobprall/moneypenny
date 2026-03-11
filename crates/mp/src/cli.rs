@@ -38,6 +38,18 @@ pub enum Command {
     #[command(subcommand)]
     Agent(AgentCommand),
 
+    /// Brain lifecycle — checkpoint, restore, export
+    #[command(subcommand)]
+    Brain(BrainCommand),
+
+    /// Experience priors — record, match, search, stats
+    #[command(subcommand)]
+    Experience(ExperienceCommand),
+
+    /// Focus working set — set, get, list, compose
+    #[command(subcommand)]
+    Focus(FocusCommand),
+
     /// Interactive CLI chat with an agent
     Chat {
         /// Agent name (defaults to first configured agent)
@@ -236,6 +248,136 @@ pub enum Command {
         /// Agent name (defaults to first configured agent)
         #[arg(long)]
         agent: Option<String>,
+    },
+}
+
+// -- Brain subcommands --
+
+#[derive(Subcommand)]
+pub enum BrainCommand {
+    /// List brains in the agent DB
+    List {
+        #[arg(long)]
+        agent: Option<String>,
+    },
+
+    /// Create a checkpoint (full DB snapshot)
+    Checkpoint {
+        /// Checkpoint name
+        #[arg(long)]
+        name: String,
+
+        /// Output path for checkpoint file
+        #[arg(long)]
+        output: String,
+
+        #[arg(long)]
+        agent: Option<String>,
+    },
+
+    /// Restore from a checkpoint (replace agent DB)
+    Restore {
+        /// Path to checkpoint file (or use --checkpoint-id)
+        #[arg(long)]
+        path: Option<String>,
+
+        /// Checkpoint ID (lookup path from checkpoints table)
+        #[arg(long)]
+        checkpoint_id: Option<String>,
+
+        #[arg(long)]
+        agent: Option<String>,
+
+        #[arg(long, default_value_t = false)]
+        confirm: bool,
+    },
+
+    /// Export brain data as JSON
+    Export {
+        #[arg(long)]
+        output: Option<String>,
+
+        #[arg(long)]
+        agent: Option<String>,
+    },
+}
+
+// -- Experience subcommands --
+
+#[derive(Subcommand)]
+pub enum ExperienceCommand {
+    /// Search experience priors
+    Search {
+        #[arg(long)]
+        query: String,
+
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+
+        #[arg(long)]
+        agent: Option<String>,
+    },
+
+    /// Show experience stats
+    Stats {
+        #[arg(long)]
+        agent: Option<String>,
+    },
+}
+
+// -- Focus subcommands --
+
+#[derive(Subcommand)]
+pub enum FocusCommand {
+    /// Set a key in the working set
+    Set {
+        #[arg(long)]
+        key: String,
+
+        #[arg(long)]
+        content: String,
+
+        #[arg(long)]
+        agent: Option<String>,
+
+        #[arg(long)]
+        session_id: Option<String>,
+    },
+
+    /// Get a key from the working set
+    Get {
+        #[arg(long)]
+        key: String,
+
+        #[arg(long)]
+        agent: Option<String>,
+
+        #[arg(long)]
+        session_id: Option<String>,
+    },
+
+    /// List working set entries
+    List {
+        #[arg(long)]
+        agent: Option<String>,
+
+        #[arg(long)]
+        session_id: Option<String>,
+    },
+
+    /// Compose context
+    Compose {
+        #[arg(long)]
+        task_hint: Option<String>,
+
+        #[arg(long, default_value_t = 128000)]
+        max_tokens: usize,
+
+        #[arg(long)]
+        agent: Option<String>,
+
+        #[arg(long)]
+        session_id: Option<String>,
     },
 }
 

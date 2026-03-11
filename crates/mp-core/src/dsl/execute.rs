@@ -770,6 +770,7 @@ fn build_op_request(ctx: &ExecuteContext, op: &str, args: serde_json::Value) -> 
             channel: ctx.channel.clone(),
         },
         context: OperationContext {
+            brain_id: None,
             session_id: ctx.session_id.clone(),
             trace_id: ctx.trace_id.clone(),
             timestamp: Some(chrono::Utc::now().timestamp()),

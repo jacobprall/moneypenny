@@ -1,4 +1,5 @@
 use rusqlite::Connection;
+use uuid::Uuid;
 
 /// Rough token estimate: ~4 chars per token for English text.
 const CHARS_PER_TOKEN: usize = 4;
@@ -326,6 +327,56 @@ pub fn assemble(
         content: current_message.to_string(),
         token_estimate: estimate_tokens(current_message),
     });
+
+    Ok(segments)
+}
+
+/// Assemble context and log to composition_logs (brain.focus.compose integration).
+/// Use this in the agent turn instead of assemble to enable composition audit trail.
+pub fn compose(
+    conn: &Connection,
+    agent_id: &str,
+    session_id: &str,
+    persona: Option<&str>,
+    current_message: &str,
+    budget: &TokenBudget,
+    split: Option<&BudgetSplit>,
+) -> anyhow::Result<Vec<ContextSegment>> {
+    let segments = assemble(conn, agent_id, session_id, persona, current_message, budget, split)?;
+
+    let brain_id = crate::store::log::resolve_brain_id(conn, session_id, agent_id);
+    let total_tokens: usize = segments.iter().map(|s| s.token_estimate).sum();
+    let segments_summary: Vec<serde_json::Value> = segments
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "label": s.label,
+                "token_estimate": s.token_estimate,
+                "content_preview": s.content.chars().take(100).collect::<String>()
+            })
+        })
+        .collect();
+
+    let composition_id = Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO composition_logs (id, brain_id, session_id, task_hint, max_tokens, segments_json, total_tokens, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        rusqlite::params![
+            composition_id,
+            brain_id,
+            session_id,
+            if current_message.is_empty() {
+                None::<&str>
+            } else {
+                Some(current_message)
+            },
+            budget.total as i64,
+            serde_json::to_string(&segments_summary).unwrap_or_default(),
+            total_tokens as i64,
+            now,
+        ],
+    )?;
 
     Ok(segments)
 }

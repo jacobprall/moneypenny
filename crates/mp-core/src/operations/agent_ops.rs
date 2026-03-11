@@ -46,17 +46,18 @@ pub(super) fn op_agent_create(conn: &Connection, req: &OperationRequest) -> anyh
         });
     }
 
+    let id = uuid::Uuid::new_v4().to_string();
     let db_path = std::path::PathBuf::from(agent_db_path);
     if let Some(parent) = db_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     let agent_conn = crate::db::open(&db_path)?;
     crate::schema::init_agent_db(&agent_conn)?;
+    crate::store::brain::ensure_default(&agent_conn, &id, name)?;
     crate::tools::registry::register_builtins(&agent_conn)?;
     crate::tools::registry::register_runtime_skills(&agent_conn)?;
 
     let now = chrono::Utc::now().timestamp();
-    let id = uuid::Uuid::new_v4().to_string();
     meta_conn.execute(
         "INSERT INTO agents (id, name, persona, tags, trust_level, llm_provider, llm_model, db_path, sync_enabled, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9)",
