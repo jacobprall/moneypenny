@@ -66,6 +66,8 @@ pub fn run_mp_with_config(config_path: &Path, args: &[&str]) -> std::io::Result<
 
 /// Patch the config file to enable the HTTP channel and disable CLI.
 /// Use before spawning the gateway so `mp start` runs the server without waiting for stdin.
+/// Also sets data_dir to an absolute path so the gateway resolves it correctly when
+/// spawned as a subprocess (avoids cwd/path resolution issues in tests).
 pub fn enable_http_channel(
     config_path: &Path,
     port: u16,
@@ -80,6 +82,18 @@ pub fn enable_http_channel(
     channels.insert("cli".into(), toml::Value::Boolean(false));
     let http = toml::Table::from_iter([("port".to_string(), toml::Value::Integer(port as i64))]);
     channels.insert("http".into(), toml::Value::Table(http));
+
+    let base = config_path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .canonicalize()
+        .unwrap_or_else(|_| config_path.parent().unwrap_or(Path::new(".")).to_path_buf());
+    let data_dir_abs = base.join("mp-data");
+    t.insert(
+        "data_dir".into(),
+        toml::Value::String(data_dir_abs.to_string_lossy().to_string()),
+    );
+
     std::fs::write(config_path, toml::to_string_pretty(&t)?)?;
     Ok(())
 }
@@ -89,13 +103,16 @@ pub fn enable_http_channel(
 /// caller must kill it when done (e.g. `child.kill()`).
 pub fn spawn_gateway(config_path: &Path) -> std::io::Result<Child> {
     let cwd = config_path.parent().unwrap_or(Path::new("."));
+    let config_canonical = std::fs::canonicalize(config_path).unwrap_or_else(|_| config_path.to_path_buf());
     let mut cmd = Command::new(MP_BIN);
-    cmd.args(["--config", config_path.to_str().unwrap(), "start"])
+    cmd.args(["--config", config_canonical.to_str().unwrap(), "start"])
         .current_dir(cwd)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     cmd.env_remove("RUST_LOG");
+    cmd.env_remove("MP_DATA_DIR");
+    cmd.env_remove("MP_MODELS_DIR");
     cmd.spawn()
 }
 

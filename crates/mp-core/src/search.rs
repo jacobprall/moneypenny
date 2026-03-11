@@ -251,6 +251,17 @@ fn has_fts_table(conn: &Connection, table_name: &str) -> bool {
 // FTS5 search per store
 // ---------------------------------------------------------------------------
 
+/// Sanitize a query string for FTS5 MATCH. FTS5 interprets punctuation (., ?, !, etc.)
+/// as special syntax; passing raw user input causes "syntax error near '.'".
+/// We extract word characters only and join with spaces.
+fn sanitize_fts5_query(query: &str) -> String {
+    let words: Vec<&str> = query
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .filter(|w| !w.is_empty())
+        .collect();
+    words.join(" ")
+}
+
 /// Search facts using FTS5 on keywords field. Returns (id, content, bm25_rank).
 pub fn fts5_search_facts(
     conn: &Connection,
@@ -261,6 +272,10 @@ pub fn fts5_search_facts(
     let has_fts = has_fts_table(conn, "facts_fts");
 
     if has_fts {
+        let fts_query = sanitize_fts5_query(query);
+        if fts_query.is_empty() {
+            return Ok(vec![]);
+        }
         let mut stmt = conn.prepare(
             "SELECT f.id, f.content, fts.rank
              FROM facts_fts fts
@@ -272,7 +287,7 @@ pub fn fts5_search_facts(
              LIMIT ?3",
         )?;
         let rows = stmt
-            .query_map(params![query, agent_id, limit], |r| {
+            .query_map(params![&fts_query, agent_id, limit], |r| {
                 Ok((r.get(0)?, r.get(1)?, r.get::<_, f64>(2)?.abs()))
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -304,6 +319,10 @@ pub fn fts5_search_messages(
     limit: usize,
 ) -> anyhow::Result<Vec<(String, String, f64)>> {
     if has_fts_table(conn, "messages_fts") {
+        let fts_query = sanitize_fts5_query(query);
+        if fts_query.is_empty() {
+            return Ok(vec![]);
+        }
         query_ranked_rows(
             conn,
             "SELECT m.id, m.content, bm25(messages_fts) AS rank
@@ -313,7 +332,7 @@ pub fn fts5_search_messages(
              WHERE messages_fts MATCH ?1 AND s.agent_id = ?2
              ORDER BY rank
              LIMIT ?3",
-            params![query, agent_id, limit],
+            params![&fts_query, agent_id, limit],
         )
     } else {
         let pattern = format!("%{query}%");
@@ -339,6 +358,10 @@ pub fn fts5_search_tool_calls(
 ) -> anyhow::Result<Vec<(String, String, f64)>> {
     let projection = crate::store::log::tool_call_projection_expr("tc");
     if has_fts_table(conn, "tool_calls_fts") {
+        let fts_query = sanitize_fts5_query(query);
+        if fts_query.is_empty() {
+            return Ok(vec![]);
+        }
         let sql = format!(
             "SELECT tc.id,
                     ({projection}) AS content,
@@ -350,7 +373,7 @@ pub fn fts5_search_tool_calls(
              ORDER BY rank
              LIMIT ?3"
         );
-        query_ranked_rows(conn, &sql, params![query, agent_id, limit])
+        query_ranked_rows(conn, &sql, params![&fts_query, agent_id, limit])
     } else {
         let pattern = format!("%{query}%");
         let sql = format!(
@@ -383,6 +406,10 @@ pub fn fts5_search_policy_audit(
 ) -> anyhow::Result<Vec<(String, String, f64)>> {
     let projection = crate::store::log::policy_audit_projection_expr("pa");
     if has_fts_table(conn, "policy_audit_fts") {
+        let fts_query = sanitize_fts5_query(query);
+        if fts_query.is_empty() {
+            return Ok(vec![]);
+        }
         let sql = format!(
             "SELECT pa.id,
                     ({projection}) AS content,
@@ -397,7 +424,7 @@ pub fn fts5_search_policy_audit(
              ORDER BY rank
              LIMIT ?3"
         );
-        query_ranked_rows(conn, &sql, params![query, agent_id, limit])
+        query_ranked_rows(conn, &sql, params![&fts_query, agent_id, limit])
     } else {
         let pattern = format!("%{query}%");
         let sql = format!(
@@ -430,6 +457,10 @@ pub fn fts5_search_knowledge(
     limit: usize,
 ) -> anyhow::Result<Vec<(String, String, f64)>> {
     if has_fts_table(conn, "chunks_fts") {
+        let fts_query = sanitize_fts5_query(query);
+        if fts_query.is_empty() {
+            return Ok(vec![]);
+        }
         query_ranked_rows(
             conn,
             "SELECT c.id, c.content, bm25(chunks_fts) AS rank
@@ -438,7 +469,7 @@ pub fn fts5_search_knowledge(
              WHERE chunks_fts MATCH ?1
              ORDER BY rank
              LIMIT ?2",
-            params![query, limit],
+            params![&fts_query, limit],
         )
     } else {
         let pattern = format!("%{query}%");
@@ -461,6 +492,10 @@ pub fn fts5_search_scratch(
     limit: usize,
 ) -> anyhow::Result<Vec<(String, String, f64)>> {
     if has_fts_table(conn, "scratch_fts") {
+        let fts_query = sanitize_fts5_query(query);
+        if fts_query.is_empty() {
+            return Ok(vec![]);
+        }
         query_ranked_rows(
             conn,
             "SELECT sc.id, (sc.key || ': ' || sc.content) AS content, bm25(scratch_fts) AS rank
@@ -470,7 +505,7 @@ pub fn fts5_search_scratch(
              WHERE scratch_fts MATCH ?1 AND s.agent_id = ?2
              ORDER BY rank
              LIMIT ?3",
-            params![query, agent_id, limit],
+            params![&fts_query, agent_id, limit],
         )
     } else {
         let pattern = format!("%{query}%");

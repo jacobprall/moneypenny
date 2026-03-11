@@ -64,8 +64,8 @@ fn run_sidecar_once(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let line = stdout
         .lines()
-        .next()
-        .ok_or("sidecar produced no response line")?;
+        .find(|l| serde_json::from_str::<serde_json::Value>(l).is_ok())
+        .ok_or("sidecar produced no valid JSON response line")?;
     let parsed: serde_json::Value = serde_json::from_str(line)?;
     Ok(parsed)
 }
@@ -197,7 +197,15 @@ fn gateway_http_ops_parity_with_sidecar() {
     );
     let http_json: serde_json::Value = http_resp.json().expect("json body");
 
-    assert_eq!(sidecar_resp["ok"], http_json["ok"]);
+    assert_eq!(
+        sidecar_resp["ok"],
+        http_json["ok"],
+        "sidecar ok={} http ok={} code={:?} message={:?}",
+        sidecar_resp["ok"],
+        http_json["ok"],
+        http_json["code"],
+        http_json["message"]
+    );
     assert_eq!(sidecar_resp["code"], http_json["code"]);
     assert_eq!(sidecar_resp["message"], http_json["message"]);
     assert!(sidecar_resp["data"].is_array());
