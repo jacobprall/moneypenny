@@ -26,6 +26,26 @@ pub async fn run(config: &Config, event: &str, agent: Option<String>) -> Result<
                 &format!("model={model}"),
                 conversation_id, generation_id, None,
             )?;
+
+            let briefing_req = crate::helpers::op_request(
+                &ag.name,
+                "briefing.compose",
+                serde_json::json!({}),
+            );
+            if let Ok(resp) = mp_core::operations::execute(&conn, &briefing_req) {
+                if resp.ok {
+                    if let Some(text) = resp.data["text"].as_str() {
+                        if !text.is_empty() {
+                            println!("{}", serde_json::json!({
+                                "permission": "allow",
+                                "agent_message": text,
+                            }));
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+
             emit_hook_allow();
         }
         "sessionEnd" | "stop" => {

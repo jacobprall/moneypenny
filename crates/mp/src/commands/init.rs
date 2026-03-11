@@ -26,8 +26,8 @@ pub async fn run(config_path: &str) -> Result<()> {
         let conn = mp_core::db::open_memory()?;
         mp_core::schema::init_agent_db(&conn)?;
         conn.execute(
-            "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, created_at)
-             VALUES ('allow-bootstrap', 'allow bootstrap', 1000, 'allow', '*', '*', '*', ?1)",
+            "INSERT INTO policies (id, brain_id, name, priority, effect, actor_pattern, action_pattern, resource_pattern, created_at)
+             VALUES ('allow-bootstrap', 'bootstrap', 'allow bootstrap', 1000, 'allow', '*', '*', '*', ?1)",
             [chrono::Utc::now().timestamp()],
         )?;
         conn

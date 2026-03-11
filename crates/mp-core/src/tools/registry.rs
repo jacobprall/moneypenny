@@ -999,7 +999,8 @@ pub fn register_runtime_skills(conn: &Connection) -> anyhow::Result<()> {
                 "Call: js_tool_add({\"name\": \"add_numbers\", \"description\": \"Add two numbers\", ",
                 "\"script\": \"function run(args) { return { result: args.a + args.b }; }\"})\n\n",
                 "## Notes\n",
-                "Requires Node.js (`node`) or Deno (`deno`) on PATH for execution. ",
+                "Uses in-process QuickJS — no external runtime needed. ",
+                "The JS environment has access to `db.exec(sql)` for querying the agent database. ",
                 "Calling the same name again overwrites the previous script."
             ).into()),
             enabled: true,

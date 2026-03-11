@@ -23,8 +23,9 @@ pub const TOOL_EXPERIENCE: &str = "moneypenny_experience";
 pub const TOOL_EVENTS: &str = "moneypenny_events";
 pub const TOOL_FOCUS: &str = "moneypenny_focus";
 pub const TOOL_EXECUTE: &str = "moneypenny_execute";
+pub const TOOL_JOBS: &str = "moneypenny_jobs";
 
-/// Returns the MCP domain tools (brain, facts, knowledge, policy, activity, experience, events, focus, execute).
+/// Returns the MCP domain tools.
 pub fn all_tools() -> Vec<ToolDef> {
     vec![
         tool_brain(),
@@ -35,6 +36,7 @@ pub fn all_tools() -> Vec<ToolDef> {
         tool_experience(),
         tool_events(),
         tool_focus(),
+        tool_jobs(),
         tool_execute(),
     ]
 }
@@ -150,7 +152,7 @@ fn tool_facts() -> ToolDef {
 fn tool_knowledge() -> ToolDef {
     ToolDef {
         name: TOOL_KNOWLEDGE,
-        description: "Ingest and retrieve documents — the agent's long-term reference library.\n\nActions: ingest, search, list",
+        description: "Ingest and retrieve documents — the agent's long-term reference library. Provide any URL to automatically fetch, extract, and store it as searchable knowledge.\n\nActions: ingest, search, list",
         actions: &[
             ("ingest", "knowledge.ingest"),
             ("search", "knowledge.search"),
@@ -159,18 +161,18 @@ fn tool_knowledge() -> ToolDef {
         mutating: true,
         mcp_schema: json!({
             "name": TOOL_KNOWLEDGE,
-            "description": "Ingest and retrieve documents — the agent's long-term reference library.\n\nActions: ingest, search, list",
+            "description": "Ingest and retrieve documents — the agent's long-term reference library. Provide any URL to automatically fetch, extract, and store it as searchable knowledge.\n\nActions: ingest, search, list",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
                         "enum": ["ingest", "search", "list"],
-                        "description": "ingest: add a document (provide content directly, or pass a URL or file:// path to fetch automatically)\nsearch: hybrid search across ingested documents\nlist: list all ingested documents"
+                        "description": "ingest: add a document — provide a URL (HTTP/HTTPS) to automatically fetch, strip HTML, chunk, and index a webpage; or provide raw content directly\nsearch: hybrid search across ingested documents\nlist: list all ingested documents"
                     },
                     "input": {
                         "type": "object",
-                        "description": "Action-specific parameters:\n- ingest: {path?, content?, title?} — pass path as an HTTP/HTTPS URL to fetch and ingest a webpage, or provide content directly\n- search: {query, limit?}\n- list: {}",
+                        "description": "Action-specific parameters:\n- ingest: {path?, content?, title?} — pass path as any HTTP/HTTPS URL to fetch and ingest a webpage automatically (HTML is cleaned and chunked), or provide content directly as text/markdown\n- search: {query, limit?}\n- list: {}",
                         "default": {}
                     }
                 },
@@ -220,23 +222,27 @@ fn tool_policy() -> ToolDef {
 fn tool_activity() -> ToolDef {
     ToolDef {
         name: TOOL_ACTIVITY,
-        description: "Query session history and audit trail — see what happened and why.\n\nActions: query",
-        actions: &[("query", "activity.query")],
+        description: "Query session history, audit trail, token spend, and session briefings.\n\nActions: query, usage, briefing",
+        actions: &[
+            ("query", "activity.query"),
+            ("usage", "usage.summary"),
+            ("briefing", "briefing.compose"),
+        ],
         mutating: false,
         mcp_schema: json!({
             "name": TOOL_ACTIVITY,
-            "description": "Query session history and audit trail — see what happened and why.\n\nActions: query",
+            "description": "Query session history, audit trail, token spend, and session briefings.\n\nActions: query, usage, briefing",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["query"],
-                        "description": "query: search session events and policy decisions"
+                        "enum": ["query", "usage", "briefing"],
+                        "description": "query: search session events and policy decisions\nusage: token/cost spend summary with breakdowns by model, session, or day\nbriefing: session recap — recent activity, new facts, denials, and spend"
                     },
                     "input": {
                         "type": "object",
-                        "description": "Parameters:\n- source?: 'events' (session history), 'decisions' (policy audit), or 'all' (default: 'all')\n- event?: filter by event type (e.g. 'beforeShellExecution')\n- action?: filter by action\n- resource?: filter by resource\n- agent_id?: filter by agent\n- conversation_id?: filter by session\n- query?: free-text search\n- limit?: max results (default 50)",
+                        "description": "Action-specific parameters:\n- query: {source?, event?, action?, resource?, agent_id?, conversation_id?, query?, limit?}\n- usage: {period?: 'today'|'week'|'month'|'all', group_by?: 'model'|'session'|'day'}\n- briefing: {} (no parameters needed)",
                         "default": {}
                     }
                 },
@@ -347,6 +353,43 @@ fn tool_focus() -> ToolDef {
                     "input": {
                         "type": "object",
                         "description": "Parameters:\n- set: {key, content}\n- get/list/clear: {key?}\n- compose: {task_hint?, max_tokens?, session_id?, persona?, overrides?}\n- composition_log: {composition_id}\n- composition_last: {session_id?}",
+                        "default": {}
+                    }
+                },
+                "required": ["action"],
+                "additionalProperties": false
+            }
+        }),
+    }
+}
+
+fn tool_jobs() -> ToolDef {
+    ToolDef {
+        name: TOOL_JOBS,
+        description: "Scheduled jobs — create, manage, and run recurring tasks (cron, JS scripts, pipelines).\n\nActions: create, list, run, pause, resume, history",
+        actions: &[
+            ("create", "job.create"),
+            ("list", "job.list"),
+            ("run", "job.run"),
+            ("pause", "job.pause"),
+            ("resume", "job.resume"),
+            ("history", "job.history"),
+        ],
+        mutating: true,
+        mcp_schema: json!({
+            "name": TOOL_JOBS,
+            "description": "Scheduled jobs — create, manage, and run recurring tasks (cron, JS scripts, pipelines).\n\nActions: create, list, run, pause, resume, history",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["create", "list", "run", "pause", "resume", "history"],
+                        "description": "create: schedule a new job\nlist: list all jobs\nrun: trigger a job immediately\npause: pause a job\nresume: resume a paused job\nhistory: show job run history"
+                    },
+                    "input": {
+                        "type": "object",
+                        "description": "Action-specific parameters:\n- create: {name, schedule (cron), job_type?: 'prompt'|'tool'|'js'|'pipeline', payload?, description?}\n- list: {agent_id?}\n- run: {id}\n- pause: {id}\n- resume: {id}\n- history: {id?, limit?}",
                         "default": {}
                     }
                 },

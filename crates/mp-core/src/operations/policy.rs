@@ -35,11 +35,12 @@ pub(super) fn op_policy_add(conn: &Connection, req: &OperationRequest) -> anyhow
 
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
+    let brain_id = req.context.brain_id.as_deref().unwrap_or(&req.actor.agent_id);
     conn.execute(
-        "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern,
+        "INSERT INTO policies (id, brain_id, name, priority, effect, actor_pattern, action_pattern, resource_pattern,
          argument_pattern, channel_pattern, sql_pattern, rule_type, rule_config, message, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-        rusqlite::params![id, name, priority, effect, actor_pattern, action_pattern, resource_pattern,
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        rusqlite::params![id, brain_id, name, priority, effect, actor_pattern, action_pattern, resource_pattern,
             argument_pattern, channel_pattern, sql_pattern, rule_type, rule_config, message, now],
     )?;
 
@@ -503,12 +504,13 @@ pub(super) fn op_policy_spec_apply(
 
     let policy_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
+    let brain_id = req.context.brain_id.as_deref().unwrap_or(&req.actor.agent_id);
     conn.execute(
-        "INSERT INTO policies (id, name, priority, effect, actor_pattern, action_pattern, resource_pattern,
+        "INSERT INTO policies (id, brain_id, name, priority, effect, actor_pattern, action_pattern, resource_pattern,
          argument_pattern, channel_pattern, sql_pattern, rule_type, rule_config, message, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         rusqlite::params![
-            policy_id, spec.policy_name, spec.priority, spec.effect,
+            policy_id, brain_id, spec.policy_name, spec.priority, spec.effect,
             spec.actor_pattern, spec.action_pattern, spec.resource_pattern,
             spec.argument_pattern, spec.channel_pattern, spec.sql_pattern,
             spec.rule_type, spec.rule_config, spec.message, now

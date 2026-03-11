@@ -120,6 +120,10 @@ async fn main() -> Result<()> {
             commands::mpq::run(&config, &expression, agent, dry_run).await
         }
         Command::Db(cmd) => commands::db::run(&config, cmd).await,
+        Command::Spend { agent, period, group_by } => {
+            commands::spend::run(&config, agent, &period, &group_by).await
+        }
+        Command::Briefing { agent } => commands::briefing::run(&config, agent).await,
         Command::Health => commands::health::run(&config).await,
         Command::Doctor => commands::doctor::run(&config, config_path).await,
         Command::Worker { agent } => worker::cmd_worker(&config, &agent).await,

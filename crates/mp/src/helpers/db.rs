@@ -54,8 +54,10 @@ pub fn open_agent_db(config: &Config, agent_name: &str) -> Result<rusqlite::Conn
             )
         }
     })?;
-    mp_core::schema::init_agent_db(&conn)?;
+    // Load extensions before init_agent_db — migrations may touch synced tables
+    // whose triggers call cloudsync_is_sync
     mp_ext::init_all_extensions(&conn)?;
+    mp_core::schema::init_agent_db(&conn)?;
     if let Some(agent) = config.agents.iter().find(|a| a.name == agent_name) {
         let _ = mp_core::schema::init_vector_indexes(&conn, agent.embedding.dimensions);
         if let Err(e) = mp_core::schema::init_sync_tables(&conn) {

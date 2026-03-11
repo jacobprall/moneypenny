@@ -213,6 +213,28 @@ pub enum Command {
     #[command(subcommand)]
     Db(DbCommand),
 
+    /// Show token/cost usage summary
+    Spend {
+        /// Agent name (defaults to first configured agent)
+        #[arg(long)]
+        agent: Option<String>,
+
+        /// Time period: today, week, month, all
+        #[arg(long, default_value = "all")]
+        period: String,
+
+        /// Group breakdown by: model, session, day
+        #[arg(long, default_value = "model")]
+        group_by: String,
+    },
+
+    /// Session briefing — recap recent activity, facts, denials, and spend
+    Briefing {
+        /// Agent name (defaults to first configured agent)
+        #[arg(long)]
+        agent: Option<String>,
+    },
+
     /// Show system health
     Health,
 

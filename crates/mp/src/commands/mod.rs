@@ -27,5 +27,7 @@ pub mod fleet;
 pub mod mpq;
 pub mod db;
 pub mod session;
+pub mod spend;
+pub mod briefing;
 pub mod health;
 pub mod doctor;

@@ -110,12 +110,12 @@ pub fn init_agent_db(conn: &Connection) -> anyhow::Result<()> {
         for (table, agent_col) in &[
             ("facts", "agent_id"),
             ("documents", "agent_id"),
-            ("policies", "agent_id"),
             ("jobs", "agent_id"),
             ("job_specs", "agent_id"),
             ("policy_specs", "agent_id"),
             ("sessions", "agent_id"),
         ] {
+            eprintln!("backfill_brain_id_from_agent_id table={table}");
             backfill_brain_id_from_agent_id(conn, table, agent_col)?;
         }
         backfill_brain_id_for_scratch(conn)?;
@@ -1192,9 +1192,14 @@ fn add_brain_id_if_missing(conn: &Connection, table: &str) -> anyhow::Result<()>
 fn backfill_brain_id_from_agent_id(conn: &Connection, table: &str, agent_col: &str) -> anyhow::Result<()> {
     if table_has_column(conn, table, "brain_id") && table_has_column(conn, table, agent_col) {
         conn.execute(
-            &format!("UPDATE {table} SET brain_id = {agent_col} WHERE brain_id = '' OR brain_id IS NULL"),
+            &format!(
+                "UPDATE {table}
+                 SET brain_id = COALESCE(NULLIF({agent_col}, ''), '')
+                 WHERE brain_id = '' OR brain_id IS NULL"
+            ),
             [],
-        )?;
+        )
+        .map_err(|e| anyhow::anyhow!("brain_id backfill failed for table '{table}': {e}"))?;
     }
     Ok(())
 }
@@ -1978,8 +1983,8 @@ mod tests {
     fn policies_defaults() {
         let conn = setup_agent_db();
         conn.execute(
-            "INSERT INTO policies (id, name, effect, created_at)
-             VALUES ('p1', 'test', 'deny', 1)",
+            "INSERT INTO policies (id, brain_id, name, effect, created_at)
+             VALUES ('p1', 'test-agent', 'test', 'deny', 1)",
             [],
         )
         .unwrap();

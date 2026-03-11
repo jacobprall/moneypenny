@@ -89,26 +89,22 @@ struct FetchedKnowledgeContent {
 }
 
 fn fetch_url_for_knowledge_ingest(url: &str) -> anyhow::Result<FetchedKnowledgeContent> {
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("Moneypenny/0.1 (https://github.com/jacobprall/moneypenny)")
-        .build()
-        .map_err(|e| anyhow::anyhow!("failed to build HTTP client: {e}"))?;
-    let response = client
-        .get(url)
-        .send()
+    let mut response = ureq::get(url)
+        .header("User-Agent", "Moneypenny/0.1 (https://github.com/jacobprall/moneypenny)")
+        .call()
         .map_err(|e| anyhow::anyhow!("HTTP fetch failed for {url}: {e}"))?;
-    let status_code = response.status();
-    if !status_code.is_success() {
-        anyhow::bail!("HTTP {status_code} for {url}");
-    }
+
     let content_type = response
         .headers()
-        .get(reqwest::header::CONTENT_TYPE)
+        .get("content-type")
         .and_then(|v| v.to_str().ok())
         .map(str::to_string);
+
     let body = response
-        .text()
+        .body_mut()
+        .read_to_string()
         .map_err(|e| anyhow::anyhow!("failed to read response body from {url}: {e}"))?;
+
     if body.trim().is_empty() {
         anyhow::bail!("fetched URL returned empty content: {url}");
     }

@@ -172,6 +172,8 @@ fn dispatch_operation(
         "policy.evaluate" => policy::op_policy_evaluate(conn, req),
         "policy.explain" => policy::op_policy_explain(conn, req),
         "activity.query" => activity::op_activity_query(conn, req),
+        "usage.summary" => activity::op_usage_summary(conn, req),
+        "briefing.compose" => activity::op_briefing_compose(conn, req),
         "audit.query" => activity::op_audit_query(conn, req),
         "audit.append" => activity::op_audit_append(conn, req),
         "session.resolve" => session::op_session_resolve(conn, req),

@@ -188,6 +188,327 @@ pub(super) fn op_activity_query(
     })
 }
 
+pub(super) fn op_usage_summary(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "query",
+            resource: crate::policy::resource::ACTIVITY,
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+            arguments: None,
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    let period = req.args["period"].as_str().unwrap_or("all");
+    let group_by = req.args["group_by"].as_str().unwrap_or("model");
+
+    let now = chrono::Utc::now().timestamp();
+    let since = match period {
+        "today" => now - 86400,
+        "week" => now - 86400 * 7,
+        "month" => now - 86400 * 30,
+        _ => 0,
+    };
+
+    let totals: (i64, i64, i64, f64, i64) = conn.query_row(
+        "SELECT COALESCE(SUM(normalized_input_tokens), 0),
+                COALESCE(SUM(normalized_output_tokens), 0),
+                COALESCE(SUM(normalized_total_tokens), 0),
+                COALESCE(SUM(normalized_cost_usd), 0.0),
+                COUNT(*)
+         FROM external_events
+         WHERE event_type = 'model.usage' AND ingested_at >= ?1",
+        rusqlite::params![since],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+    )?;
+
+    let breakdown = match group_by {
+        "session" => {
+            let mut stmt = conn.prepare(
+                "SELECT COALESCE(session_id, 'unknown'),
+                        COALESCE(SUM(normalized_input_tokens), 0),
+                        COALESCE(SUM(normalized_output_tokens), 0),
+                        COALESCE(SUM(normalized_total_tokens), 0),
+                        COALESCE(SUM(normalized_cost_usd), 0.0),
+                        COUNT(*)
+                 FROM external_events
+                 WHERE event_type = 'model.usage' AND ingested_at >= ?1
+                 GROUP BY session_id
+                 ORDER BY SUM(normalized_cost_usd) DESC
+                 LIMIT 20",
+            )?;
+            stmt.query_map(rusqlite::params![since], |r| {
+                Ok(serde_json::json!({
+                    "key": r.get::<_, String>(0)?,
+                    "input_tokens": r.get::<_, i64>(1)?,
+                    "output_tokens": r.get::<_, i64>(2)?,
+                    "total_tokens": r.get::<_, i64>(3)?,
+                    "cost_usd": r.get::<_, f64>(4)?,
+                    "count": r.get::<_, i64>(5)?,
+                }))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+        }
+        "day" => {
+            let mut stmt = conn.prepare(
+                "SELECT date(event_ts, 'unixepoch') AS day,
+                        COALESCE(SUM(normalized_input_tokens), 0),
+                        COALESCE(SUM(normalized_output_tokens), 0),
+                        COALESCE(SUM(normalized_total_tokens), 0),
+                        COALESCE(SUM(normalized_cost_usd), 0.0),
+                        COUNT(*)
+                 FROM external_events
+                 WHERE event_type = 'model.usage' AND ingested_at >= ?1
+                 GROUP BY day
+                 ORDER BY day DESC
+                 LIMIT 30",
+            )?;
+            stmt.query_map(rusqlite::params![since], |r| {
+                Ok(serde_json::json!({
+                    "key": r.get::<_, String>(0)?,
+                    "input_tokens": r.get::<_, i64>(1)?,
+                    "output_tokens": r.get::<_, i64>(2)?,
+                    "total_tokens": r.get::<_, i64>(3)?,
+                    "cost_usd": r.get::<_, f64>(4)?,
+                    "count": r.get::<_, i64>(5)?,
+                }))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+        }
+        _ => {
+            // group by model (default)
+            let mut stmt = conn.prepare(
+                "SELECT COALESCE(normalized_provider, 'unknown') || '/' || COALESCE(normalized_model, 'unknown'),
+                        COALESCE(SUM(normalized_input_tokens), 0),
+                        COALESCE(SUM(normalized_output_tokens), 0),
+                        COALESCE(SUM(normalized_total_tokens), 0),
+                        COALESCE(SUM(normalized_cost_usd), 0.0),
+                        COUNT(*)
+                 FROM external_events
+                 WHERE event_type = 'model.usage' AND ingested_at >= ?1
+                 GROUP BY normalized_provider, normalized_model
+                 ORDER BY SUM(normalized_cost_usd) DESC
+                 LIMIT 20",
+            )?;
+            stmt.query_map(rusqlite::params![since], |r| {
+                Ok(serde_json::json!({
+                    "key": r.get::<_, String>(0)?,
+                    "input_tokens": r.get::<_, i64>(1)?,
+                    "output_tokens": r.get::<_, i64>(2)?,
+                    "total_tokens": r.get::<_, i64>(3)?,
+                    "cost_usd": r.get::<_, f64>(4)?,
+                    "count": r.get::<_, i64>(5)?,
+                }))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+        }
+    };
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "usage summary".into(),
+        data: serde_json::json!({
+            "period": period,
+            "group_by": group_by,
+            "totals": {
+                "input_tokens": totals.0,
+                "output_tokens": totals.1,
+                "total_tokens": totals.2,
+                "cost_usd": totals.3,
+                "event_count": totals.4,
+            },
+            "breakdown": breakdown,
+        }),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
+pub(super) fn op_briefing_compose(
+    conn: &Connection,
+    req: &OperationRequest,
+) -> anyhow::Result<OperationResponse> {
+    let decision = evaluate_policy_with_request_context(
+        conn,
+        &crate::policy::PolicyRequest {
+            actor: &req.actor.agent_id,
+            action: "query",
+            resource: crate::policy::resource::ACTIVITY,
+            sql_content: None,
+            channel: req.actor.channel.as_deref(),
+            arguments: None,
+        },
+        req,
+    )?;
+    if matches!(decision.effect, crate::policy::Effect::Deny) {
+        return Ok(denied_response(&decision));
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    let since_48h = now - 86400 * 2;
+
+    // 1. Recent sessions with summaries
+    let mut stmt_sessions = conn.prepare(
+        "SELECT id, channel, started_at, ended_at, summary
+         FROM sessions
+         WHERE started_at >= ?1
+         ORDER BY started_at DESC
+         LIMIT 10",
+    )?;
+    let recent_sessions: Vec<serde_json::Value> = stmt_sessions
+        .query_map(rusqlite::params![since_48h], |r| {
+            Ok(serde_json::json!({
+                "id": r.get::<_, String>(0)?,
+                "channel": r.get::<_, Option<String>>(1)?,
+                "started_at": r.get::<_, i64>(2)?,
+                "ended_at": r.get::<_, Option<i64>>(3)?,
+                "summary": r.get::<_, Option<String>>(4)?,
+            }))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // 2. Activity stats by action type
+    let mut stmt_stats = conn.prepare(
+        "SELECT action, COUNT(*) as cnt
+         FROM activity_log
+         WHERE created_at >= ?1
+         GROUP BY action
+         ORDER BY cnt DESC",
+    )?;
+    let activity_stats: Vec<serde_json::Value> = stmt_stats
+        .query_map(rusqlite::params![since_48h], |r| {
+            Ok(serde_json::json!({
+                "action": r.get::<_, String>(0)?,
+                "count": r.get::<_, i64>(1)?,
+            }))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // 3. Recent facts added/updated
+    let mut stmt_facts = conn.prepare(
+        "SELECT id, COALESCE(summary, SUBSTR(content, 1, 120)) as summary, created_at
+         FROM facts
+         WHERE created_at >= ?1 AND superseded_by IS NULL
+         ORDER BY created_at DESC
+         LIMIT 10",
+    )?;
+    let recent_facts: Vec<serde_json::Value> = stmt_facts
+        .query_map(rusqlite::params![since_48h], |r| {
+            Ok(serde_json::json!({
+                "id": r.get::<_, String>(0)?,
+                "summary": r.get::<_, String>(1)?,
+                "created_at": r.get::<_, i64>(2)?,
+            }))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // 4. Recent policy denials
+    let mut stmt_denials = conn.prepare(
+        "SELECT actor, action, resource, reason, created_at
+         FROM policy_audit
+         WHERE effect = 'deny' AND created_at >= ?1
+         ORDER BY created_at DESC
+         LIMIT 5",
+    )?;
+    let recent_denials: Vec<serde_json::Value> = stmt_denials
+        .query_map(rusqlite::params![since_48h], |r| {
+            Ok(serde_json::json!({
+                "actor": r.get::<_, String>(0)?,
+                "action": r.get::<_, String>(1)?,
+                "resource": r.get::<_, String>(2)?,
+                "reason": r.get::<_, Option<String>>(3)?,
+                "created_at": r.get::<_, i64>(4)?,
+            }))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // 5. Token spend summary (last 48h)
+    let spend: (i64, f64, i64) = conn
+        .query_row(
+            "SELECT COALESCE(SUM(normalized_total_tokens), 0),
+                    COALESCE(SUM(normalized_cost_usd), 0.0),
+                    COUNT(*)
+             FROM external_events
+             WHERE event_type = 'model.usage' AND ingested_at >= ?1",
+            rusqlite::params![since_48h],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap_or((0, 0.0, 0));
+
+    // Build human-readable text
+    let last_summary = recent_sessions
+        .first()
+        .and_then(|s| s["summary"].as_str())
+        .unwrap_or("No recent session summary available.");
+
+    let mut text = format!("## Session Briefing\n\n**Last session:** {last_summary}\n\n");
+
+    if !activity_stats.is_empty() {
+        text.push_str("**Recent activity (48h):** ");
+        let parts: Vec<String> = activity_stats
+            .iter()
+            .filter_map(|s| {
+                let action = s["action"].as_str()?;
+                let count = s["count"].as_i64()?;
+                Some(format!("{count} {action}"))
+            })
+            .collect();
+        text.push_str(&parts.join(", "));
+        text.push_str("\n\n");
+    }
+
+    if !recent_facts.is_empty() {
+        text.push_str(&format!(
+            "**New facts (48h):** {} added\n\n",
+            recent_facts.len()
+        ));
+    }
+
+    if !recent_denials.is_empty() {
+        text.push_str(&format!(
+            "**Policy denials (48h):** {}\n\n",
+            recent_denials.len()
+        ));
+    }
+
+    if spend.2 > 0 {
+        text.push_str(&format!(
+            "**Token spend (48h):** {} tokens, ${:.4}\n",
+            spend.0, spend.1
+        ));
+    }
+
+    Ok(OperationResponse {
+        ok: true,
+        code: "ok".into(),
+        message: "briefing composed".into(),
+        data: serde_json::json!({
+            "text": text,
+            "recent_sessions": recent_sessions,
+            "activity_stats": activity_stats,
+            "recent_facts": recent_facts,
+            "recent_denials": recent_denials,
+            "spend": {
+                "total_tokens": spend.0,
+                "cost_usd": spend.1,
+                "event_count": spend.2,
+            },
+        }),
+        policy: Some(policy_meta(&decision)),
+        audit: AuditMeta { recorded: true },
+    })
+}
+
 pub(super) fn op_audit_query(conn: &Connection, req: &OperationRequest) -> anyhow::Result<OperationResponse> {
     let limit = req.args["limit"].as_u64().unwrap_or(50).clamp(1, 500) as i64;
     let effect = req.args["effect"].as_str().map(|s| s.to_string());

@@ -208,18 +208,21 @@ fn web_search(arguments: &str) -> anyhow::Result<ToolResult> {
         .ok_or_else(|| anyhow::anyhow!("missing 'query'"))?;
     let limit = args["limit"].as_u64().unwrap_or(5).clamp(1, 20) as usize;
 
-    let client = reqwest::blocking::Client::new();
-    let response = client
-        .get("https://api.duckduckgo.com/")
-        .query(&[
-            ("q", query),
-            ("format", "json"),
-            ("no_redirect", "1"),
-            ("no_html", "1"),
-        ])
-        .send();
+    let encoded_query: String = query
+        .bytes()
+        .flat_map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                vec![b as char]
+            }
+            b' ' => vec!['+'],
+            _ => format!("%{b:02X}").chars().collect(),
+        })
+        .collect();
+    let url = format!(
+        "https://api.duckduckgo.com/?q={encoded_query}&format=json&no_redirect=1&no_html=1"
+    );
 
-    let resp = match response {
+    let mut response = match ureq::get(&url).call() {
         Ok(r) => r,
         Err(e) => {
             return Ok(ToolResult {
@@ -230,7 +233,18 @@ fn web_search(arguments: &str) -> anyhow::Result<ToolResult> {
         }
     };
 
-    let body: serde_json::Value = match resp.json() {
+    let body_str = match response.body_mut().read_to_string() {
+        Ok(s) => s,
+        Err(e) => {
+            return Ok(ToolResult {
+                output: format!("Web search response read failed: {e}"),
+                success: false,
+                duration_ms: 0,
+            });
+        }
+    };
+
+    let body: serde_json::Value = match serde_json::from_str(&body_str) {
         Ok(v) => v,
         Err(e) => {
             return Ok(ToolResult {

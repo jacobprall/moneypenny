@@ -502,13 +502,15 @@ fn normalize_cron_expr(schedule: &str) -> String {
 /// - `tool`: Returns the tool invocation spec for the caller to dispatch.
 /// - Everything else: returns the payload as-is.
 pub fn execute_job_payload(conn: &Connection, job: &Job) -> anyhow::Result<String> {
+    let timeout = std::time::Duration::from_millis(job.timeout_ms.max(1000) as u64);
+
     match job.job_type.as_str() {
         "js" => {
             let payload: serde_json::Value = serde_json::from_str(&job.payload)
                 .unwrap_or_else(|_| serde_json::json!({ "script": &job.payload }));
             let script = payload["script"].as_str().unwrap_or(&job.payload);
-            let wrapper = format!("(function() {{ {} }})()", script,);
-            crate::tools::runtime::eval_js(conn, &wrapper)
+            let wrapper = format!("(function() {{ {} }})()", script);
+            run_with_timeout(conn, &wrapper, timeout)
         }
         "prompt" => {
             let payload: serde_json::Value = serde_json::from_str(&job.payload)
@@ -529,11 +531,121 @@ pub fn execute_job_payload(conn: &Connection, job: &Job) -> anyhow::Result<Strin
             let result = crate::tools::runtime::dispatch_js(conn, tool_name, &arguments)?;
             Ok(result.output)
         }
+        "pipeline" => execute_pipeline(conn, job, timeout),
         _ => Ok(format!(
             "executed job '{}' (type={})",
             job.name, job.job_type
         )),
     }
+}
+
+fn run_with_timeout(
+    conn: &Connection,
+    script: &str,
+    timeout: std::time::Duration,
+) -> anyhow::Result<String> {
+    let script_owned = script.to_string();
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    let db_path: String = conn
+        .query_row("PRAGMA database_list", [], |r| r.get(2))
+        .unwrap_or_default();
+
+    std::thread::spawn(move || {
+        let result = if db_path.is_empty() || db_path == ":memory:" {
+            Err(anyhow::anyhow!("timeout execution requires on-disk database"))
+        } else {
+            match crate::db::open(std::path::Path::new(&db_path)) {
+                Ok(thread_conn) => crate::tools::runtime::eval_js(&thread_conn, &script_owned),
+                Err(e) => Err(e),
+            }
+        };
+        let _ = tx.send(result);
+    });
+
+    match rx.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            anyhow::bail!("job execution timed out after {}ms", timeout.as_millis())
+        }
+        Err(e) => anyhow::bail!("job execution thread error: {e}"),
+    }
+}
+
+fn execute_pipeline(
+    conn: &Connection,
+    job: &Job,
+    timeout: std::time::Duration,
+) -> anyhow::Result<String> {
+    let payload: serde_json::Value = serde_json::from_str(&job.payload)
+        .map_err(|e| anyhow::anyhow!("invalid pipeline payload JSON: {e}"))?;
+
+    let steps = payload["steps"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("pipeline payload missing 'steps' array"))?;
+
+    if steps.is_empty() {
+        anyhow::bail!("pipeline has no steps");
+    }
+
+    let deadline = std::time::Instant::now() + timeout;
+    let mut prev_output = String::new();
+    let mut results = Vec::with_capacity(steps.len());
+
+    for (i, step) in steps.iter().enumerate() {
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!("pipeline timed out at step {i}");
+        }
+
+        let step_type = step["type"].as_str().unwrap_or("js");
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+
+        let output = match step_type {
+            "js" => {
+                let script = step["script"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("pipeline step {i} missing 'script'"))?;
+                let wrapper = format!(
+                    "(function() {{ var __prev = {}; {} }})()",
+                    serde_json::to_string(&prev_output).unwrap_or_else(|_| "\"\"".into()),
+                    script,
+                );
+                run_with_timeout(conn, &wrapper, remaining)?
+            }
+            "tool" => {
+                let tool_name = step["tool"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("pipeline step {i} missing 'tool'"))?;
+                let mut args: serde_json::Value = step
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({}));
+                if let Some(obj) = args.as_object_mut() {
+                    obj.insert(
+                        "__prev".to_string(),
+                        serde_json::Value::String(prev_output.clone()),
+                    );
+                }
+                let result =
+                    crate::tools::runtime::dispatch_js(conn, tool_name, &args.to_string())?;
+                result.output
+            }
+            other => anyhow::bail!("unknown pipeline step type '{other}' at step {i}"),
+        };
+
+        prev_output = output.clone();
+        results.push(serde_json::json!({
+            "step": i,
+            "type": step_type,
+            "output": output,
+        }));
+    }
+
+    Ok(serde_json::to_string(&serde_json::json!({
+        "steps_completed": results.len(),
+        "final_output": prev_output,
+        "results": results,
+    }))?)
 }
 
 /// List recent job runs, optionally filtered by job ID.
