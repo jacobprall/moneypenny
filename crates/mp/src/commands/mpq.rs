@@ -6,11 +6,12 @@ use mp_core::config::Config;
 use crate::helpers::{open_agent_db, resolve_agent};
 
 pub async fn run(
-    config: &Config,
+    ctx: &crate::CommandContext<'_>,
     expression: &str,
     agent: Option<String>,
     dry_run: bool,
 ) -> Result<()> {
+    let config = ctx.config;
     let ag = resolve_agent(config, agent.as_deref())?;
     let conn = open_agent_db(config, &ag.name)?;
 

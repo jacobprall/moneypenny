@@ -5,6 +5,7 @@
 //! to the appropriate agent worker via the `WorkerBus` and returns the
 //! `(response, session_id)` pair.
 
+mod dashboard;
 mod discord;
 mod http;
 mod slack;

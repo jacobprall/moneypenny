@@ -1,8 +1,6 @@
 //! Start command — run the gateway with workers and channels.
 
 use anyhow::Result;
-use mp_core::config::Config;
-use std::path::Path;
 use std::sync::Arc;
 
 use crate::adapters;
@@ -15,15 +13,16 @@ use crate::helpers::{
 use crate::ui;
 use crate::worker::{run_scheduler, spawn_worker, WorkerBus, WorkerHandle};
 
-pub async fn run(config: &Config, config_path: &Path) -> Result<()> {
+pub async fn run(ctx: &crate::CommandContext<'_>) -> Result<()> {
     ui::banner();
 
+    let config = ctx.config;
     let shutdown = tokio::sync::broadcast::channel::<()>(1).0;
 
     let bus = WorkerBus::new();
     let mut workers: Vec<WorkerHandle> = Vec::new();
     for agent in &config.agents {
-        let (handle, w_stdin, w_stdout) = spawn_worker(config, config_path, &agent.name)?;
+        let (handle, w_stdin, w_stdout) = spawn_worker(config, ctx.config_path, &agent.name)?;
         ui::info(format!("Worker \"{}\" started (pid {})", agent.name, handle.pid));
         bus.register(agent.name.clone(), w_stdin, w_stdout).await;
         workers.push(handle);
@@ -58,10 +57,40 @@ pub async fn run(config: &Config, config_path: &Path) -> Result<()> {
                 Err(e) => return Ok(sidecar_error_response("invalid_request", e.to_string())),
             };
 
+            // config.get is handled here (needs Config, not DB)
+            if req.op == "config.get" {
+                match config.to_json_redacted() {
+                    Ok(data) => {
+                        return Ok(serde_json::json!({
+                            "ok": true,
+                            "code": "ok",
+                            "message": "config",
+                            "data": data,
+                            "policy": null,
+                            "audit": { "recorded": false }
+                        }));
+                    }
+                    Err(e) => {
+                        return Ok(sidecar_error_response("config_error", e.to_string()));
+                    }
+                }
+            }
+
             let conn = match open_agent_db(&config, &req.actor.agent_id) {
                 Ok(c) => c,
                 Err(e) => return Ok(sidecar_error_response("invalid_agent", e.to_string())),
             };
+
+            // Inject server-side args for ops that need config
+            let mut req = req;
+            if req.op == "db.stats" {
+                req.args["data_dir"] =
+                    serde_json::Value::String(config.data_dir.to_string_lossy().to_string());
+            }
+            if req.op == "sync.status" {
+                req.args["tables"] = serde_json::to_value(config.sync.tables.clone())
+                    .unwrap_or_else(|_| serde_json::json!([]));
+            }
 
             let resp = match mp_core::operations::execute(&conn, &req) {
                 Ok(r) => r,
@@ -80,13 +109,15 @@ pub async fn run(config: &Config, config_path: &Path) -> Result<()> {
 
     let has_http_channel = config.channels.http.is_some()
         || config.channels.slack.is_some()
-        || config.channels.discord.is_some();
+        || config.channels.discord.is_some()
+        || config.dashboard.enabled;
 
     if has_http_channel {
-        let http_cfg = config.channels.http.clone();
-        let slack_cfg = config.channels.slack.clone();
-        let discord_cfg = config.channels.discord.clone();
-        let default_agent = config
+        let config_for_http = Arc::new(config.clone());
+        let http_cfg = config_for_http.channels.http.clone();
+        let slack_cfg = config_for_http.channels.slack.clone();
+        let discord_cfg = config_for_http.channels.discord.clone();
+        let default_agent = config_for_http
             .agents
             .first()
             .map(|a| a.name.clone())
@@ -96,9 +127,10 @@ pub async fn run(config: &Config, config_path: &Path) -> Result<()> {
         let srv_shutdown = shutdown.subscribe();
         tokio::spawn(async move {
             if let Err(e) = adapters::run_http_server(
-                http_cfg.as_ref(),
-                slack_cfg.as_ref(),
-                discord_cfg.as_ref(),
+                config_for_http,
+                http_cfg,
+                slack_cfg,
+                discord_cfg,
                 default_agent,
                 dispatch_clone,
                 op_dispatch_clone,
@@ -214,10 +246,13 @@ pub async fn run(config: &Config, config_path: &Path) -> Result<()> {
             .http
             .as_ref()
             .map(|h| h.port)
+            .or_else(|| config.dashboard.enabled.then_some(config.gateway.port))
             .unwrap_or(8080);
-        ui::info(format!(
-            "HTTP API listening on port {port}  (POST /v1/chat, POST /v1/ops, WS /v1/ws, GET /health)"
-        ));
+        let mut endpoints = vec!["POST /v1/chat", "POST /v1/ops", "WS /v1/ws", "GET /health"];
+        if config.dashboard.enabled {
+            endpoints.push("GET /dashboard");
+        }
+        ui::info(format!("HTTP API listening on port {port}  ({})", endpoints.join(", ")));
     }
     if config.channels.slack.is_some() {
         ui::info("Slack Events API endpoint: POST /slack/events");
@@ -303,17 +338,16 @@ pub async fn run(config: &Config, config_path: &Path) -> Result<()> {
                 continue;
             }
 
-            match agent::agent_turn(
-                &conn,
-                provider.as_ref(),
-                embed.as_deref(),
-                &ag.name,
-                &sid,
-                ag.persona.as_deref(),
-                trimmed,
-                ag.policy_mode(),
-                Some(&bus),
-            )
+            let req_ctx = crate::context::RequestContext {
+                agent_id: &ag.name,
+                conn: &conn,
+                session_id: &sid,
+                embed_provider: embed.as_deref(),
+                policy_mode: ag.policy_mode(),
+                persona: ag.persona.as_deref(),
+                worker_bus: Some(&bus),
+            };
+            match agent::agent_turn(&req_ctx, provider.as_ref(), trimmed)
             .await
             {
                 Ok(response) => {

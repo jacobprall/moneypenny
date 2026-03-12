@@ -33,7 +33,8 @@ pub struct IngestArgs {
     pub cursor: Option<String>,
 }
 
-pub async fn run(config: &Config, args: &IngestArgs) -> Result<()> {
+pub async fn run(ctx: &crate::CommandContext<'_>, args: &IngestArgs) -> Result<()> {
+    let config = ctx.config;
     let ag = resolve_agent(config, args.agent.as_deref())?;
     let conn = open_agent_db(config, &ag.name)?;
 

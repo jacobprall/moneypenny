@@ -10,7 +10,8 @@ use crate::helpers::{
 };
 use crate::ui;
 
-pub async fn run(config: &Config, cmd: cli::EmbeddingsCommand) -> Result<()> {
+pub async fn run(ctx: &crate::CommandContext<'_>, cmd: cli::EmbeddingsCommand) -> Result<()> {
+    let config = ctx.config;
     match cmd {
         cli::EmbeddingsCommand::Status { agent } => {
             let ag = resolve_agent(config, agent.as_deref())?;

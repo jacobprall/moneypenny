@@ -6,7 +6,8 @@ use mp_core::config::Config;
 use crate::cli;
 use crate::helpers::{open_agent_db, op_request, resolve_agent};
 
-pub async fn run(config: &Config, cmd: cli::AgentCommand) -> Result<()> {
+pub async fn run(ctx: &crate::CommandContext<'_>, cmd: cli::AgentCommand) -> Result<()> {
+    let config = ctx.config;
     match cmd {
         cli::AgentCommand::List => {
             println!();

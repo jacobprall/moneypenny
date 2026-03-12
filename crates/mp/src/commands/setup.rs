@@ -1,8 +1,6 @@
 //! Setup command — MCP registration for AI coding agents.
 
 use anyhow::Result;
-use mp_core::config::Config;
-use std::path::Path;
 
 use crate::cli;
 use crate::docs::{generate_agent_instructions, generate_claude_md, generate_cortex_skill};
@@ -11,7 +9,9 @@ use crate::helpers::{
 };
 use crate::ui;
 
-pub async fn run(config: &Config, config_path: &Path, cmd: cli::SetupCommand) -> Result<()> {
+pub async fn run(ctx: &crate::CommandContext<'_>, cmd: cli::SetupCommand) -> Result<()> {
+    let config = ctx.config;
+    let config_path = ctx.config_path;
     match &cmd {
         cli::SetupCommand::Models => {
             ui::blank();

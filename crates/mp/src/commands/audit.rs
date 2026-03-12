@@ -8,10 +8,11 @@ use crate::helpers::{csv_escape, open_agent_db, op_request, resolve_agent, sql_q
 use crate::ui;
 
 pub async fn run(
-    config: &Config,
+    ctx: &crate::CommandContext<'_>,
     _agent: Option<String>,
     command: Option<cli::AuditCommand>,
 ) -> Result<()> {
+    let config = ctx.config;
     let ag = resolve_agent(config, None)?;
     let conn = open_agent_db(config, &ag.name)?;
 

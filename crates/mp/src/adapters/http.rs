@@ -14,9 +14,9 @@ use serde::{Deserialize, Serialize};
 use tower_http::cors::CorsLayer;
 use tracing::error;
 
-use mp_core::config::{DiscordChannelConfig, HttpChannelConfig, SlackChannelConfig};
+use mp_core::config::{Config, DiscordChannelConfig, HttpChannelConfig, SlackChannelConfig};
 
-use super::{check_auth, discord, slack, DispatchFn, OpDispatchFn};
+use super::{check_auth, dashboard, discord, slack, DispatchFn, OpDispatchFn};
 
 #[derive(Clone)]
 struct HttpState {
@@ -179,9 +179,10 @@ async fn health() -> impl IntoResponse {
 
 /// Build and run the axum server that serves all HTTP-facing channel routes.
 pub async fn run_http_server(
-    http_cfg: Option<&HttpChannelConfig>,
-    slack_cfg: Option<&SlackChannelConfig>,
-    discord_cfg: Option<&DiscordChannelConfig>,
+    config: std::sync::Arc<mp_core::config::Config>,
+    http_cfg: Option<HttpChannelConfig>,
+    slack_cfg: Option<SlackChannelConfig>,
+    discord_cfg: Option<DiscordChannelConfig>,
     default_agent: String,
     dispatch: DispatchFn,
     op_dispatch: OpDispatchFn,
@@ -190,8 +191,13 @@ pub async fn run_http_server(
     use std::collections::HashMap;
     use tokio::sync::RwLock;
 
-    let port = http_cfg.map(|c| c.port).unwrap_or(8080);
-    let api_key = http_cfg.and_then(|c| c.api_key.clone());
+    let port = http_cfg
+        .as_ref()
+        .map(|c| c.port)
+        .or_else(|| config.dashboard.enabled.then_some(config.gateway.port))
+        .unwrap_or(8080);
+    let api_key = http_cfg.as_ref().and_then(|c| c.api_key.clone());
+    let api_key_clone = api_key.clone();
 
     let mut router: Router = Router::new()
         .route("/health", get(health))
@@ -211,7 +217,7 @@ pub async fn run_http_server(
         .with_state(http_state);
     router = router.merge(http_router);
 
-    if let Some(scfg) = slack_cfg {
+    if let Some(ref scfg) = slack_cfg {
         let slack_state = slack::SlackState {
             bot_token: scfg.bot_token.clone(),
             signing_secret: scfg.signing_secret.clone(),
@@ -225,7 +231,7 @@ pub async fn run_http_server(
         router = router.merge(slack_router);
     }
 
-    if let Some(dcfg) = discord_cfg {
+    if let Some(ref dcfg) = discord_cfg {
         let discord_state = discord::DiscordState {
             public_key: dcfg.public_key.clone(),
             dispatch: Arc::clone(&dispatch),
@@ -236,6 +242,42 @@ pub async fn run_http_server(
             .route("/discord/interactions", post(discord::discord_interactions))
             .with_state(discord_state);
         router = router.merge(discord_router);
+    }
+
+    if config.dashboard.enabled {
+        let (event_tx, _) = tokio::sync::broadcast::channel::<dashboard::DashboardEvent>(64);
+        let is_local = config.gateway.host == "127.0.0.1" || config.gateway.host == "localhost";
+        let dist_path = config.data_dir.join("dashboard").join("dist");
+        let dashboard_state = dashboard::DashboardState {
+            event_tx: event_tx.clone(),
+            is_local,
+            api_key: api_key_clone,
+        };
+        let mut dashboard_router = Router::new()
+            .route("/v1/dashboard/stream", get(dashboard::dashboard_stream))
+            .with_state(dashboard_state);
+
+        #[cfg(not(feature = "embed-dashboard"))]
+        {
+            if dist_path.exists() {
+                let index_path = dist_path.join("index.html");
+                let serve_dir = tower_http::services::ServeDir::new(&dist_path)
+                    .not_found_service(tower_http::services::ServeFile::new(&index_path));
+                dashboard_router = dashboard_router.nest_service("/dashboard", serve_dir);
+            } else {
+                tracing::info!("Dashboard enabled but dashboard/dist not found at {:?} — run `cd dashboard && npm run build`", dist_path);
+            }
+        }
+
+        #[cfg(feature = "embed-dashboard")]
+        {
+            dashboard_router = dashboard_router.route(
+                "/dashboard/{*path:path}",
+                get(dashboard::dashboard_embedded_handler),
+            );
+        }
+
+        router = router.merge(dashboard_router);
     }
 
     let addr = format!("0.0.0.0:{port}");

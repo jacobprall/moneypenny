@@ -90,12 +90,93 @@ fn shell_exec(arguments: &str) -> anyhow::Result<ToolResult> {
     }
 }
 
-fn http_request(_arguments: &str) -> anyhow::Result<ToolResult> {
-    Ok(ToolResult {
-        output: "HTTP tool requires async runtime; not yet implemented in sync context".into(),
-        success: false,
-        duration_ms: 0,
-    })
+fn http_request(arguments: &str) -> anyhow::Result<ToolResult> {
+    let args: serde_json::Value = serde_json::from_str(arguments)?;
+    let url = args["url"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing 'url'"))?;
+    let method = args["method"].as_str().unwrap_or("GET").to_uppercase();
+    let body = args["body"].as_str();
+    let content_type = args["content_type"].as_str().unwrap_or("application/json");
+
+    let start = std::time::Instant::now();
+
+    macro_rules! with_headers {
+        ($req:expr) => {{
+            let mut req = $req;
+            if let Some(headers) = args["headers"].as_object() {
+                for (k, v) in headers {
+                    if let Some(v) = v.as_str() {
+                        req = req.header(k, v);
+                    }
+                }
+            }
+            req
+        }};
+    }
+
+    let result = match method.as_str() {
+        "GET" => with_headers!(ureq::get(url)).call(),
+        "HEAD" => with_headers!(ureq::head(url)).call(),
+        "DELETE" => with_headers!(ureq::delete(url)).call(),
+        "POST" => {
+            let req = with_headers!(ureq::post(url).header("Content-Type", content_type));
+            if let Some(b) = body {
+                req.send(b.as_bytes())
+            } else {
+                req.send(&[] as &[u8])
+            }
+        }
+        "PUT" => {
+            let req = with_headers!(ureq::put(url).header("Content-Type", content_type));
+            if let Some(b) = body {
+                req.send(b.as_bytes())
+            } else {
+                req.send(&[] as &[u8])
+            }
+        }
+        "PATCH" => {
+            let req = with_headers!(ureq::patch(url).header("Content-Type", content_type));
+            if let Some(b) = body {
+                req.send(b.as_bytes())
+            } else {
+                req.send(&[] as &[u8])
+            }
+        }
+        other => {
+            return Ok(ToolResult {
+                output: format!("unsupported HTTP method: {other}"),
+                success: false,
+                duration_ms: 0,
+            });
+        }
+    };
+
+    let duration_ms = start.elapsed().as_millis() as u64;
+
+    match result {
+        Ok(mut response) => {
+            let status = response.status().as_u16();
+            let body_str = response
+                .body_mut()
+                .read_to_string()
+                .unwrap_or_else(|e| format!("<read error: {e}>"));
+            let output = serde_json::json!({
+                "status": status,
+                "body": body_str,
+            });
+            Ok(ToolResult {
+                output: output.to_string(),
+                success: (200..300).contains(&status),
+                duration_ms,
+            })
+        }
+        Err(e) => Ok(ToolResult {
+            output: format!("HTTP error: {e}"),
+            success: false,
+            duration_ms,
+        }),
+    }
 }
 
 fn sql_query(_arguments: &str) -> anyhow::Result<ToolResult> {
@@ -184,5 +265,22 @@ mod tests {
     #[test]
     fn shell_exec_missing_command() {
         assert!(dispatch("shell_exec", r#"{}"#).is_err());
+    }
+
+    #[test]
+    fn http_request_missing_url() {
+        let result = dispatch("http_request", r#"{}"#);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn http_request_unsupported_method() {
+        let result = dispatch(
+            "http_request",
+            r#"{"url": "http://example.com", "method": "TRACE"}"#,
+        )
+        .unwrap();
+        assert!(!result.success);
+        assert!(result.output.contains("unsupported"));
     }
 }

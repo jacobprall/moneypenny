@@ -7,7 +7,8 @@ use crate::cli;
 use crate::helpers::{open_agent_db, resolve_agent};
 use crate::ui;
 
-pub async fn run(config: &Config, cmd: cli::SyncCommand) -> Result<()> {
+pub async fn run(ctx: &crate::CommandContext<'_>, cmd: cli::SyncCommand) -> Result<()> {
+    let config = ctx.config;
     let sync_tables: Vec<&str> = config.sync.tables.iter().map(String::as_str).collect();
 
     match cmd {

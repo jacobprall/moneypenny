@@ -7,7 +7,9 @@ use std::path::Path;
 use crate::helpers::op_request;
 use crate::ui;
 
-pub async fn run(config: &Config, config_path: &Path) -> Result<()> {
+pub async fn run(ctx: &crate::CommandContext<'_>) -> Result<()> {
+    let config = ctx.config;
+    let config_path = ctx.config_path;
     ui::banner();
     ui::info("Moneypenny doctor checks");
     ui::blank();

@@ -398,7 +398,7 @@ pub(super) fn op_briefing_compose(
     let mut stmt_facts = conn.prepare(
         "SELECT id, COALESCE(summary, SUBSTR(content, 1, 120)) as summary, created_at
          FROM facts
-         WHERE created_at >= ?1 AND superseded_by IS NULL
+         WHERE created_at >= ?1 AND superseded_at IS NULL
          ORDER BY created_at DESC
          LIMIT 10",
     )?;

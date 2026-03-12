@@ -239,6 +239,10 @@ pub async fn handle_sidecar_mcp_request(
         Some(m) => m,
         None => return Ok(None),
     };
+    // Notifications are fire-and-forget per MCP spec — no response needed.
+    if method.starts_with("notifications/") {
+        return Ok(None);
+    }
     let id = input.get("id").cloned();
     if id.is_none() {
         return Ok(None);
@@ -385,7 +389,6 @@ pub async fn handle_sidecar_mcp_request(
                 }
             }
         }
-        unknown if unknown.starts_with("notifications/") && id.is_none() => return Ok(None),
         _ => jsonrpc_error(id, -32601, format!("method not found: {method}")),
     };
 
@@ -737,7 +740,7 @@ mod tests {
     fn sidecar_mcp_tools_list_exposes_domain_tools() {
         let result = mcp_tools_list_result();
         let tools = result["tools"].as_array().cloned().unwrap_or_default();
-        assert_eq!(tools.len(), 9, "MCP surface: brain + facts + knowledge + policy + activity + experience + events + focus + execute");
+        assert_eq!(tools.len(), 10, "MCP surface: brain + facts + knowledge + policy + activity + experience + events + focus + jobs + execute");
         assert!(tools.iter().any(|t| t["name"] == "moneypenny_brain"));
         assert!(tools.iter().any(|t| t["name"] == "moneypenny_facts"));
         assert!(tools.iter().any(|t| t["name"] == "moneypenny_knowledge"));
@@ -746,6 +749,7 @@ mod tests {
         assert!(tools.iter().any(|t| t["name"] == "moneypenny_experience"));
         assert!(tools.iter().any(|t| t["name"] == "moneypenny_events"));
         assert!(tools.iter().any(|t| t["name"] == "moneypenny_focus"));
+        assert!(tools.iter().any(|t| t["name"] == "moneypenny_jobs"));
         assert!(tools.iter().any(|t| t["name"] == "moneypenny_execute"));
         assert!(!tools.iter().any(|t| t["name"] == "moneypenny_query"));
     }

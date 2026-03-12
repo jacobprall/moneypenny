@@ -10,6 +10,7 @@ mod knowledge;
 mod memory;
 mod policy;
 mod session;
+mod system;
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -215,6 +216,8 @@ fn dispatch_operation(
         "embedding.status" => ingest::op_embedding_status(conn, req),
         "embedding.retry_dead" => ingest::op_embedding_retry_dead(conn, req),
         "embedding.backfill.enqueue" => ingest::op_embedding_backfill_enqueue(conn, req),
+        "db.stats" => system::op_db_stats(conn, req),
+        "sync.status" => system::op_sync_status(conn, req),
         _ => Ok(fail_response(
             "invalid_args",
             format!("unknown operation '{}'", req.op),
@@ -2310,7 +2313,11 @@ mod tests {
 
         let err = execute(&conn, &req).unwrap_err();
         server_thread.join().unwrap();
-        assert!(err.to_string().contains("HTTP 404 Not Found"));
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("404") && err_msg.contains("fetch failed"),
+            "expected HTTP 404 error, got: {err_msg}"
+        );
     }
 
     #[test]

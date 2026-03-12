@@ -7,7 +7,8 @@ use crate::cli;
 use crate::helpers::{csv_escape, open_agent_db, op_request, resolve_agent};
 use crate::ui;
 
-pub async fn run(config: &Config, cmd: cli::FleetCommand) -> Result<()> {
+pub async fn run(ctx: &crate::CommandContext<'_>, cmd: cli::FleetCommand) -> Result<()> {
+    let config = ctx.config;
     match cmd {
         cli::FleetCommand::Init {
             template,

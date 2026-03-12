@@ -12,6 +12,10 @@ pub struct Cli {
     #[arg(short, long, default_value = "moneypenny.toml", env = "MP_CONFIG")]
     pub config: String,
 
+    /// Output results as JSON (for scripting)
+    #[arg(long, global = true, default_value_t = false)]
+    pub json: bool,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -62,6 +66,18 @@ pub enum Command {
         /// Force a new session instead of resuming the last one
         #[arg(long, default_value_t = false)]
         new: bool,
+
+        /// Launch full TUI instead of line-based REPL
+        #[arg(long, short = 't', default_value_t = false)]
+        tui: bool,
+
+        /// Show tool calls with truncated arguments and result preview
+        #[arg(long, short = 'v', default_value_t = false)]
+        verbose: bool,
+
+        /// Hide tool call traces (only show final response)
+        #[arg(long, short = 'q', default_value_t = false)]
+        quiet: bool,
     },
 
     /// Send a one-off message and print the response
@@ -74,6 +90,14 @@ pub enum Command {
         /// Resume an existing session by ID (if omitted, creates a new session)
         #[arg(long)]
         session_id: Option<String>,
+
+        /// Show tool calls with truncated arguments and result preview
+        #[arg(long, short = 'v', default_value_t = false)]
+        verbose: bool,
+
+        /// Hide tool call traces (only show final response)
+        #[arg(long, short = 'q', default_value_t = false)]
+        quiet: bool,
     },
 
     /// Manage conversation sessions

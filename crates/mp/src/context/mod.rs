@@ -1,5 +1,9 @@
 //! Shared context types — reduce parameter threading.
 
+mod request;
+
+pub use request::RequestContext;
+
 use anyhow::Result;
 use mp_core::config::Config;
 use std::path::Path;

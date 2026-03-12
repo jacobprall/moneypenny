@@ -5,7 +5,8 @@ use mp_core::config::Config;
 
 use crate::ui;
 
-pub async fn run(config: &Config) -> Result<()> {
+pub async fn run(ctx: &crate::CommandContext<'_>) -> Result<()> {
+    let config = ctx.config;
     ui::banner();
 
     let meta_path = config.metadata_db_path();

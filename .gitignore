@@ -6,6 +6,8 @@ moneypenny.toml
 *.db-shm
 node_modules
 web/dist/
+dashboard/dist/
+crates/mp/dashboard/dist/
 web/.astro/
 docs/dist/
 docs/.astro/

@@ -4,14 +4,13 @@ use serde_json::{json, Value};
 use crate::tools::{domain_allowed_actions, route_domain_action};
 
 // Re-export registry constants for consumers (sidecar, etc.)
-pub use crate::tools::{TOOL_ACTIVITY, TOOL_BRAIN, TOOL_EVENTS, TOOL_EXECUTE, TOOL_EXPERIENCE, TOOL_FACTS, TOOL_FOCUS, TOOL_KNOWLEDGE, TOOL_POLICY};
+pub use crate::tools::{TOOL_ACTIVITY, TOOL_BRAIN, TOOL_EVENTS, TOOL_EXECUTE, TOOL_EXPERIENCE, TOOL_FACTS, TOOL_FOCUS, TOOL_JOBS, TOOL_KNOWLEDGE, TOOL_POLICY};
 
 // Legacy constants — kept so routing still resolves old tool calls gracefully.
 // Both dot and underscore prefixes are accepted by normalize_tool_name().
 pub const TOOL_QUERY: &str = "moneypenny_query";
 pub const TOOL_CAPABILITIES: &str = "moneypenny_capabilities";
 const TOOL_MEMORY: &str = "moneypenny_memory";
-const TOOL_JOBS: &str = "moneypenny_jobs";
 const TOOL_AUDIT: &str = "moneypenny_audit";
 const TOOL_INGEST: &str = "moneypenny_ingest";
 const TOOL_EMBEDDING: &str = "moneypenny_embedding";
@@ -388,7 +387,7 @@ mod tests {
     fn tools_list_exposes_domain_surface() {
         let list = tools_list();
         let tools = list["tools"].as_array().cloned().unwrap_or_default();
-        assert_eq!(tools.len(), 9, "MCP surface: brain + facts + knowledge + policy + activity + experience + events + focus + execute");
+        assert_eq!(tools.len(), 10, "MCP surface: brain + facts + knowledge + policy + activity + experience + events + focus + jobs + execute");
         assert!(tools.iter().any(|t| t["name"] == TOOL_BRAIN));
         assert!(tools.iter().any(|t| t["name"] == TOOL_FACTS));
         assert!(tools.iter().any(|t| t["name"] == TOOL_KNOWLEDGE));
@@ -397,6 +396,7 @@ mod tests {
         assert!(tools.iter().any(|t| t["name"] == TOOL_EXPERIENCE));
         assert!(tools.iter().any(|t| t["name"] == TOOL_EVENTS));
         assert!(tools.iter().any(|t| t["name"] == TOOL_FOCUS));
+        assert!(tools.iter().any(|t| t["name"] == TOOL_JOBS));
         assert!(tools.iter().any(|t| t["name"] == TOOL_EXECUTE));
         // DSL/query tool should NOT be on the MCP surface
         assert!(!tools.iter().any(|t| t["name"] == TOOL_QUERY));

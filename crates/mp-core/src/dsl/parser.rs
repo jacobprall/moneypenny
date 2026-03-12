@@ -1,25 +1,13 @@
 use super::ast::*;
 use super::lexer::{Kw, Spanned, Token};
-use std::fmt;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("parse error at position {position}: expected {expected:?}, got {got}")]
 pub struct ParseError {
     pub position: usize,
     pub expected: Vec<String>,
     pub got: String,
     pub hint: Option<String>,
-}
-
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "parse error at position {}: expected {}, got {}",
-            self.position,
-            self.expected.join(" or "),
-            self.got
-        )
-    }
 }
 
 struct Parser {

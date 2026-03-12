@@ -24,6 +24,17 @@ pub struct Config {
 
     #[serde(default)]
     pub sync: SyncConfig,
+
+    #[serde(default)]
+    pub dashboard: DashboardConfig,
+}
+
+/// Configuration for the web dashboard served at /dashboard/.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DashboardConfig {
+    /// When true, serve the dashboard SPA at /dashboard/.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -257,6 +268,27 @@ impl AgentConfig {
     }
 }
 
+/// Secret keys to redact when serializing config for display.
+const SECRET_KEYS: &[&str] = &["api_key", "bot_token", "signing_secret", "public_key"];
+
+fn redact_secrets_in_value(v: &mut serde_json::Value) {
+    if let Some(obj) = v.as_object_mut() {
+        for (k, val) in obj.iter_mut() {
+            if SECRET_KEYS.contains(&k.as_str()) {
+                if val.is_string() {
+                    *val = serde_json::Value::String("***".to_string());
+                }
+            } else {
+                redact_secrets_in_value(val);
+            }
+        }
+    } else if let Some(arr) = v.as_array_mut() {
+        for item in arr.iter_mut() {
+            redact_secrets_in_value(item);
+        }
+    }
+}
+
 impl Config {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
@@ -314,6 +346,13 @@ impl Config {
                 self.sync.cloud_url = Some(val);
             }
         }
+        if let Ok(val) = std::env::var("MP_DASHBOARD_ENABLED") {
+            if val.eq_ignore_ascii_case("true") || val == "1" {
+                self.dashboard.enabled = true;
+            } else if val.eq_ignore_ascii_case("false") || val == "0" {
+                self.dashboard.enabled = false;
+            }
+        }
     }
 
     pub fn default_config() -> Self {
@@ -332,11 +371,19 @@ impl Config {
             }],
             channels: ChannelsConfig::default(),
             sync: SyncConfig::default(),
+            dashboard: DashboardConfig::default(),
         }
     }
 
     pub fn to_toml(&self) -> anyhow::Result<String> {
         Ok(toml::to_string_pretty(self)?)
+    }
+
+    /// Serialize config to JSON with secrets redacted (for dashboard config.get).
+    pub fn to_json_redacted(&self) -> anyhow::Result<serde_json::Value> {
+        let mut v = serde_json::to_value(self)?;
+        redact_secrets_in_value(&mut v);
+        Ok(v)
     }
 
     pub fn agent_db_path(&self, agent_name: &str) -> PathBuf {

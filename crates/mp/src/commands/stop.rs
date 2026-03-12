@@ -3,7 +3,8 @@
 use anyhow::Result;
 use mp_core::config::Config;
 
-pub async fn run(config: &Config) -> Result<()> {
+pub async fn run(ctx: &crate::CommandContext<'_>) -> Result<()> {
+    let config = ctx.config;
     let pid_path = config.data_dir.join("mp.pid");
     if !pid_path.exists() {
         println!(

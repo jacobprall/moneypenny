@@ -7,6 +7,7 @@ mod domain_tools;
 mod tools;
 mod docs;
 pub mod helpers;
+mod intent;
 mod sidecar;
 mod ui;
 pub mod worker;
@@ -45,24 +46,33 @@ async fn main() -> Result<()> {
 
     init_logging(&config.gateway.log_level);
 
+    let ctx = commands::CommandContext::new(&config, config_path)?;
+
     match cli.command {
         Command::Init => unreachable!(),
-        Command::Start => commands::start::run(&config, config_path).await,
-        Command::Serve { agent } => commands::serve::run(&config, config_path, agent).await,
-        Command::Stop => commands::stop::run(&config).await,
-        Command::Agent(cmd) => commands::agent::run(&config, cmd).await,
-        Command::Brain(cmd) => commands::brain::run(&config, cmd).await,
-        Command::Experience(cmd) => commands::experience::run(&config, cmd).await,
-        Command::Focus(cmd) => commands::focus::run(&config, cmd).await,
-        Command::Chat { agent, session_id, new } => {
-            commands::chat::run(&config, agent, session_id, new).await
-        }
+        Command::Start => commands::start::run(&ctx).await,
+        Command::Serve { agent } => commands::serve::run(&ctx, agent).await,
+        Command::Stop => commands::stop::run(&ctx).await,
+        Command::Agent(cmd) => commands::agent::run(&ctx, cmd).await,
+        Command::Brain(cmd) => commands::brain::run(&ctx, cmd).await,
+        Command::Experience(cmd) => commands::experience::run(&ctx, cmd).await,
+        Command::Focus(cmd) => commands::focus::run(&ctx, cmd).await,
+        Command::Chat {
+            agent,
+            session_id,
+            new,
+            tui,
+            verbose,
+            quiet,
+        } => commands::chat::run(&ctx, agent, session_id, new, tui, verbose, quiet).await,
         Command::Send {
             agent,
             message,
             session_id,
-        } => commands::send::run(&config, &agent, &message, session_id).await,
-        Command::Facts(cmd) => commands::facts::run(&config, cmd).await,
+            verbose,
+            quiet,
+        } => commands::send::run(&ctx, &agent, &message, session_id, verbose, quiet).await,
+        Command::Facts(cmd) => commands::facts::run(&ctx, cmd).await,
         Command::Ingest {
             path,
             url,
@@ -103,33 +113,31 @@ async fn main() -> Result<()> {
                 claude_code,
                 cursor,
             };
-            commands::ingest::run(&config, &args).await
+            commands::ingest::run(&ctx, &args).await
         }
-        Command::Session(cmd) => commands::session::run(&config, cmd).await,
-        Command::Knowledge(cmd) => commands::knowledge::run(&config, cmd).await,
-        Command::Skill(cmd) => commands::skill::run(&config, cmd).await,
-        Command::Policy(cmd) => commands::policy::run(&config, cmd).await,
-        Command::Job(cmd) => commands::job::run(&config, cmd).await,
-        Command::Embeddings(cmd) => commands::embeddings::run(&config, cmd).await,
-        Command::Audit { agent, command } => {
-            commands::audit::run(&config, agent, command).await
-        }
-        Command::Sync(cmd) => commands::sync::run(&config, cmd).await,
-        Command::Fleet(cmd) => commands::fleet::run(&config, cmd).await,
+        Command::Session(cmd) => commands::session::run(&ctx, cmd).await,
+        Command::Knowledge(cmd) => commands::knowledge::run(&ctx, cmd).await,
+        Command::Skill(cmd) => commands::skill::run(&ctx, cmd).await,
+        Command::Policy(cmd) => commands::policy::run(&ctx, cmd).await,
+        Command::Job(cmd) => commands::job::run(&ctx, cmd).await,
+        Command::Embeddings(cmd) => commands::embeddings::run(&ctx, cmd).await,
+        Command::Audit { agent, command } => commands::audit::run(&ctx, agent, command).await,
+        Command::Sync(cmd) => commands::sync::run(&ctx, cmd).await,
+        Command::Fleet(cmd) => commands::fleet::run(&ctx, cmd).await,
         Command::Mpq { expression, agent, dry_run } => {
-            commands::mpq::run(&config, &expression, agent, dry_run).await
+            commands::mpq::run(&ctx, &expression, agent, dry_run).await
         }
-        Command::Db(cmd) => commands::db::run(&config, cmd).await,
+        Command::Db(cmd) => commands::db::run(&ctx, cmd).await,
         Command::Spend { agent, period, group_by } => {
-            commands::spend::run(&config, agent, &period, &group_by).await
+            commands::spend::run(&ctx, agent, &period, &group_by).await
         }
-        Command::Briefing { agent } => commands::briefing::run(&config, agent).await,
-        Command::Health => commands::health::run(&config).await,
-        Command::Doctor => commands::doctor::run(&config, config_path).await,
-        Command::Worker { agent } => worker::cmd_worker(&config, &agent).await,
-        Command::Sidecar { agent } => sidecar::cmd_sidecar(&config, agent).await,
-        Command::Setup(cmd) => commands::setup::run(&config, config_path, cmd).await,
-        Command::Hook { event, agent } => commands::hook::run(&config, &event, agent).await,
+        Command::Briefing { agent } => commands::briefing::run(&ctx, agent).await,
+        Command::Health => commands::health::run(&ctx).await,
+        Command::Doctor => commands::doctor::run(&ctx).await,
+        Command::Worker { agent } => worker::cmd_worker(ctx.config, &agent).await,
+        Command::Sidecar { agent } => sidecar::cmd_sidecar(ctx.config, agent).await,
+        Command::Setup(cmd) => commands::setup::run(&ctx, cmd).await,
+        Command::Hook { event, agent } => commands::hook::run(&ctx, &event, agent).await,
     }
 }
 

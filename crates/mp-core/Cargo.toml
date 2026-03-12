@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+thiserror.workspace = true
 chrono.workspace = true
 cron = "0.12"
 mp-ext = { path = "../mp-ext" }

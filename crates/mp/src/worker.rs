@@ -179,19 +179,16 @@ pub async fn cmd_worker(config: &Config, agent_name: &str) -> Result<()> {
             mp_core::store::log::create_session(&conn, &agent.name, Some("gateway"))?
         };
 
-        let response = match crate::agent::agent_turn(
-            &conn,
-            provider.as_ref(),
-            embed.as_deref(),
-            &agent.name,
-            &sid,
-            agent.persona.as_deref(),
-            msg,
-            agent.policy_mode(),
-            None,
-        )
-        .await
-        {
+        let req_ctx = crate::context::RequestContext {
+            agent_id: &agent.name,
+            conn: &conn,
+            session_id: &sid,
+            embed_provider: embed.as_deref(),
+            policy_mode: agent.policy_mode(),
+            persona: agent.persona.as_deref(),
+            worker_bus: None,
+        };
+        let response = match crate::agent::agent_turn(&req_ctx, provider.as_ref(), msg).await {
             Ok(r) => serde_json::json!({"response": r, "session_id": sid}),
             Err(e) => serde_json::json!({"error": e.to_string(), "session_id": sid}),
         };

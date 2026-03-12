@@ -77,6 +77,49 @@ pub fn field(key: &str, width: usize, value: impl Display) {
     }
 }
 
+/// Print a table row with aligned columns (matches table_header).
+pub fn row(cols: &[(&str, usize)]) {
+    let line: String = cols
+        .iter()
+        .map(|(val, width)| format!("{:<width$}", val))
+        .collect::<Vec<_>>()
+        .join(" ");
+    println!("  {line}");
+}
+
+/// Create a spinner for long-running operations. Renders on stderr.
+/// Call `finish_and_clear()` before printing results to stdout.
+pub fn spinner(msg: &str) -> indicatif::ProgressBar {
+    let pb = indicatif::ProgressBar::new_spinner();
+    pb.set_style(
+        indicatif::ProgressStyle::default_spinner()
+            .template("{spinner:.dim} {msg}")
+            .unwrap(),
+    );
+    pb.set_message(msg.to_string());
+    pb.enable_steady_tick(std::time::Duration::from_millis(80));
+    pb
+}
+
+/// Render markdown to terminal. Respects NO_COLOR and styled().
+/// When styling is disabled, returns raw text.
+pub fn render_markdown(text: &str) {
+    if !styled() {
+        for line in text.lines() {
+            println!("  {line}");
+        }
+        return;
+    }
+    let skin = termimad::MadSkin::default();
+    let (width, _) = termimad::terminal_size();
+    let width = width.saturating_sub(4) as usize;
+    let fmt = termimad::FmtText::from(&skin, text, Some(width));
+    let output = format!("{fmt}");
+    for line in output.lines() {
+        println!("  {line}");
+    }
+}
+
 /// Print a dimmed table header row and a thin horizontal rule.
 pub fn table_header(cols: &[(&str, usize)]) {
     let header: String = cols

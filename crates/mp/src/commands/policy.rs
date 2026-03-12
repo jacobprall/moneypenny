@@ -7,7 +7,8 @@ use crate::cli;
 use crate::helpers::{open_agent_db, op_request, parse_duration_hours, resolve_agent, toml_to_json};
 use crate::ui;
 
-pub async fn run(config: &Config, cmd: cli::PolicyCommand) -> Result<()> {
+pub async fn run(ctx: &crate::CommandContext<'_>, cmd: cli::PolicyCommand) -> Result<()> {
+    let config = ctx.config;
     let ag = resolve_agent(config, None)?;
     let conn = open_agent_db(config, &ag.name)?;
 

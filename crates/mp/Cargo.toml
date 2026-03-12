@@ -3,6 +3,10 @@ name = "mp"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+embed-dashboard = ["dep:include_dir", "dep:mime_guess"]
+
 [[bin]]
 name = "mp"
 path = "src/main.rs"
@@ -34,6 +38,13 @@ toml.workspace = true
 libc = "0.2"
 dotenvy = "0.15.7"
 owo-colors = "4"
+include_dir = { version = "0.7", optional = true }
+mime_guess = { version = "2", optional = true }
+indicatif = "0.17"
+rustyline = "15"
+termimad = "0.30"
+ratatui = "0.29"
+crossterm = "0.28"
 
 [dev-dependencies]
 tempfile = "3"

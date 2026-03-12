@@ -13,7 +13,9 @@ use crate::helpers::{
 use crate::sidecar;
 use crate::worker::{run_scheduler, spawn_worker, WorkerBus, WorkerHandle};
 
-pub async fn run(config: &Config, config_path: &Path, agent: Option<String>) -> Result<()> {
+pub async fn run(ctx: &crate::CommandContext<'_>, agent: Option<String>) -> Result<()> {
+    let config = ctx.config;
+    let config_path = ctx.config_path;
     let shutdown = tokio::sync::broadcast::channel::<()>(1).0;
 
     let bus = WorkerBus::new();
@@ -54,10 +56,38 @@ pub async fn run(config: &Config, config_path: &Path, agent: Option<String>) -> 
                 Err(e) => return Ok(sidecar_error_response("invalid_request", e.to_string())),
             };
 
+            if req.op == "config.get" {
+                match config.to_json_redacted() {
+                    Ok(data) => {
+                        return Ok(serde_json::json!({
+                            "ok": true,
+                            "code": "ok",
+                            "message": "config",
+                            "data": data,
+                            "policy": null,
+                            "audit": { "recorded": false }
+                        }));
+                    }
+                    Err(e) => {
+                        return Ok(sidecar_error_response("config_error", e.to_string()));
+                    }
+                }
+            }
+
             let conn = match open_agent_db(&config, &req.actor.agent_id) {
                 Ok(c) => c,
                 Err(e) => return Ok(sidecar_error_response("invalid_agent", e.to_string())),
             };
+
+            let mut req = req;
+            if req.op == "db.stats" {
+                req.args["data_dir"] =
+                    serde_json::Value::String(config.data_dir.to_string_lossy().to_string());
+            }
+            if req.op == "sync.status" {
+                req.args["tables"] = serde_json::to_value(config.sync.tables.clone())
+                    .unwrap_or_else(|_| serde_json::json!([]));
+            }
 
             let resp = match mp_core::operations::execute(&conn, &req) {
                 Ok(r) => r,
@@ -93,11 +123,13 @@ pub async fn run(config: &Config, config_path: &Path, agent: Option<String>) -> 
         let op_dispatch_clone = Arc::clone(&op_dispatch);
         let srv_shutdown = shutdown.subscribe();
         let da = default_agent_name.clone();
+        let config_ref = Arc::new(config.clone());
         tokio::spawn(async move {
             if let Err(e) = adapters::run_http_server(
-                http_cfg.as_ref(),
-                slack_cfg.as_ref(),
-                discord_cfg.as_ref(),
+                config_ref,
+                http_cfg.clone(),
+                slack_cfg.clone(),
+                discord_cfg.clone(),
                 da,
                 dispatch_clone,
                 op_dispatch_clone,

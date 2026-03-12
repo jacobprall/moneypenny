@@ -7,7 +7,8 @@ use crate::cli;
 use crate::helpers::{open_agent_db, op_request, resolve_agent};
 use crate::ui;
 
-pub async fn run(config: &Config, cmd: cli::SessionCommand) -> Result<()> {
+pub async fn run(ctx: &crate::CommandContext<'_>, cmd: cli::SessionCommand) -> Result<()> {
+    let config = ctx.config;
     match cmd {
         cli::SessionCommand::List { agent, limit } => {
             let ag = resolve_agent(config, agent.as_deref())?;

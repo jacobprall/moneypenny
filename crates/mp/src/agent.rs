@@ -1,7 +1,37 @@
 use crate::worker::WorkerBus;
 use anyhow::Result;
 use mp_llm::provider::{EmbeddingProvider, LlmProvider};
+use mp_llm::types::{StreamEvent, Usage};
 use std::collections::HashSet;
+use std::time::Instant;
+use tokio::sync::mpsc::UnboundedSender;
+use futures_util::StreamExt;
+
+/// Events yielded during a streaming agent turn for real-time UI updates.
+#[derive(Debug, Clone)]
+pub enum AgentEvent {
+    /// Incremental text token from the LLM.
+    Token(String),
+    /// Agent is calling a tool.
+    ToolStart {
+        name: String,
+        arguments: String,
+    },
+    /// Tool call completed.
+    ToolEnd {
+        name: String,
+        success: bool,
+        duration_ms: u64,
+        result_preview: Option<String>,
+    },
+    /// Final response text (for logging / post-processing).
+    Done {
+        response: String,
+        usage: Option<Usage>,
+    },
+    /// Error during generation.
+    Error(String),
+}
 
 fn build_llm_tools() -> Vec<mp_llm::types::ToolDef> {
     vec![
@@ -170,129 +200,22 @@ fn build_llm_tools() -> Vec<mp_llm::types::ToolDef> {
     ]
 }
 
-fn contains_any(haystack: &str, needles: &[&str]) -> bool {
-    needles.iter().any(|n| haystack.contains(n))
+use crate::intent;
+
+fn send_event(tx: &Option<UnboundedSender<AgentEvent>>, ev: AgentEvent) {
+    if let Some(tx) = tx {
+        let _ = tx.send(ev);
+    }
 }
 
-/// Prefer text-only responses for explain/plan questions that don't request actions.
-fn is_text_first_intent(user_message: &str) -> bool {
-    let s = user_message.to_lowercase();
-    let asks_explain_or_plan = contains_any(
-        &s,
-        &[
-            "explain",
-            "why ",
-            "what happened",
-            "how does",
-            "how do",
-            "walk me through",
-            "step by step",
-            "plan",
-            "summarize",
-            "summary",
-            "what should i do",
-            "can you think of",
-            "think of a good task",
-            "suggest",
-            "idea",
-            "recommended task",
-            "what would be a good task",
-        ],
-    );
-    let asks_action = contains_any(
-        &s,
-        &[
-            "create ",
-            "add ",
-            "update ",
-            "delete ",
-            "remove ",
-            "ingest ",
-            "schedule ",
-            "run ",
-            "execute ",
-            "use tool",
-            "call tool",
-            "save ",
-            "remember ",
-            "set ",
-        ],
-    );
-    asks_explain_or_plan && !asks_action
-}
-
-/// "Write confirmation" is treated as explicit user intent to perform mutations.
-fn has_write_confirmation(user_message: &str) -> bool {
-    let s = user_message.to_lowercase();
-    contains_any(
-        &s,
-        &[
-            "confirm",
-            "approved",
-            "go ahead",
-            "yes do it",
-            "please do it",
-            "create ",
-            "add ",
-            "update ",
-            "delete ",
-            "remove ",
-            "ingest ",
-            "schedule ",
-            "save ",
-            "remember ",
-            "set ",
-            "run ",
-            "execute ",
-        ],
-    )
-}
-
-fn allow_multi_tool_calls(user_message: &str) -> bool {
-    let s = user_message.to_lowercase();
-    contains_any(
-        &s,
-        &[
-            "use multiple tools",
-            "use many tools",
-            "run all tools",
-            "show off all features",
-            "full workflow",
-        ],
-    )
-}
-
-fn is_mutating_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "fact_add"
-            | "fact_update"
-            | "scratch_set"
-            | "knowledge_ingest"
-            | "job_create"
-            | "job_pause"
-            | "job_resume"
-            | "job_run"
-            | "js_tool_add"
-            | "js_tool_delete"
-            | "shell_exec"
-            | "delegate_to_agent"
-    ) || name.starts_with("mcp:")
-}
-
-fn is_read_only_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "web_search"
-            | "memory_search"
-            | "fact_list"
-            | "scratch_get"
-            | "knowledge_list"
-            | "job_list"
-            | "file_read"
-            | "policy_list"
-            | "audit_query"
-    )
+/// Streaming variant of agent_turn. Yields AgentEvent through the channel for real-time UI.
+pub async fn agent_turn_stream(
+    ctx: &crate::context::RequestContext<'_>,
+    provider: &dyn LlmProvider,
+    user_message: &str,
+    tx: Option<UnboundedSender<AgentEvent>>,
+) -> Result<String> {
+    run_agent_turn_inner(ctx, provider, user_message, tx).await
 }
 
 /// Load user-defined JS tools from the skills table as LLM ToolDefs.
@@ -324,17 +247,31 @@ fn load_js_tool_defs(conn: &rusqlite::Connection) -> Vec<(String, String, serde_
         .unwrap_or_default()
 }
 
+/// Wrapper used by HTTP, worker, etc. For CLI streaming, use agent_turn_stream.
 pub async fn agent_turn(
-    conn: &rusqlite::Connection,
+    ctx: &crate::context::RequestContext<'_>,
     provider: &dyn LlmProvider,
-    embed_provider: Option<&dyn EmbeddingProvider>,
-    agent_id: &str,
-    session_id: &str,
-    persona: Option<&str>,
     user_message: &str,
-    policy_mode: mp_core::policy::PolicyMode,
-    worker_bus: Option<&std::sync::Arc<WorkerBus>>,
 ) -> Result<String> {
+    run_agent_turn_inner(ctx, provider, user_message, None).await
+}
+
+async fn run_agent_turn_inner(
+    ctx: &crate::context::RequestContext<'_>,
+    provider: &dyn LlmProvider,
+    user_message: &str,
+    tx: Option<UnboundedSender<AgentEvent>>,
+) -> Result<String> {
+    let crate::context::RequestContext {
+        conn,
+        agent_id,
+        session_id,
+        embed_provider,
+        policy_mode,
+        persona,
+        worker_bus,
+    } = ctx;
+
     mp_core::store::log::append_message(conn, session_id, "user", user_message)?;
 
     let budget = mp_core::context::TokenBudget::new(128_000);
@@ -342,7 +279,7 @@ pub async fn agent_turn(
         conn,
         agent_id,
         session_id,
-        persona,
+        persona.as_ref().copied(),
         user_message,
         &budget,
         None,
@@ -364,19 +301,23 @@ pub async fn agent_turn(
         channel: None,
         arguments: None,
     };
-    let decision = mp_core::policy::evaluate_with_mode(conn, &msg_policy, policy_mode)?;
+    let decision = mp_core::policy::evaluate_with_mode(conn, &msg_policy, *policy_mode)?;
     if matches!(decision.effect, mp_core::policy::Effect::Deny) {
         let denial = format!(
             "I'm unable to respond to that: {}",
             decision.reason.as_deref().unwrap_or("blocked by policy")
         );
         mp_core::store::log::append_message(conn, session_id, "assistant", &denial)?;
+        send_event(&tx, AgentEvent::Done {
+            response: denial.clone(),
+            usage: None,
+        });
         return Ok(denial);
     }
 
-    let text_first = is_text_first_intent(user_message);
-    let write_confirmed = has_write_confirmation(user_message);
-    let multi_tool_opt_in = allow_multi_tool_calls(user_message);
+    let text_first = intent::is_text_first(user_message);
+    let write_confirmed = intent::has_write_confirmation(user_message);
+    let multi_tool_opt_in = intent::allow_multi_tool_calls(user_message);
 
     let mut tools = build_llm_tools();
     for (name, desc, schema) in mp_core::mcp::load_tool_defs(conn) {
@@ -400,7 +341,7 @@ pub async fn agent_turn(
             "This request is explanatory/planning. Do NOT call tools. Respond directly.",
         ));
     } else if !write_confirmed {
-        tools.retain(|t| is_read_only_tool(&t.name));
+        tools.retain(|t| intent::is_read_only_tool(&t.name));
         messages.push(mp_llm::types::Message::system(
             "Use read-only tools only unless the user explicitly confirms write actions.",
         ));
@@ -416,151 +357,384 @@ pub async fn agent_turn(
     let mut last_tool_name: Option<String> = None;
     let mut same_tool_streak = 0usize;
     let mut loop_broken = false;
+    let use_streaming = provider.supports_streaming();
 
     for _ in 0..max_rounds {
-        let response = provider.generate(&messages, &tools, &config).await?;
+        if use_streaming {
+            let mut stream = provider.generate_stream(&messages, &tools, &config).await?;
+            let mut accumulated_text = String::new();
+            let mut tool_calls: Vec<mp_llm::types::ToolCall> = Vec::new();
+            let mut usage = Usage::default();
 
-        if response.tool_calls.is_empty() {
-            let text = response.content.unwrap_or_default();
-            let redacted = mp_core::store::redact::redact(&text);
-            mp_core::store::log::append_message(conn, session_id, "assistant", &redacted)?;
-            return Ok(redacted);
-        }
-
-        let mut planned_calls = response.tool_calls;
-        if total_tool_calls >= max_tool_calls_total {
-            loop_broken = true;
-            break;
-        }
-        let remaining = max_tool_calls_total.saturating_sub(total_tool_calls);
-        if planned_calls.len() > remaining {
-            planned_calls.truncate(remaining);
-        }
-        if !multi_tool_opt_in && planned_calls.len() > 1 {
-            planned_calls.truncate(1);
-        }
-        if planned_calls.is_empty() {
-            loop_broken = true;
-            break;
-        }
-
-        messages.push(mp_llm::types::Message::assistant_with_tool_calls(
-            response.content.clone(),
-            planned_calls
-                .iter()
-                .map(|tc| mp_llm::types::ToolCall {
-                    id: tc.id.clone(),
-                    name: tc.name.clone(),
-                    arguments: tc.arguments.clone(),
-                })
-                .collect(),
-        ));
-
-        for tc in planned_calls {
-            total_tool_calls += 1;
-
-            if !allowed_tool_names.contains(&tc.name) {
-                consecutive_tool_failures += 1;
-                let blocked = format!(
-                    "Tool '{}' is not available for this request. Ask explicitly to use it.",
-                    tc.name
-                );
-                messages.push(mp_llm::types::Message::tool(&blocked, &tc.id));
-                if consecutive_tool_failures >= 3 {
-                    loop_broken = true;
-                    break;
-                }
-                continue;
-            }
-
-            if is_mutating_tool(&tc.name) && !write_confirmed {
-                consecutive_tool_failures += 1;
-                let blocked = format!(
-                    "Blocked mutating tool '{}'. Please ask explicitly and confirm the write action.",
-                    tc.name
-                );
-                messages.push(mp_llm::types::Message::tool(&blocked, &tc.id));
-                if consecutive_tool_failures >= 3 {
-                    loop_broken = true;
-                    break;
-                }
-                continue;
-            }
-
-            let msg_id = mp_core::store::log::append_message(
-                conn,
-                session_id,
-                "assistant",
-                &format!("[tool: {}]", tc.name),
-            )?;
-            let mut effective_arguments = tc.arguments.clone();
-            if tc.name == "memory_search" {
-                effective_arguments =
-                    enrich_memory_search_args_with_embedding(&effective_arguments, embed_provider)
-                        .await;
-            }
-
-            if tc.name == "delegate_to_agent" {
-                let args: serde_json::Value =
-                    serde_json::from_str(&tc.arguments).unwrap_or_default();
-                let target = args["to"].as_str().unwrap_or("");
-                let msg = args["message"].as_str().unwrap_or("");
-
-                let delegation_result = if let Some(bus) = worker_bus {
-                    match bus.route(target, msg, None).await {
-                        Ok(r) => r,
-                        Err(e) => format!("Delegation to '{target}' failed: {e}"),
+            while let Some(ev_result) = stream.next().await {
+                match ev_result {
+                    Ok(StreamEvent::Delta(text)) => {
+                        accumulated_text.push_str(&text);
+                        send_event(&tx, AgentEvent::Token(text));
                     }
-                } else {
-                    format!(
-                        "Delegation to '{target}' is only available in gateway mode (mp start)."
-                    )
-                };
-
-                tracing::info!(target, "delegation tool call");
-                messages.push(mp_llm::types::Message::tool(&delegation_result, &tc.id));
-                continue;
+                    Ok(StreamEvent::ToolCall(tc)) => {
+                        tool_calls.push(tc);
+                    }
+                    Ok(StreamEvent::Done(u)) => {
+                        usage = u;
+                        break;
+                    }
+                    Err(e) => {
+                        let err_msg: String = e.to_string();
+                        send_event(&tx, AgentEvent::Error(err_msg.clone()));
+                        return Err(e.into());
+                    }
+                }
             }
 
-            let result = mp_core::tools::registry::execute(
-                conn,
-                agent_id,
-                session_id,
-                &msg_id,
-                &tc.name,
-                &effective_arguments,
-                &|name, args| mp_core::tools::builtins::dispatch(name, args),
-                None,
-            )?;
-
-            tracing::info!(tool = %tc.name, success = result.success, "tool call");
-            if result.success {
-                consecutive_tool_failures = 0;
-            } else {
-                consecutive_tool_failures += 1;
+            if tool_calls.is_empty() {
+                let redacted = mp_core::store::redact::redact(&accumulated_text);
+                mp_core::store::log::append_message(conn, session_id, "assistant", &redacted)?;
+                send_event(&tx, AgentEvent::Done {
+                    response: redacted.clone(),
+                    usage: Some(usage),
+                });
+                return Ok(redacted);
             }
 
-            if last_tool_name.as_deref() == Some(tc.name.as_str()) {
-                same_tool_streak += 1;
-            } else {
-                same_tool_streak = 1;
-                last_tool_name = Some(tc.name.clone());
-            }
-
-            messages.push(mp_llm::types::Message::tool(&result.output, &tc.id));
-
-            if consecutive_tool_failures >= 3 || same_tool_streak >= 4 {
-                loop_broken = true;
-                break;
-            }
+            let mut planned_calls = tool_calls;
             if total_tool_calls >= max_tool_calls_total {
                 loop_broken = true;
                 break;
             }
-        }
+            let remaining = max_tool_calls_total.saturating_sub(total_tool_calls);
+            if planned_calls.len() > remaining {
+                planned_calls.truncate(remaining);
+            }
+            if !multi_tool_opt_in && planned_calls.len() > 1 {
+                planned_calls.truncate(1);
+            }
 
-        if loop_broken {
-            break;
+            messages.push(mp_llm::types::Message::assistant_with_tool_calls(
+                Some(accumulated_text),
+                planned_calls
+                    .iter()
+                    .map(|tc| mp_llm::types::ToolCall {
+                        id: tc.id.clone(),
+                        name: tc.name.clone(),
+                        arguments: tc.arguments.clone(),
+                    })
+                    .collect(),
+            ));
+
+            for tc in planned_calls {
+                total_tool_calls += 1;
+
+                if !allowed_tool_names.contains(&tc.name) {
+                    consecutive_tool_failures += 1;
+                    let blocked = format!(
+                        "Tool '{}' is not available for this request. Ask explicitly to use it.",
+                        tc.name
+                    );
+                    messages.push(mp_llm::types::Message::tool(&blocked, &tc.id));
+                    if consecutive_tool_failures >= 3 {
+                        loop_broken = true;
+                        break;
+                    }
+                    continue;
+                }
+
+                if intent::is_mutating_tool(&tc.name) && !write_confirmed {
+                    consecutive_tool_failures += 1;
+                    let blocked = format!(
+                        "Blocked mutating tool '{}'. Please ask explicitly and confirm the write action.",
+                        tc.name
+                    );
+                    messages.push(mp_llm::types::Message::tool(&blocked, &tc.id));
+                    if consecutive_tool_failures >= 3 {
+                        loop_broken = true;
+                        break;
+                    }
+                    continue;
+                }
+
+                send_event(&tx, AgentEvent::ToolStart {
+                    name: tc.name.clone(),
+                    arguments: tc.arguments.clone(),
+                });
+                let start = Instant::now();
+
+                let msg_id = mp_core::store::log::append_message(
+                    conn,
+                    session_id,
+                    "assistant",
+                    &format!("[tool: {}]", tc.name),
+                )?;
+                let mut effective_arguments = tc.arguments.clone();
+                if tc.name == "memory_search" {
+                    effective_arguments =
+                        enrich_memory_search_args_with_embedding(&effective_arguments, *embed_provider)
+                            .await;
+                }
+
+                let (tool_success, tool_output) = if tc.name == "delegate_to_agent" {
+                    let args: serde_json::Value =
+                        serde_json::from_str(&tc.arguments).unwrap_or_default();
+                    let target = args["to"].as_str().unwrap_or("");
+                    let msg = args["message"].as_str().unwrap_or("");
+
+                    let delegation_result = if let Some(bus) = worker_bus {
+                        match bus.route(target, msg, None).await {
+                            Ok(r) => (true, r),
+                            Err(e) => (false, format!("Delegation to '{target}' failed: {e}")),
+                        }
+                    } else {
+                        (
+                            false,
+                            format!(
+                                "Delegation to '{target}' is only available in gateway mode (mp start)."
+                            ),
+                        )
+                    };
+
+                    tracing::info!(target, "delegation tool call");
+                    (delegation_result.0, delegation_result.1)
+                } else {
+                    let result = mp_core::tools::registry::execute(
+                        conn,
+                        agent_id,
+                        session_id,
+                        &msg_id,
+                        &tc.name,
+                        &effective_arguments,
+                        &|name, args| mp_core::tools::builtins::dispatch(name, args),
+                        None,
+                    )?;
+                    (result.success, result.output)
+                };
+
+                let duration_ms = start.elapsed().as_millis() as u64;
+                let result_preview = tool_output.chars().take(120).collect::<String>();
+                let result_preview = if tool_output.len() > 120 {
+                    Some(format!("{}...", result_preview))
+                } else {
+                    Some(result_preview)
+                };
+
+                if tool_success {
+                    consecutive_tool_failures = 0;
+                } else {
+                    consecutive_tool_failures += 1;
+                }
+
+                if last_tool_name.as_deref() == Some(tc.name.as_str()) {
+                    same_tool_streak += 1;
+                } else {
+                    same_tool_streak = 1;
+                    last_tool_name = Some(tc.name.clone());
+                }
+
+                messages.push(mp_llm::types::Message::tool(&tool_output, &tc.id));
+
+                send_event(&tx, AgentEvent::ToolEnd {
+                    name: tc.name.clone(),
+                    success: tool_success,
+                    duration_ms,
+                    result_preview,
+                });
+
+                if consecutive_tool_failures >= 3 || same_tool_streak >= 4 {
+                    loop_broken = true;
+                    break;
+                }
+                if total_tool_calls >= max_tool_calls_total {
+                    loop_broken = true;
+                    break;
+                }
+            }
+
+            if loop_broken {
+                break;
+            }
+        } else {
+            let response = provider.generate(&messages, &tools, &config).await?;
+
+            if response.tool_calls.is_empty() {
+                let text = response.content.unwrap_or_default();
+                let redacted = mp_core::store::redact::redact(&text);
+                mp_core::store::log::append_message(conn, session_id, "assistant", &redacted)?;
+                send_event(&tx, AgentEvent::Done {
+                    response: redacted.clone(),
+                    usage: Some(response.usage),
+                });
+                return Ok(redacted);
+            }
+
+            let mut planned_calls = response.tool_calls;
+            if total_tool_calls >= max_tool_calls_total {
+                loop_broken = true;
+                break;
+            }
+            let remaining = max_tool_calls_total.saturating_sub(total_tool_calls);
+            if planned_calls.len() > remaining {
+                planned_calls.truncate(remaining);
+            }
+            if !multi_tool_opt_in && planned_calls.len() > 1 {
+                planned_calls.truncate(1);
+            }
+            if planned_calls.is_empty() {
+                loop_broken = true;
+                break;
+            }
+
+            messages.push(mp_llm::types::Message::assistant_with_tool_calls(
+                response.content.clone(),
+                planned_calls
+                    .iter()
+                    .map(|tc| mp_llm::types::ToolCall {
+                        id: tc.id.clone(),
+                        name: tc.name.clone(),
+                        arguments: tc.arguments.clone(),
+                    })
+                    .collect(),
+            ));
+
+            for tc in planned_calls {
+                total_tool_calls += 1;
+
+                send_event(&tx, AgentEvent::ToolStart {
+                    name: tc.name.clone(),
+                    arguments: tc.arguments.clone(),
+                });
+                let start = Instant::now();
+
+                if !allowed_tool_names.contains(&tc.name) {
+                    consecutive_tool_failures += 1;
+                    let blocked = format!(
+                        "Tool '{}' is not available for this request. Ask explicitly to use it.",
+                        tc.name
+                    );
+                    messages.push(mp_llm::types::Message::tool(&blocked, &tc.id));
+                    send_event(&tx, AgentEvent::ToolEnd {
+                        name: tc.name.clone(),
+                        success: false,
+                        duration_ms: start.elapsed().as_millis() as u64,
+                        result_preview: None,
+                    });
+                    if consecutive_tool_failures >= 3 {
+                        loop_broken = true;
+                        break;
+                    }
+                    continue;
+                }
+
+                if intent::is_mutating_tool(&tc.name) && !write_confirmed {
+                    consecutive_tool_failures += 1;
+                    let blocked = format!(
+                        "Blocked mutating tool '{}'. Please ask explicitly and confirm the write action.",
+                        tc.name
+                    );
+                    messages.push(mp_llm::types::Message::tool(&blocked, &tc.id));
+                    send_event(&tx, AgentEvent::ToolEnd {
+                        name: tc.name.clone(),
+                        success: false,
+                        duration_ms: start.elapsed().as_millis() as u64,
+                        result_preview: None,
+                    });
+                    if consecutive_tool_failures >= 3 {
+                        loop_broken = true;
+                        break;
+                    }
+                    continue;
+                }
+
+                let msg_id = mp_core::store::log::append_message(
+                    conn,
+                    session_id,
+                    "assistant",
+                    &format!("[tool: {}]", tc.name),
+                )?;
+                let mut effective_arguments = tc.arguments.clone();
+                if tc.name == "memory_search" {
+                    effective_arguments =
+                        enrich_memory_search_args_with_embedding(&effective_arguments, *embed_provider)
+                            .await;
+                }
+
+                let (tool_success, tool_output) = if tc.name == "delegate_to_agent" {
+                    let args: serde_json::Value =
+                        serde_json::from_str(&tc.arguments).unwrap_or_default();
+                    let target = args["to"].as_str().unwrap_or("");
+                    let msg = args["message"].as_str().unwrap_or("");
+
+                    let delegation_result = if let Some(bus) = worker_bus {
+                        match bus.route(target, msg, None).await {
+                            Ok(r) => (true, r),
+                            Err(e) => (false, format!("Delegation to '{target}' failed: {e}")),
+                        }
+                    } else {
+                        (
+                            false,
+                            format!(
+                                "Delegation to '{target}' is only available in gateway mode (mp start)."
+                            ),
+                        )
+                    };
+
+                    tracing::info!(target, "delegation tool call");
+                    (delegation_result.0, delegation_result.1)
+                } else {
+                    let result = mp_core::tools::registry::execute(
+                        conn,
+                        agent_id,
+                        session_id,
+                        &msg_id,
+                        &tc.name,
+                        &effective_arguments,
+                        &|name, args| mp_core::tools::builtins::dispatch(name, args),
+                        None,
+                    )?;
+                    (result.success, result.output)
+                };
+
+                let duration_ms = start.elapsed().as_millis() as u64;
+                let result_preview = tool_output.chars().take(120).collect::<String>();
+                let result_preview = if tool_output.len() > 120 {
+                    Some(format!("{}...", result_preview))
+                } else {
+                    Some(result_preview)
+                };
+
+                if tool_success {
+                    consecutive_tool_failures = 0;
+                } else {
+                    consecutive_tool_failures += 1;
+                }
+
+                if last_tool_name.as_deref() == Some(tc.name.as_str()) {
+                    same_tool_streak += 1;
+                } else {
+                    same_tool_streak = 1;
+                    last_tool_name = Some(tc.name.clone());
+                }
+
+                messages.push(mp_llm::types::Message::tool(&tool_output, &tc.id));
+
+                send_event(&tx, AgentEvent::ToolEnd {
+                    name: tc.name.clone(),
+                    success: tool_success,
+                    duration_ms,
+                    result_preview,
+                });
+
+                if consecutive_tool_failures >= 3 || same_tool_streak >= 4 {
+                    loop_broken = true;
+                    break;
+                }
+                if total_tool_calls >= max_tool_calls_total {
+                    loop_broken = true;
+                    break;
+                }
+            }
+
+            if loop_broken {
+                break;
+            }
         }
     }
 
@@ -575,12 +749,20 @@ and ask for explicit confirmation.",
             let text = final_resp.content.unwrap_or_default();
             let redacted = mp_core::store::redact::redact(&text);
             mp_core::store::log::append_message(conn, session_id, "assistant", &redacted)?;
+            send_event(&tx, AgentEvent::Done {
+                response: redacted.clone(),
+                usage: Some(final_resp.usage),
+            });
             return Ok(redacted);
         }
     }
 
     let fallback = "I was unable to complete the response after multiple tool call rounds.";
     mp_core::store::log::append_message(conn, session_id, "assistant", fallback)?;
+    send_event(&tx, AgentEvent::Done {
+        response: fallback.into(),
+        usage: None,
+    });
     Ok(fallback.into())
 }
 

@@ -173,16 +173,11 @@ pub struct Spanned {
     pub pos: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("lex error at position {pos}: {message}")]
 pub struct LexError {
     pub pos: usize,
     pub message: String,
-}
-
-impl fmt::Display for LexError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "lex error at position {}: {}", self.pos, self.message)
-    }
 }
 
 pub fn lex(input: &str) -> Result<Vec<Spanned>, LexError> {
