@@ -1,11 +1,10 @@
 //! Health command — check gateway and agent status.
 
 use anyhow::Result;
-use mp_core::config::Config;
 
 use crate::ui;
 
-pub async fn run(ctx: &crate::CommandContext<'_>) -> Result<()> {
+pub async fn run(ctx: &crate::context::CommandContext<'_>) -> Result<()> {
     let config = ctx.config;
     ui::banner();
 

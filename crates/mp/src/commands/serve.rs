@@ -1,8 +1,6 @@
 //! Serve command — MCP sidecar on stdio, HTTP on port.
 
 use anyhow::Result;
-use mp_core::config::Config;
-use std::path::Path;
 use std::sync::Arc;
 
 use crate::adapters;
@@ -13,7 +11,7 @@ use crate::helpers::{
 use crate::sidecar;
 use crate::worker::{run_scheduler, spawn_worker, WorkerBus, WorkerHandle};
 
-pub async fn run(ctx: &crate::CommandContext<'_>, agent: Option<String>) -> Result<()> {
+pub async fn run(ctx: &crate::context::CommandContext<'_>, agent: Option<String>) -> Result<()> {
     let config = ctx.config;
     let config_path = ctx.config_path;
     let shutdown = tokio::sync::broadcast::channel::<()>(1).0;

@@ -1,13 +1,12 @@
 //! Knowledge command — search and list documents.
 
 use anyhow::Result;
-use mp_core::config::Config;
 
 use crate::cli;
 use crate::helpers::{open_agent_db, resolve_agent};
 use crate::ui;
 
-pub async fn run(ctx: &crate::CommandContext<'_>, cmd: cli::KnowledgeCommand) -> Result<()> {
+pub async fn run(ctx: &crate::context::CommandContext<'_>, cmd: cli::KnowledgeCommand) -> Result<()> {
     let config = ctx.config;
     let ag = resolve_agent(config, None)?;
     let conn = open_agent_db(config, &ag.name)?;

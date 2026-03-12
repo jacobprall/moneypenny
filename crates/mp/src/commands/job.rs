@@ -1,13 +1,12 @@
 //! Job command — list, create, run, pause, history.
 
 use anyhow::Result;
-use mp_core::config::Config;
 
 use crate::cli;
 use crate::helpers::{open_agent_db, op_request, resolve_agent};
 use crate::ui;
 
-pub async fn run(ctx: &crate::CommandContext<'_>, cmd: cli::JobCommand) -> Result<()> {
+pub async fn run(ctx: &crate::context::CommandContext<'_>, cmd: cli::JobCommand) -> Result<()> {
     let config = ctx.config;
     let ag = resolve_agent(config, None)?;
     let conn = open_agent_db(config, &ag.name)?;

@@ -9,15 +9,16 @@ use crate::helpers::{
 };
 use crate::ui;
 
-pub async fn run(ctx: &crate::CommandContext<'_>, cmd: cli::SetupCommand) -> Result<()> {
+pub async fn run(ctx: &crate::context::CommandContext<'_>, cmd: cli::SetupCommand) -> Result<()> {
     let config = ctx.config;
     let config_path = ctx.config_path;
     match &cmd {
         cli::SetupCommand::Models => {
             ui::blank();
-            ui::info("Checking embedding models...");
-            ui::blank();
+            let spinner = ui::spinner("Downloading embedding models...");
             ensure_embedding_models(config).await;
+            spinner.finish_and_clear();
+            ui::success("Embedding models ready.");
             ui::blank();
             return Ok(());
         }

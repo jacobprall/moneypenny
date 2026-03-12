@@ -1,13 +1,12 @@
 //! Brain command — list, checkpoint, restore, export.
 
 use anyhow::Result;
-use mp_core::config::Config;
 
 use crate::cli;
 use crate::helpers::{open_agent_db, op_request, resolve_agent};
 use crate::ui;
 
-pub async fn run(ctx: &crate::CommandContext<'_>, cmd: cli::BrainCommand) -> Result<()> {
+pub async fn run(ctx: &crate::context::CommandContext<'_>, cmd: cli::BrainCommand) -> Result<()> {
     let config = ctx.config;
     match cmd {
         cli::BrainCommand::List { agent } => {

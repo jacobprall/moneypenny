@@ -1,7 +1,6 @@
 //! Embeddings command — status, retry-dead, backfill.
 
 use anyhow::Result;
-use mp_core::config::Config;
 
 use crate::cli;
 use crate::helpers::{
@@ -10,7 +9,7 @@ use crate::helpers::{
 };
 use crate::ui;
 
-pub async fn run(ctx: &crate::CommandContext<'_>, cmd: cli::EmbeddingsCommand) -> Result<()> {
+pub async fn run(ctx: &crate::context::CommandContext<'_>, cmd: cli::EmbeddingsCommand) -> Result<()> {
     let config = ctx.config;
     match cmd {
         cli::EmbeddingsCommand::Status { agent } => {
@@ -102,6 +101,7 @@ pub async fn run(ctx: &crate::CommandContext<'_>, cmd: cli::EmbeddingsCommand) -
             let mut total_failed = 0usize;
             let mut rounds = 0usize;
             let embed_provider_ref = embed_provider.as_ref();
+            let spinner = ui::spinner("Processing embedding queue...");
             loop {
                 rounds += 1;
                 let stats = mp_core::store::embedding::process_embedding_jobs(
@@ -128,6 +128,7 @@ pub async fn run(ctx: &crate::CommandContext<'_>, cmd: cli::EmbeddingsCommand) -
                     break;
                 }
             }
+            spinner.finish_and_clear();
 
             let queue = mp_core::store::embedding::queue_stats(&conn)?;
             ui::success(format!(

@@ -81,7 +81,9 @@ pub async fn run(config_path: &str) -> Result<()> {
     ui::success("Seeded bootstrap facts");
     ui::blank();
 
+    let spinner = ui::spinner("Downloading embedding models...");
     ensure_embedding_models(&config).await;
+    spinner.finish_and_clear();
 
     ui::blank();
     ui::info("Ready! Next steps:");

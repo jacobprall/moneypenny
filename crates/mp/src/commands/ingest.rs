@@ -1,7 +1,6 @@
 //! Ingest command — ingest files, URLs, or session data.
 
 use anyhow::Result;
-use mp_core::config::Config;
 use std::path::Path;
 
 use crate::helpers::{
@@ -33,7 +32,7 @@ pub struct IngestArgs {
     pub cursor: Option<String>,
 }
 
-pub async fn run(ctx: &crate::CommandContext<'_>, args: &IngestArgs) -> Result<()> {
+pub async fn run(ctx: &crate::context::CommandContext<'_>, args: &IngestArgs) -> Result<()> {
     let config = ctx.config;
     let ag = resolve_agent(config, args.agent.as_deref())?;
     let conn = open_agent_db(config, &ag.name)?;
@@ -354,8 +353,10 @@ pub async fn run(ctx: &crate::CommandContext<'_>, args: &IngestArgs) -> Result<(
         let chunks = resp.data["chunks_created"].as_u64().unwrap_or(0);
         ui::success(format!("Ingested {p}: {chunks} chunks (doc {doc_id})"));
         if let Ok(ep) = build_embedding_provider(config, ag) {
+            let embed_spinner = ui::spinner("Embedding...");
             let model_id = embedding_model_id(ag);
             embed_pending(&conn, ep.as_ref(), &ag.name, &model_id).await;
+            embed_spinner.finish_and_clear();
         }
     } else if let Some(u) = &args.url {
         ui::info(format!("Ingesting URL {u} …"));
@@ -375,8 +376,10 @@ pub async fn run(ctx: &crate::CommandContext<'_>, args: &IngestArgs) -> Result<(
         let chunks = resp.data["chunks_created"].as_u64().unwrap_or(0);
         ui::success(format!("Ingested {u}: {chunks} chunks (doc {doc_id})"));
         if let Ok(ep) = build_embedding_provider(config, ag) {
+            let embed_spinner = ui::spinner("Embedding...");
             let model_id = embedding_model_id(ag);
             embed_pending(&conn, ep.as_ref(), &ag.name, &model_id).await;
+            embed_spinner.finish_and_clear();
         }
     } else {
         anyhow::bail!("Provide a path, --openclaw-file, or --url to ingest.");

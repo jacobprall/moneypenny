@@ -1,12 +1,11 @@
 //! MPQ command — run MP DSL expression.
 
 use anyhow::Result;
-use mp_core::config::Config;
 
 use crate::helpers::{open_agent_db, resolve_agent};
 
 pub async fn run(
-    ctx: &crate::CommandContext<'_>,
+    ctx: &crate::context::CommandContext<'_>,
     expression: &str,
     agent: Option<String>,
     dry_run: bool,

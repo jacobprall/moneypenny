@@ -1,4 +1,3 @@
-use crate::worker::WorkerBus;
 use anyhow::Result;
 use mp_llm::provider::{EmbeddingProvider, LlmProvider};
 use mp_llm::types::{StreamEvent, Usage};

@@ -27,7 +27,7 @@ fn build_prompt(agent_name: &str, session_id: &str) -> String {
 }
 
 pub async fn run(
-    ctx: &crate::CommandContext<'_>,
+    ctx: &crate::context::CommandContext<'_>,
     agent: Option<String>,
     session_id: Option<String>,
     force_new: bool,
@@ -243,17 +243,26 @@ pub async fn run(
                 }
                 ui::blank();
 
+                let extract_spinner = ui::spinner("Extracting facts...");
                 match extract_facts(&conn, provider.as_ref(), &ag.name, &sid).await {
                     Ok(n) if n > 0 => {
+                        extract_spinner.finish_and_clear();
                         ui::dim(format!("({n} fact{} learned)", if n == 1 { "" } else { "s" }));
                         ui::blank();
                     }
-                    Err(e) => tracing::debug!("extraction error: {e}"),
-                    _ => {}
+                    Err(e) => {
+                        extract_spinner.finish_and_clear();
+                        tracing::debug!("extraction error: {e}");
+                    }
+                    _ => {
+                        extract_spinner.finish_and_clear();
+                    }
                 }
                 if let Some(ref ep) = embed {
+                    let embed_spinner = ui::spinner("Embedding...");
                     let model_id = embedding_model_id(ag);
                     embed_pending(&conn, ep.as_ref(), &ag.name, &model_id).await;
+                    embed_spinner.finish_and_clear();
                 }
                 maybe_summarize_session(&conn, provider.as_ref(), &sid).await;
             }

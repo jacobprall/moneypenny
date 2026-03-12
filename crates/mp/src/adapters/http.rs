@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use tower_http::cors::CorsLayer;
 use tracing::error;
 
-use mp_core::config::{Config, DiscordChannelConfig, HttpChannelConfig, SlackChannelConfig};
+use mp_core::config::{DiscordChannelConfig, HttpChannelConfig, SlackChannelConfig};
 
 use super::{check_auth, dashboard, discord, slack, DispatchFn, OpDispatchFn};
 

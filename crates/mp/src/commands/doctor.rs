@@ -1,13 +1,11 @@
 //! Doctor command — diagnose Moneypenny setup.
 
 use anyhow::Result;
-use mp_core::config::Config;
-use std::path::Path;
 
 use crate::helpers::op_request;
 use crate::ui;
 
-pub async fn run(ctx: &crate::CommandContext<'_>) -> Result<()> {
+pub async fn run(ctx: &crate::context::CommandContext<'_>) -> Result<()> {
     let config = ctx.config;
     let config_path = ctx.config_path;
     ui::banner();

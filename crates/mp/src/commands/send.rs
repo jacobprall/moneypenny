@@ -11,7 +11,7 @@ use crate::helpers::{
 use crate::ui;
 
 pub async fn run(
-    ctx: &crate::CommandContext<'_>,
+    ctx: &crate::context::CommandContext<'_>,
     agent_name: &str,
     message: &str,
     session_id: Option<String>,
@@ -113,15 +113,21 @@ pub async fn run(
     }
     ui::blank();
 
+    let extract_spinner = ui::spinner("Extracting facts...");
     if let Ok(n) = extract_facts(&conn, provider.as_ref(), &agent.name, &sid).await {
+        extract_spinner.finish_and_clear();
         if n > 0 {
             ui::dim(format!("({n} fact{} learned)", if n == 1 { "" } else { "s" }));
             ui::blank();
         }
+    } else {
+        extract_spinner.finish_and_clear();
     }
     if let Some(ref ep) = embed {
+        let embed_spinner = ui::spinner("Embedding...");
         let model_id = embedding_model_id(agent);
         embed_pending(&conn, ep.as_ref(), &agent.name, &model_id).await;
+        embed_spinner.finish_and_clear();
     }
     maybe_summarize_session(&conn, provider.as_ref(), &sid).await;
 

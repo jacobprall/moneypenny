@@ -1,12 +1,11 @@
 //! Spend command — show token/cost usage summary.
 
 use anyhow::Result;
-use mp_core::config::Config;
 
 use crate::helpers::{open_agent_db, resolve_agent, op_request};
 use crate::ui;
 
-pub async fn run(ctx: &crate::CommandContext<'_>, agent: Option<String>, period: &str, group_by: &str) -> Result<()> {
+pub async fn run(ctx: &crate::context::CommandContext<'_>, agent: Option<String>, period: &str, group_by: &str) -> Result<()> {
     let config = ctx.config;
     let ag = resolve_agent(config, agent.as_deref())?;
     let conn = open_agent_db(config, &ag.name)?;

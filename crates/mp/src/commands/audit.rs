@@ -1,14 +1,13 @@
 //! Audit command — query and export policy audit.
 
 use anyhow::Result;
-use mp_core::config::Config;
 
 use crate::cli;
 use crate::helpers::{csv_escape, open_agent_db, op_request, resolve_agent, sql_quote};
 use crate::ui;
 
 pub async fn run(
-    ctx: &crate::CommandContext<'_>,
+    ctx: &crate::context::CommandContext<'_>,
     _agent: Option<String>,
     command: Option<cli::AuditCommand>,
 ) -> Result<()> {

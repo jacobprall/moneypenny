@@ -13,7 +13,7 @@ use crate::helpers::{
 use crate::ui;
 use crate::worker::{run_scheduler, spawn_worker, WorkerBus, WorkerHandle};
 
-pub async fn run(ctx: &crate::CommandContext<'_>) -> Result<()> {
+pub async fn run(ctx: &crate::context::CommandContext<'_>) -> Result<()> {
     ui::banner();
 
     let config = ctx.config;

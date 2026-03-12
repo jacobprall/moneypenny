@@ -1,13 +1,12 @@
 //! Experience command — search, stats.
 
 use anyhow::Result;
-use mp_core::config::Config;
 
 use crate::cli;
 use crate::helpers::{open_agent_db, op_request, resolve_agent};
 use crate::ui;
 
-pub async fn run(ctx: &crate::CommandContext<'_>, cmd: cli::ExperienceCommand) -> Result<()> {
+pub async fn run(ctx: &crate::context::CommandContext<'_>, cmd: cli::ExperienceCommand) -> Result<()> {
     let config = ctx.config;
     match cmd {
         cli::ExperienceCommand::Search { query, limit, agent } => {
