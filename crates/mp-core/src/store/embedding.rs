@@ -404,9 +404,16 @@ pub fn vector_indexes() -> [(&'static str, &'static str); 5] {
     ]
 }
 
+/// Options passed to vector_quantize: 1BIT for compact index, 50MB max memory.
+const VECTOR_QUANTIZE_OPTS: &str = "qtype=1BIT,max_memory=50MB";
+
 pub fn rebuild_vector_indexes(conn: &Connection) {
     for (table, col) in vector_indexes() {
-        let _ = conn.execute("SELECT vector_quantize(?1, ?2)", params![table, col]);
+        let _ = conn.query_row(
+            "SELECT vector_quantize(?1, ?2, ?3)",
+            params![table, col, VECTOR_QUANTIZE_OPTS],
+            |_| Ok(()),
+        );
     }
 }
 
@@ -419,7 +426,11 @@ fn rebuild_vector_indexes_for(conn: &Connection, touched: &HashSet<EmbeddingTarg
             EmbeddingTargetKind::PolicyAudit => PolicyAuditEmbeddingStore::vector_index(),
             EmbeddingTargetKind::KnowledgeChunks => KnowledgeChunksEmbeddingStore::vector_index(),
         };
-        let _ = conn.execute("SELECT vector_quantize(?1, ?2)", params![table, col]);
+        let _ = conn.query_row(
+            "SELECT vector_quantize(?1, ?2, ?3)",
+            params![table, col, VECTOR_QUANTIZE_OPTS],
+            |_| Ok(()),
+        );
     }
 }
 
@@ -784,6 +795,52 @@ pub fn queue_target_stats(conn: &Connection) -> Result<Vec<EmbeddingQueueTargetS
         })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
+}
+
+/// Sample of last_error from retry/dead jobs for diagnostics.
+#[derive(Debug, Clone)]
+pub struct EmbeddingErrorSample {
+    pub target: String,
+    pub row_id: String,
+    pub last_error: Option<String>,
+    pub status: String,
+}
+
+pub fn sample_embedding_errors(
+    conn: &Connection,
+    limit: usize,
+) -> Result<Vec<EmbeddingErrorSample>> {
+    let mut stmt = conn.prepare(
+        "SELECT target, row_id, last_error, status
+         FROM embedding_jobs
+         WHERE status IN ('retry', 'dead')
+         ORDER BY updated_at DESC
+         LIMIT ?1",
+    )?;
+    let rows = stmt
+        .query_map([limit as i64], |r| {
+            Ok(EmbeddingErrorSample {
+                target: r.get(0)?,
+                row_id: r.get(1)?,
+                last_error: r.get(2)?,
+                status: r.get(3)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Set next_attempt_at = now for all retry jobs so they become claimable immediately.
+/// Use before backfill when retry jobs are blocked on backoff.
+pub fn make_retry_jobs_due(conn: &Connection) -> Result<usize> {
+    let now = chrono::Utc::now().timestamp();
+    let changed = conn.execute(
+        "UPDATE embedding_jobs
+         SET next_attempt_at = ?1, updated_at = ?1
+         WHERE status = 'retry'",
+        params![now],
+    )?;
+    Ok(changed)
 }
 
 pub fn retry_dead_jobs(conn: &Connection, target: Option<&str>, limit: usize) -> Result<usize> {

@@ -1,20 +1,11 @@
-pub mod agent;
-mod adapters;
-mod cli;
-mod commands;
-mod context;
-mod domain_tools;
-mod tools;
-mod docs;
-pub mod helpers;
-mod intent;
-mod sidecar;
-mod ui;
-pub mod worker;
-
 use anyhow::Result;
+use mp::{
+    cli::{Cli, Command},
+    commands,
+    sidecar,
+    worker,
+};
 use clap::Parser;
-use cli::{Cli, Command};
 use mp_core::config::Config;
 use std::path::Path;
 use tracing_subscriber::{EnvFilter, fmt};

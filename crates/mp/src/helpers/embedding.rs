@@ -20,13 +20,13 @@ pub async fn embed_pending(
     {
         Ok(stats) => stats,
         Err(e) => {
-            tracing::warn!("embed_pending: pending query failed: {e}");
+            tracing::debug!("embed_pending: pending query failed: {e}");
             return;
         }
     };
 
     if stats.failed > 0 {
-        tracing::warn!(failed = stats.failed, "some embeddings failed");
+        tracing::debug!(failed = stats.failed, "some embeddings failed");
     }
     if stats.embedded > 0 || stats.queued > 0 || stats.claimed > 0 {
         tracing::debug!(

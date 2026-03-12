@@ -10,12 +10,18 @@ pub fn styled() -> bool {
     })
 }
 
+const BANNER_ASCII: &str = r#"
+  ╔═══════════════════════════════════════╗
+  ║     M O N E Y P E N N Y               ║
+  ╚═══════════════════════════════════════╝
+"#;
+
 pub fn banner() {
     blank();
     if styled() {
-        println!("  {} v{}", "Moneypenny".bold(), env!("CARGO_PKG_VERSION"));
+        println!("{}  v{}", BANNER_ASCII, env!("CARGO_PKG_VERSION").cyan());
     } else {
-        println!("  Moneypenny v{}", env!("CARGO_PKG_VERSION"));
+        println!("{}  v{}", BANNER_ASCII, env!("CARGO_PKG_VERSION"));
     }
     blank();
 }

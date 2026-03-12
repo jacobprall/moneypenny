@@ -710,6 +710,17 @@ pub enum JobCommand {
 
 #[derive(Subcommand)]
 pub enum EmbeddingsCommand {
+    /// Test the local embedding model (load + single embed)
+    Test {
+        /// Agent name (defaults to first configured agent)
+        #[arg(long)]
+        agent: Option<String>,
+
+        /// Override embedding model name
+        #[arg(long)]
+        model: Option<String>,
+    },
+
     /// Show embedding queue status and per-target breakdown
     Status {
         /// Agent name (defaults to first configured agent)

@@ -1073,13 +1073,14 @@ mod tests {
         )
         .unwrap();
 
+        let opts = "qtype=1BIT,max_memory=50MB";
         for (table, col) in &[
             ("tool_calls", "content_embedding"),
             ("policy_audit", "content_embedding"),
         ] {
             conn.query_row(
-                "SELECT vector_quantize(?1, ?2)",
-                rusqlite::params![table, col],
+                "SELECT vector_quantize(?1, ?2, ?3)",
+                rusqlite::params![table, col, opts],
                 |_| Ok::<_, rusqlite::Error>(()),
             )
             .unwrap();

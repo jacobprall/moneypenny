@@ -7,6 +7,10 @@ edition.workspace = true
 default = []
 embed-dashboard = ["dep:include_dir", "dep:mime_guess"]
 
+[lib]
+name = "mp"
+path = "src/lib.rs"
+
 [[bin]]
 name = "mp"
 path = "src/main.rs"
@@ -50,3 +54,4 @@ crossterm = "0.28"
 tempfile = "3"
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 toml = "0.8"
+tokio = { workspace = true, features = ["test-util", "macros"] }

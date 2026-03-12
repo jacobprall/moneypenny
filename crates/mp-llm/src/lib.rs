@@ -4,6 +4,7 @@ pub mod local_embed;
 pub mod noop;
 pub mod provider;
 pub mod sqlite_ai;
+pub mod test_provider;
 pub mod types;
 
 use provider::{EmbeddingProvider, LlmProvider};

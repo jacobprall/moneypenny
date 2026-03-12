@@ -128,7 +128,7 @@ pub fn init_sync_tables(conn: &Connection, tables: &[&str]) -> anyhow::Result<us
                     count += 1;
                 }
                 Err(e) => {
-                    warn!("sync: could not init '{table}': {e}");
+                    debug!("sync: could not init '{table}': {e}");
                 }
             }
         }

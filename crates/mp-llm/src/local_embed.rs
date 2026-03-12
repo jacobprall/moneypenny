@@ -88,10 +88,14 @@ impl EmbeddingProvider for LocalEmbeddingProvider {
 
                 guard
                     .conn
-                    .execute("SELECT llm_model_load(?1)", rusqlite::params![path_str])?;
+                    .query_row("SELECT llm_model_load(?1)", rusqlite::params![path_str], |_| Ok(()))?;
                 guard
                     .conn
-                    .execute("SELECT llm_context_create_embedding()", [])?;
+                    .query_row(
+                        "SELECT llm_context_create_embedding('embedding_type=FLOAT32')",
+                        [],
+                        |_| Ok(()),
+                    )?;
                 guard.model_loaded = true;
                 tracing::debug!(model = path_str, "sqlite-ai embedding model loaded");
             }
