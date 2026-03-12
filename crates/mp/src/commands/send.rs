@@ -4,9 +4,8 @@ use anyhow::Result;
 
 use crate::agent::{self, AgentEvent};
 use crate::helpers::{
-    build_embedding_provider, build_provider, embed_pending, embedding_model_id,
-    extract_facts, maybe_summarize_session, open_agent_db, resolve_or_create_session,
-    resolve_agent,
+    build_embedding_provider, build_provider, extract_facts, maybe_summarize_session,
+    open_agent_db, resolve_or_create_session, resolve_agent,
 };
 use crate::ui;
 
@@ -122,12 +121,6 @@ pub async fn run(
         }
     } else {
         extract_spinner.finish_and_clear();
-    }
-    if let Some(ref ep) = embed {
-        let embed_spinner = ui::spinner("Embedding...");
-        let model_id = embedding_model_id(agent);
-        embed_pending(&conn, ep.as_ref(), &agent.name, &model_id).await;
-        embed_spinner.finish_and_clear();
     }
     maybe_summarize_session(&conn, provider.as_ref(), &sid).await;
 

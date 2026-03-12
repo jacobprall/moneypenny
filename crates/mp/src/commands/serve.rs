@@ -9,7 +9,9 @@ use crate::helpers::{
     resolve_agent, sidecar_error_response,
 };
 use crate::sidecar;
-use crate::worker::{run_scheduler, spawn_worker, WorkerBus, WorkerHandle};
+use crate::worker::{
+    run_embedding_processor, run_scheduler, spawn_worker, WorkerBus, WorkerHandle,
+};
 
 pub async fn run(ctx: &crate::context::CommandContext<'_>, agent: Option<String>) -> Result<()> {
     let config = ctx.config;
@@ -29,6 +31,11 @@ pub async fn run(ctx: &crate::context::CommandContext<'_>, agent: Option<String>
     let mut sched_shutdown = shutdown.subscribe();
     let scheduler_handle =
         tokio::spawn(async move { run_scheduler(&sched_config, &mut sched_shutdown).await });
+
+    let embed_config = config.clone();
+    let mut embed_shutdown = shutdown.subscribe();
+    let embedding_handle =
+        tokio::spawn(async move { run_embedding_processor(&embed_config, &mut embed_shutdown).await });
 
     let bus_for_dispatch = Arc::clone(&bus);
     let dispatch: adapters::DispatchFn = Arc::new(move |agent, message, session_id| {
@@ -317,6 +324,7 @@ pub async fn run(ctx: &crate::context::CommandContext<'_>, agent: Option<String>
     tracing::info!("shutting down serve mode");
     let _ = shutdown.send(());
     scheduler_handle.abort();
+    embedding_handle.abort();
     for mut w in workers {
         w.shutdown().await;
     }

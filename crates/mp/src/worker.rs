@@ -198,15 +198,72 @@ pub async fn cmd_worker(config: &Config, agent_name: &str) -> Result<()> {
         tokio::io::AsyncWriteExt::flush(&mut stdout).await?;
 
         let _ = extract_facts(&conn, provider.as_ref(), &agent.name, &sid).await;
-        if let Some(ref ep) = embed {
-            let model_id = embedding_model_id(agent);
-            embed_pending(&conn, ep.as_ref(), &agent.name, &model_id).await;
-        }
         maybe_summarize_session(&conn, provider.as_ref(), &sid).await;
     }
 
     tracing::info!(agent = agent_name, "worker exiting");
     Ok(())
+}
+
+// =========================================================================
+// Embedding processor (background task)
+// =========================================================================
+
+/// Long-lived background task that periodically drains the embedding queue
+/// for all agents. Polls every minute for batching; only uses a blocking thread
+/// when there is work to do.
+pub async fn run_embedding_processor(
+    config: &Config,
+    shutdown: &mut tokio::sync::broadcast::Receiver<()>,
+) {
+    const POLL_INTERVAL_SECS: u64 = 60;
+
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS)) => {}
+            _ = shutdown.recv() => {
+                tracing::debug!("embedding processor shutting down");
+                return;
+            }
+        }
+
+        for agent in &config.agents {
+            if agent.embedding.provider != "local" && agent.embedding.provider != "http" {
+                continue;
+            }
+            let has_work = tokio::task::block_in_place(|| {
+                let conn = open_agent_db(config, &agent.name).ok()?;
+                let stats = mp_core::store::embedding::queue_stats(&conn).ok()?;
+                Some(stats.pending > 0 || stats.retry > 0)
+            });
+            if !has_work.unwrap_or(false) {
+                continue;
+            }
+            let embed_config = config.clone();
+            let agent_clone = agent.clone();
+            tokio::task::spawn_blocking(move || {
+                let conn = match open_agent_db(&embed_config, &agent_clone.name) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::debug!(agent = %agent_clone.name, error = %e, "embedding processor: failed to open db");
+                        return;
+                    }
+                };
+                let embed = match build_embedding_provider(&embed_config, &agent_clone) {
+                    Ok(ep) => ep,
+                    Err(e) => {
+                        tracing::debug!(agent = %agent_clone.name, error = %e, "embedding processor: provider init failed");
+                        return;
+                    }
+                };
+                let model_id = embedding_model_id(&agent_clone);
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(embed_pending(&conn, embed.as_ref(), &agent_clone.name, &model_id));
+            })
+            .await
+            .ok();
+        }
+    }
 }
 
 // =========================================================================

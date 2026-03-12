@@ -4,7 +4,7 @@ use anyhow::Result;
 use std::path::Path;
 
 use crate::helpers::{
-    build_embedding_provider, embed_pending, embedding_model_id, open_agent_db,
+    open_agent_db,
     op_request, resolve_agent,
 };
 use crate::ui;
@@ -352,12 +352,6 @@ pub async fn run(ctx: &crate::context::CommandContext<'_>, args: &IngestArgs) ->
         let doc_id = resp.data["document_id"].as_str().unwrap_or("-");
         let chunks = resp.data["chunks_created"].as_u64().unwrap_or(0);
         ui::success(format!("Ingested {p}: {chunks} chunks (doc {doc_id})"));
-        if let Ok(ep) = build_embedding_provider(config, ag) {
-            let embed_spinner = ui::spinner("Embedding...");
-            let model_id = embedding_model_id(ag);
-            embed_pending(&conn, ep.as_ref(), &ag.name, &model_id).await;
-            embed_spinner.finish_and_clear();
-        }
     } else if let Some(u) = &args.url {
         ui::info(format!("Ingesting URL {u} …"));
 
@@ -375,12 +369,6 @@ pub async fn run(ctx: &crate::context::CommandContext<'_>, args: &IngestArgs) ->
         let doc_id = resp.data["document_id"].as_str().unwrap_or("-");
         let chunks = resp.data["chunks_created"].as_u64().unwrap_or(0);
         ui::success(format!("Ingested {u}: {chunks} chunks (doc {doc_id})"));
-        if let Ok(ep) = build_embedding_provider(config, ag) {
-            let embed_spinner = ui::spinner("Embedding...");
-            let model_id = embedding_model_id(ag);
-            embed_pending(&conn, ep.as_ref(), &ag.name, &model_id).await;
-            embed_spinner.finish_and_clear();
-        }
     } else {
         anyhow::bail!("Provide a path, --openclaw-file, or --url to ingest.");
     }

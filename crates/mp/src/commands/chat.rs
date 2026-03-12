@@ -6,11 +6,11 @@ use rustyline::Editor;
 
 use crate::agent::{self, AgentEvent};
 use crate::helpers::{
-    build_embedding_provider, build_provider, embed_pending, embedding_model_id,
-    extract_facts, maybe_summarize_session, open_agent_db, resolve_or_create_session,
-    resolve_agent,
+    build_embedding_provider, build_provider, extract_facts, maybe_summarize_session,
+    open_agent_db, resolve_or_create_session, resolve_agent,
 };
 use crate::ui;
+use crate::worker::run_embedding_processor;
 
 fn build_prompt(agent_name: &str, session_id: &str) -> String {
     let short_sid = &session_id[..session_id.len().min(6)];
@@ -88,6 +88,12 @@ pub async fn run(
     let history_path = history_dir.join("chat_history");
     let mut rl = Editor::<(), _>::new()?;
     let _ = rl.load_history(&history_path);
+
+    let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
+    let mut embed_shutdown = shutdown_tx.subscribe();
+    let embed_config = config.clone();
+    let embedding_handle =
+        tokio::spawn(async move { run_embedding_processor(&embed_config, &mut embed_shutdown).await });
 
     loop {
         let prompt = build_prompt(&ag.name, &sid);
@@ -258,12 +264,6 @@ pub async fn run(
                         extract_spinner.finish_and_clear();
                     }
                 }
-                if let Some(ref ep) = embed {
-                    let embed_spinner = ui::spinner("Embedding...");
-                    let model_id = embedding_model_id(ag);
-                    embed_pending(&conn, ep.as_ref(), &ag.name, &model_id).await;
-                    embed_spinner.finish_and_clear();
-                }
                 maybe_summarize_session(&conn, provider.as_ref(), &sid).await;
             }
             }
@@ -276,6 +276,8 @@ pub async fn run(
     }
 
     let _ = rl.save_history(&history_path);
+    let _ = shutdown_tx.send(());
+    embedding_handle.abort();
     ui::info(format!("Session {sid} ended."));
     Ok(())
 }

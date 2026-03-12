@@ -6,12 +6,13 @@ use std::sync::Arc;
 use crate::adapters;
 use crate::agent;
 use crate::helpers::{
-    build_embedding_provider, build_provider, build_sidecar_request, embed_pending,
-    embedding_model_id, extract_facts, maybe_summarize_session, open_agent_db,
-    resolve_agent, sidecar_error_response,
+    build_embedding_provider, build_provider, build_sidecar_request, extract_facts,
+    maybe_summarize_session, open_agent_db, resolve_agent, sidecar_error_response,
 };
 use crate::ui;
-use crate::worker::{run_scheduler, spawn_worker, WorkerBus, WorkerHandle};
+use crate::worker::{
+    run_embedding_processor, run_scheduler, spawn_worker, WorkerBus, WorkerHandle,
+};
 
 pub async fn run(ctx: &crate::context::CommandContext<'_>) -> Result<()> {
     ui::banner();
@@ -32,6 +33,11 @@ pub async fn run(ctx: &crate::context::CommandContext<'_>) -> Result<()> {
     let mut sched_shutdown = shutdown.subscribe();
     let scheduler_handle =
         tokio::spawn(async move { run_scheduler(&sched_config, &mut sched_shutdown).await });
+
+    let embed_config = config.clone();
+    let mut embed_shutdown = shutdown.subscribe();
+    let embedding_handle =
+        tokio::spawn(async move { run_embedding_processor(&embed_config, &mut embed_shutdown).await });
 
     let bus_for_dispatch = Arc::clone(&bus);
     let dispatch: adapters::DispatchFn = Arc::new(move |agent, message, session_id| {
@@ -362,10 +368,6 @@ pub async fn run(ctx: &crate::context::CommandContext<'_>) -> Result<()> {
                             ui::blank();
                         }
                     }
-                    if let Some(ref ep) = embed {
-                        let model_id = embedding_model_id(ag);
-                        embed_pending(&conn, ep.as_ref(), &ag.name, &model_id).await;
-                    }
                     maybe_summarize_session(&conn, provider.as_ref(), &sid).await;
                 }
                 Err(e) => {
@@ -382,6 +384,7 @@ pub async fn run(ctx: &crate::context::CommandContext<'_>) -> Result<()> {
     ui::info("Shutting down...");
     let _ = shutdown.send(());
     scheduler_handle.abort();
+    embedding_handle.abort();
 
     for mut w in workers {
         w.shutdown().await;

@@ -5,7 +5,7 @@
 /// - **Metadata DB**: one per gateway, contains agent registry + routing
 use rusqlite::Connection;
 
-const AGENT_SCHEMA_VERSION: i64 = 21;
+const AGENT_SCHEMA_VERSION: i64 = 22;
 const METADATA_SCHEMA_VERSION: i64 = 3;
 
 pub fn init_agent_db(conn: &Connection) -> anyhow::Result<()> {
@@ -142,6 +142,11 @@ pub fn init_agent_db(conn: &Connection) -> anyhow::Result<()> {
     if current < 21 {
         conn.execute_batch(AGENT_SCHEMA_V21)?;
         set_schema_version(conn, 21)?;
+    }
+
+    if current < 22 {
+        conn.execute_batch(AGENT_SCHEMA_V22)?;
+        set_schema_version(conn, 22)?;
     }
 
     Ok(())
@@ -1178,6 +1183,61 @@ CREATE TABLE IF NOT EXISTS checkpoints (
 );
 
 CREATE INDEX IF NOT EXISTS idx_checkpoints_brain ON checkpoints (brain_id, created_at);
+";
+
+// ---------------------------------------------------------------------------
+// Agent database — v22: Embedding triggers with content filter (skip empty)
+// ---------------------------------------------------------------------------
+
+const AGENT_SCHEMA_V22: &str = "
+-- Recreate insert triggers with WHEN to avoid queueing empty content
+DROP TRIGGER IF EXISTS trg_embed_jobs_facts_insert;
+CREATE TRIGGER trg_embed_jobs_facts_insert
+AFTER INSERT ON facts
+WHEN NEW.content IS NOT NULL AND NEW.content != ''
+BEGIN
+    INSERT INTO embedding_jobs (target, row_id, status, attempts, next_attempt_at, created_at, updated_at)
+    VALUES ('facts', NEW.id, 'pending', 0, strftime('%s','now'), strftime('%s','now'), strftime('%s','now'))
+    ON CONFLICT(target, row_id) DO UPDATE SET
+        status = 'pending',
+        attempts = 0,
+        last_error = NULL,
+        next_attempt_at = strftime('%s','now'),
+        lease_expires_at = NULL,
+        updated_at = strftime('%s','now');
+END;
+
+DROP TRIGGER IF EXISTS trg_embed_jobs_messages_insert;
+CREATE TRIGGER trg_embed_jobs_messages_insert
+AFTER INSERT ON messages
+WHEN NEW.content IS NOT NULL AND NEW.content != ''
+BEGIN
+    INSERT INTO embedding_jobs (target, row_id, status, attempts, next_attempt_at, created_at, updated_at)
+    VALUES ('messages', NEW.id, 'pending', 0, strftime('%s','now'), strftime('%s','now'), strftime('%s','now'))
+    ON CONFLICT(target, row_id) DO UPDATE SET
+        status = 'pending',
+        attempts = 0,
+        last_error = NULL,
+        next_attempt_at = strftime('%s','now'),
+        lease_expires_at = NULL,
+        updated_at = strftime('%s','now');
+END;
+
+DROP TRIGGER IF EXISTS trg_embed_jobs_chunks_insert;
+CREATE TRIGGER trg_embed_jobs_chunks_insert
+AFTER INSERT ON chunks
+WHEN NEW.content IS NOT NULL AND NEW.content != ''
+BEGIN
+    INSERT INTO embedding_jobs (target, row_id, status, attempts, next_attempt_at, created_at, updated_at)
+    VALUES ('chunks', NEW.id, 'pending', 0, strftime('%s','now'), strftime('%s','now'), strftime('%s','now'))
+    ON CONFLICT(target, row_id) DO UPDATE SET
+        status = 'pending',
+        attempts = 0,
+        last_error = NULL,
+        next_attempt_at = strftime('%s','now'),
+        lease_expires_at = NULL,
+        updated_at = strftime('%s','now');
+END;
 ";
 
 fn add_brain_id_if_missing(conn: &Connection, table: &str) -> anyhow::Result<()> {

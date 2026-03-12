@@ -1,3 +1,15 @@
+//! Embedding queue — trigger-based enqueue, async background processing.
+//!
+//! **Enqueue (automatic):** SQLite triggers on `facts`, `messages`, `tool_calls`,
+//! `policy_audit`, and `chunks` INSERT/UPDATE fire and INSERT into `embedding_jobs`.
+//! Same transaction = atomic. No application code needed for new rows.
+//!
+//! **Backfill:** `enqueue_drift_jobs` finds rows with NULL or wrong-model embeddings
+//! and enqueues them. Used for pre-trigger data and model upgrades.
+//!
+//! **Process:** Background task polls every 60s, uses `spawn_blocking` only when
+//! work exists. Claims jobs, embeds via provider, persists vectors.
+
 use anyhow::Result;
 use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
