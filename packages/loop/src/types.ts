@@ -1,6 +1,6 @@
-import type { AgentDB } from "@swe/db";
-import type { HookPipeline, Prompt } from "@swe/ctx";
-import type { ToolRegistry, ChildLoopFactory } from "@swe/tools";
+import type { AgentDB } from "@moneypenny/db";
+import type { HookPipeline, Prompt } from "@moneypenny/ctx";
+import type { ToolRegistry, ChildLoopFactory } from "@moneypenny/tools";
 import type { ProviderName, LLMProvider } from "./provider.js";
 
 export const DEFAULT_MAX_ITERATIONS = 25;

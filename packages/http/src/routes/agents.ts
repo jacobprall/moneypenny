@@ -5,7 +5,7 @@ import {
   getAgentRow,
   runAgent,
   scan,
-} from "@swe/agents";
+} from "@moneypenny/agents";
 import { createRequireDbMiddleware, zodErrorMessage, type HttpVars } from "../middleware.js";
 import type { CreateHttpAppOptions } from "../types.js";
 
@@ -77,7 +77,7 @@ export function createAgentsRouter(opts: CreateHttpAppOptions): Hono<any, any, a
   r.post("/agents/reload", (c) => {
     const dir = opts.blueprintsDir;
     if (!dir) {
-      return c.json({ error: "blueprintsDir not configured" }, 501);
+      return c.json({ error: "agents directory not configured" }, 501);
     }
     const out = scan({ db: c.var.db.db, blueprintsDir: dir });
     return c.json(out);

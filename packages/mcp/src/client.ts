@@ -9,7 +9,7 @@ import { existsSync } from "fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { z } from "zod";
-import type { ToolContext, ToolDefinition, ToolRegistry } from "@swe/tools";
+import type { ToolContext, ToolDefinition, ToolRegistry } from "@moneypenny/tools";
 
 export interface McpServerEntry {
   command: string;
@@ -90,7 +90,7 @@ export class McpClientManager {
       stderr: "pipe",
     });
 
-    const client = new Client({ name: `swe-${name}`, version: "1.0.0" });
+    const client = new Client({ name: `mp-${name}`, version: "1.0.0" });
 
     await client.connect(transport);
 

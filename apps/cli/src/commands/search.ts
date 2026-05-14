@@ -1,5 +1,5 @@
-import { closeAgentDB, closeWorkspaceDB } from "@swe/db";
-import { hybridSearch } from "@swe/search";
+import { closeAgentDB, closeWorkspaceDB } from "@moneypenny/db";
+import { hybridSearch } from "@moneypenny/search";
 import { Command } from "commander";
 import * as path from "node:path";
 

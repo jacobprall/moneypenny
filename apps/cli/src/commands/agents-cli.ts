@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import * as path from "node:path";
-import { closeAgentDB, closeWorkspaceDB } from "@swe/db";
-import { listAgentRows, runAgent } from "@swe/agents";
+import { closeAgentDB, closeWorkspaceDB } from "@moneypenny/db";
+import { listAgentRows, runAgent } from "@moneypenny/agents";
 import { openSession, openWorkspace } from "../session";
 import { printError } from "../display";
 

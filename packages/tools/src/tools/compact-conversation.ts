@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { compactConversation } from "@swe/db";
+import { compactConversation } from "@moneypenny/db";
 import type { ToolDefinition } from "../types.js";
 
 const inputSchema = z.object({

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { listSessions } from "@swe/db";
+import { listSessions } from "@moneypenny/db";
 import { createRequireDbMiddleware, type HttpVars } from "../middleware.js";
 import type { CreateHttpAppOptions } from "../types.js";
 

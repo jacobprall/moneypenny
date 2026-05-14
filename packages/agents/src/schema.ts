@@ -39,6 +39,7 @@ export const frontmatterSchema = z
 
     tools: z.array(z.string()).default([]),
     permissions: permissionsSchema,
+    policies: z.array(z.string()).optional(),
     skills: z.array(z.string()).default([]),
   })
   .passthrough();

@@ -1,11 +1,11 @@
 {
-  "name": "@swe/ctx",
+  "name": "@moneypenny/ctx",
   "version": "0.1.0",
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
   "dependencies": {
-    "@swe/db": "workspace:*"
+    "@moneypenny/db": "workspace:*"
   },
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --external bun:sqlite",

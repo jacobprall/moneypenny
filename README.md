@@ -1,58 +1,67 @@
-# swe
+# moneypenny
 
-The local-first coding agent platform where every agent is a SQLite database. Conversations, code understanding, accumulated knowledge, and governance all in one portable file. Interactive CLI, MCP sidecar for Cursor and Claude Code, or scheduled background agents. Same memory, same policies, different transports.
+The portable intelligence layer for coding agents. Persistent context, governance, and cost controls from a single `.mp/` directory in your repo. Standalone CLI, MCP sidecar for Cursor or Claude Code, or background daemon with scheduled agents.
 
-## Why swe
+## Why moneypenny
 
-**A full-stack coding agent from a single SQLite file.** Persistent sessions, hybrid search, local embedding and text generation, policy enforcement, cost tracking, audit logs and more — all backed by one `.swe/` directory with no external services. Just bring your Anthropic, OpenAI, or Google key.
+**A full-stack coding agent from a single SQLite file.** Persistent sessions, hybrid search, local embeddings, policy enforcement, cost tracking, audit logs. One `.mp/mp.db` per repo, no external services. Bring your Anthropic, OpenAI, or Google key.
 
-**Your codebase, indexed and searchable in milliseconds.** On first run, swe walks your repo, chunks every source file, builds a full-text BM25 index and generates vector embeddings locally via sqlite-ai — no API calls, no external services. Subsequent runs are incremental: only changed files are re-indexed. `swe search "where do we handle rate limiting"` returns ranked results from both keyword and semantic matching, fused with Reciprocal Rank Fusion, in under a millisecond.
+**Your codebase, indexed and searchable in milliseconds.** On first run, moneypenny walks your repo, chunks every source file, and builds a full-text BM25 index with vector embeddings generated locally. No API calls. Subsequent runs are incremental. `mp search "where do we handle rate limiting"` returns ranked results from keyword and semantic matching in under a millisecond.
 
-**The more you build, the more it learns.** Every session persists — pick up next week where you left off. At session end, swe distills the conversation into durable "learned" skills: architecture decisions, code conventions, debugging insights, user preferences. Existing skills on the same topic are merged, not duplicated. The agent accumulates project-specific knowledge that compounds across every session.
+**The more you build, the more it knows.** Every session persists. Pick up next week where you left off. At session end, moneypenny extracts architecture decisions, code conventions, debugging insights, and user preferences into learned skills. Existing skills on the same topic are merged, not duplicated. Project knowledge compounds across sessions.
 
-**Governance as version-controlled YAML files.** Drop policy files into `.swe/policies/` and they're loaded on every session. Block destructive commands, protect sensitive paths, cap spend per session — policies match on tool, path, cost, args, and actor with `allow`, `deny`, `audit`, or `confirm` effects. Denied actions don't crash; the agent adapts. Credentials are scrubbed from tool output before reaching the LLM. Full audit trail on every operation. Commit your policies alongside your code.
+**Version-controlled governance.** On first run, moneypenny scaffolds `.mp/agents/_global.yaml` with sensible defaults: deny `.git/` and `node_modules/`, set exclude patterns, configure turn limits. Agent definitions layer additional restrictions inline. Policies support cost caps, audit trails, confirmation prompts, and regex argument matching. Commit them alongside your code.
 
 ```yaml
-# .swe/policies/security.yaml
-- name: protect-env-files
-  effect: deny
-  path: "*.env*"
-  message: Prevent agent from reading or writing environment files
+# .mp/agents/_global.yaml
+deny_paths:
+  - "**/.git/**"
+  - "**/node_modules/**"
 
-- name: no-force-push
-  effect: deny
-  tool: bash
-  args: "push.*--force|push.*-f"
-  message: Block force-push to any remote
+exclude_patterns:
+  - "**/node_modules/**"
+  - "**/.git/**"
+  - "**/dist/**"
+
+max_turns: 64
 ```
 
-**Agents defined as markdown blueprints.** Drop an `agent.md` with YAML frontmatter and a prompt into `.swe/blueprints/<name>/`. The frontmatter declares the schedule, model, tool whitelist, permission deny-list, cost limits, and chaining rules. The body is the agent's system prompt. When the agent runs, its state lives in `.swe/agents/<name>.db` — the blueprint is the template, the DB is the running agent. `swe serve` starts a daemon that runs a cron scheduler — with wake-from-sleep catch-up, per-agent concurrency locks, and `on_complete`/`on_failure` chaining.
+**Agents defined as markdown files.** Drop a `.md` file with YAML frontmatter into `.mp/agents/`. Frontmatter declares the model, tools, permissions, and turn limits. The body is the system prompt. All agents share a single `mp.db` with sessions scoped by agent name.
 
 ```markdown
 ---
-name: PR Reviewer
-schedule: "0 9 * * 1-5"
-tools: [code_search, file_read, "mcp__github__*"]
-permissions:
-  deny: [file_write, bash]
-max_cost_per_session: 2.00
+name: security-reviewer
+description: Reviews code for security vulnerabilities
+model: claude-sonnet-4-6
+tools:
+  - read_file
+  - grep
+  - code_search
+deny_paths:
+  - "**/.env*"
+  - "**/secrets/**"
+deny_tools:
+  - "run_terminal_cmd"
+max_turns: 32
 ---
-Review open PRs for code quality and security.
+
+You are a security-focused code reviewer. Focus on input validation,
+auth flaws, injection vulnerabilities, and credential exposure.
 ```
 
-**Plug into any MCP client — or consume any MCP server.** `swe setup` gives Cursor, Claude Code, or any MCP client access to swe's hybrid code search, codebase index, and policy engine. Going the other direction, point swe at external MCP servers (GitHub, Linear, Slack) via `mcp-servers.json` — their tools become available to your agents as `mcp__github__create_pull_request`, governed by the same policy pipeline.
+**MCP in both directions.** `mp setup cursor` gives Cursor, Claude Code, or any MCP client access to moneypenny's search, index, and governance. Going the other direction, point moneypenny at external MCP servers (GitHub, Linear, Slack) via `mcp-servers.json`. Their tools appear as `mcp__github__create_pull_request`, governed by the same pipeline.
 
-**Delegate to specialized subagents.** The `delegate` tool spawns a child loop with its own tool restrictions, iteration budget, and cost ceiling. A code review subagent gets `file_read` and `code_search` but not `bash`. It runs, produces a result, and the parent agent continues. No shared memory, no leaking permissions.
+**Delegate to subagents.** The `delegate` tool spawns a child loop with its own tool restrictions, iteration budget, and cost ceiling. A code review subagent gets `read_file` and `code_search` but not `bash`. It runs, returns a result, and the parent continues. No shared memory, no leaking permissions.
 
-**Cloud sync for teams.** `swe cloud init` enables CRDT-based replication via sqlite-sync. Policies, learned skills, agent definitions, and config sync across databases and machines automatically. Session summaries sync up; team governance syncs down. The agent stays local-first. The cloud acts as a coordination layer, not a dependency.
+**Cloud sync for teams.** `mp cloud init` enables CRDT-based replication via sqlite-sync. Policies, learned skills, agent definitions, and config sync across machines automatically. The agent stays local-first. The cloud is a coordination layer, not a dependency.
 
 ### Also includes
 
-- **50+ bundled skills** — refactoring techniques, design patterns (GoF), code smell identification. Available out of the box via the `read_skill` and `delegate` tools.
-- **Per-model cost tracking** — rate tables for 25+ models across Anthropic, OpenAI, and Google. Per-turn and per-session spend reported and enforced.
-- **Local SLM for zero-cost secondary tasks** — session naming, conversation compaction, and knowledge extraction run on a bundled Qwen 0.5B model. No API calls for housekeeping.
-- **Parallel tool execution** — multiple tool calls in a single turn run concurrently, each independently policy-gated.
-- **Cache-optimized prompts** — static context (system prompt, project overview) is separated from dynamic context (search results, conversation) with an explicit cache breakpoint for LLM prefix caching.
+- **50+ bundled skills** for refactoring, design patterns, and code smell identification. Available via `read_skill` and `delegate`.
+- **Per-model cost tracking** with rate tables for 25+ models. Per-turn and per-session spend reported and enforced.
+- **Local SLM** for session naming, compaction, and knowledge extraction. Bundled Qwen 0.5B, no API calls for housekeeping.
+- **Parallel tool execution.** Multiple tool calls in a single turn run concurrently, each policy-gated.
+- **Cache-optimized prompts.** Static context separated from dynamic context with an explicit cache breakpoint for LLM prefix caching.
 
 ## Quickstart
 
@@ -64,8 +73,8 @@ Review open PRs for code quality and security.
 ### Install
 
 ```bash
-git clone https://github.com/nicholasgasior/swe.git
-cd swe
+git clone https://github.com/nicholasgasior/moneypenny.git
+cd moneypenny
 pnpm install
 ```
 
@@ -80,7 +89,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 Or persist it in the global config:
 
 ```bash
-swe config set anthropic_api_key sk-ant-...
+mp config set anthropic_api_key sk-ant-...
 ```
 
 ### Download models
@@ -88,31 +97,31 @@ swe config set anthropic_api_key sk-ant-...
 Local embedding and text generation models for zero-cost indexing, session naming, and compaction:
 
 ```bash
-swe setup models
+mp setup models
 ```
 
 ### Verify setup
 
 ```bash
-swe doctor
+mp doctor
 ```
 
 ### Start coding
 
 ```bash
-swe chat "refactor the auth module to use JWT"
+mp chat "refactor the auth module to use JWT"
 ```
 
 ### Set up as MCP sidecar for Cursor
 
 ```bash
-swe setup cursor
-# Restart Cursor — swe tools are now available via MCP
+mp setup cursor
+# Restart Cursor — moneypenny tools are now available via MCP
 ```
 
 ### Run background agents
 
-Define a blueprint in `.swe/blueprints/pr-reviewer/agent.md`:
+Define an agent in `.mp/agents/pr-reviewer.md`:
 
 ```markdown
 ---
@@ -121,12 +130,9 @@ schedule: "0 9 * * 1-5"
 model: claude-sonnet-4-6
 tools:
   - code_search
-  - file_read
+  - read_file
   - "mcp__github__*"
-permissions:
-  deny:
-    - file_write
-    - bash
+max_turns: 20
 ---
 
 Review open PRs. Assess code quality, potential bugs, and security concerns.
@@ -135,26 +141,26 @@ Review open PRs. Assess code quality, potential bugs, and security concerns.
 Start the daemon:
 
 ```bash
-swe serve
+mp serve
 ```
 
 ## CLI Commands
 
 | Command | Description |
 |---|---|
-| `swe chat [message]` | Interactive agent session |
-| `swe search <query>` | Hybrid code search (BM25 + vector) |
-| `swe index` | Build or refresh the codebase index |
-| `swe inspect` | Query agent state (events, messages, metrics) |
-| `swe mcp` | Start MCP server (stdio) |
-| `swe setup <target>` | Configure integrations (`cursor`, `claude`, `models`) |
-| `swe config <get\|set>` | Read/write global configuration |
-| `swe doctor` | Validate environment and configuration |
-| `swe policy <subcommand>` | Manage governance policies (`list`, `add`, `remove`, `sync`) |
-| `swe events` | Query the event/audit log |
-| `swe serve` | Start daemon (scheduler + HTTP + MCP) |
-| `swe agents <subcommand>` | List, run, and manage background agents |
-| `swe cloud <subcommand>` | Cloud sync and team management |
+| `mp chat [message]` | Interactive agent session |
+| `mp search <query>` | Hybrid code search (BM25 + vector) |
+| `mp index` | Build or refresh the codebase index |
+| `mp inspect` | Query agent state (events, messages, metrics) |
+| `mp mcp` | Start MCP server (stdio) |
+| `mp setup <target>` | Configure integrations (`cursor`, `claude`, `models`) |
+| `mp config <get\|set>` | Read/write global configuration |
+| `mp doctor` | Validate environment and configuration |
+| `mp policy <subcommand>` | Manage governance policies (`list`, `add`, `remove`, `sync`) |
+| `mp events` | Query the event/audit log |
+| `mp serve` | Start daemon (scheduler + HTTP + MCP) |
+| `mp agents <subcommand>` | List, run, and manage background agents |
+| `mp cloud <subcommand>` | Cloud sync and team management |
 
 ## Architecture
 
@@ -163,28 +169,28 @@ swe serve
 │  Transports                                                 │
 │    CLI · MCP Server · HTTP API · Daemon                     │
 ├─────────────────────────────────────────────────────────────┤
-│  @swe/agents    Blueprints, scheduler, cron, agent chaining  │
-│  @swe/http      Localhost API + SSE event streaming         │
-│  @swe/mcp       MCP server + client + IDE sidecar           │
-│  @swe/cloud     Optional sync (sqlite-sync, team.db)        │
+│  @moneypenny/agents  Agent loader, scheduler, cron, chaining│
+│  @moneypenny/http    Localhost API + SSE event streaming     │
+│  @moneypenny/mcp     MCP server + client + IDE sidecar      │
+│  @moneypenny/cloud   Optional sync (sqlite-sync, team.db)   │
 ├─────────────────────────────────────────────────────────────┤
-│  @swe/loop      Agent turn loop, LLM providers, cost ctrl   │
-│  @swe/tools     Built-in tools (file ops, bash, git, search)│
-│  @swe/skills    SKILL.md discovery, subagent delegation      │
+│  @moneypenny/loop    Agent turn loop, LLM providers, cost   │
+│  @moneypenny/tools   Built-in tools (file ops, bash, git)   │
+│  @moneypenny/skills  SKILL.md discovery, subagent delegation│
 ├─────────────────────────────────────────────────────────────┤
-│  @swe/ctx       Prompt assembly + governance pipeline        │
-│  @swe/search    Indexer, chunker, hybrid BM25+vector search  │
+│  @moneypenny/ctx     Prompt assembly + governance pipeline  │
+│  @moneypenny/search  Indexer, chunker, hybrid BM25+vector   │
 ├─────────────────────────────────────────────────────────────┤
-│  @swe/db        SQLite + extensions (vector, ai, sync, FTS5) │
+│  @moneypenny/db      SQLite + extensions (vector, ai, sync) │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ### Repo layout
 
 ```
-swe/
+moneypenny/
 ├── apps/
-│   └── cli/                 # swe CLI (Bun binary)
+│   └── cli/                 # mp CLI (Bun binary)
 ├── packages/
 │   ├── db/                  # Layer 1 — Storage (SQLite, schemas, migrations)
 │   ├── search/              # Layer 2 — Code intelligence (indexing, hybrid search)
@@ -195,53 +201,32 @@ swe/
 │   ├── mcp/                 # Layer 7 — MCP server, client, sidecar, IDE setup
 │   ├── http/                # Layer 8 — HTTP API + SSE routes
 │   ├── cloud/               # Layer 9 — Cloud sync (sqlite-sync, team DB)
-│   └── agents/              # Layer 10 — Blueprint loader, scheduler, runner
+│   └── agents/              # Layer 10 — Agent loader, scheduler, runner
 ├── package.json             # pnpm workspace root
 ├── pnpm-workspace.yaml
 └── tsconfig.base.json
 ```
 
-### Layer dependencies
-
-```
-@swe/db            ← foundation (SQLite + extensions)
-@swe/search        ← @swe/db
-@swe/ctx           ← @swe/db
-@swe/tools         ← @swe/db, @swe/search
-@swe/loop          ← @swe/db, @swe/ctx, @swe/tools
-@swe/skills        ← @swe/db
-@swe/mcp           ← @swe/db, @swe/search, @swe/tools
-@swe/http          ← @swe/db, @swe/agents
-@swe/cloud         ← @swe/db
-@swe/agents        ← @swe/db, @swe/loop
-apps/cli           ← all packages
-```
-
-Each package can be used independently. `@swe/db` + `@swe/search` alone is a code search engine. `@swe/mcp` alone is an MCP server for code intelligence. `@swe/ctx` alone is a prompt formatter with governance.
-
 ### Storage model
 
-Per-repository state lives in `.swe/`:
+Per-repository state lives in `.mp/`:
 
 ```
 project/
-└── .swe/
-    ├── workspace.sqlite       # Shared code index (file tree, chunks, FTS, vectors)
+└── .mp/
+    ├── mp.db                    # Single DB: sessions, metrics, skills, config
+    ├── workspace.sqlite         # Shared code index (file tree, chunks, FTS, vectors)
     ├── agents/
-    │   ├── default.db         # Default agent (conversations, metrics, config)
-    │   └── pr-reviewer.db     # Named agent — runtime state for the blueprint
-    ├── blueprints/
-    │   ├── hello/agent.md     # Scaffolded starter blueprint
-    │   └── pr-reviewer/agent.md
-    ├── policies/
-    │   └── defaults.yaml      # Governance rules (synced into DB on startup)
-    └── skills/                # User-defined SKILL.md files
+    │   ├── _global.yaml         # Repo-wide defaults (permissions, excludes, model)
+    │   ├── default.md           # Default agent definition
+    │   └── pr-reviewer.md       # Specialized agent
+    └── skills/                  # User-defined SKILL.md files
 ```
 
-Global config and models live in `~/.swe/`:
+Global config and models live in `~/.mp/`:
 
 ```
-~/.swe/
+~/.mp/
 ├── config.json                # API keys, default model, preferences
 └── models/
     ├── nomic-embed-text-v1.5.Q8_0.gguf    # Local embeddings (768 dims)
@@ -252,8 +237,8 @@ Global config and models live in `~/.swe/`:
 
 Every tool call flows through: **pre-hooks → policy evaluate → execute → post-hooks → event log**.
 
-Policies support structured matching on tool name, file path, cost thresholds, argument patterns, and actor identity. Four effects: `allow`, `deny`, `audit`, `confirm`. Built-in guards for cost limits, credential redaction, and path boundaries are always active.
+Governance composes in two layers. **`_global.yaml`** defines repo-wide permissions and exclude patterns (`deny_paths`, `deny_tools`, `allow_paths`). **Agent `.md` files** layer additional restrictions. `deny_paths` and `deny_tools` merge additively with global config; `model`, `tools`, and `max_turns` override. For cost caps, audit, and confirmation rules, use the `policies` key in either file. Built-in guards for cost limits, credential redaction, and path boundaries are always active.
 
 ## License
 
-Open source. MIT.
+MIT

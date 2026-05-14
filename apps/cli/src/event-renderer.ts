@@ -1,4 +1,4 @@
-import type { LoopEvent } from "@swe/loop";
+import type { LoopEvent } from "@moneypenny/loop";
 import {
   muted,
   Spinner,
@@ -9,6 +9,7 @@ import {
   printToolError,
   printToolStart,
 } from "./display.js";
+import { getTheme } from "./theme.js";
 import { createRenderer } from "./markdown.js";
 
 /**
@@ -23,7 +24,7 @@ export class EventRenderer {
     switch (event.type) {
       case "turn.started":
         this.md = createRenderer();
-        this.spinner.start("Thinking...");
+        this.spinner.start(getTheme().thinkingText);
         break;
 
       case "llm.streaming":
@@ -45,12 +46,12 @@ export class EventRenderer {
 
       case "tool.complete":
         printToolComplete(event.name, event.output, event.durationMs);
-        this.spinner.start("Thinking...");
+        this.spinner.start(getTheme().thinkingText);
         break;
 
       case "tool.error":
         printToolError(event.name, event.error);
-        this.spinner.start("Thinking...");
+        this.spinner.start(getTheme().thinkingText);
         break;
 
       case "turn.complete":

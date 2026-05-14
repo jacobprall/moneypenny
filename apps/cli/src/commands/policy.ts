@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import * as path from "node:path";
-import { closeAgentDB, closeWorkspaceDB, createPolicy, deletePolicy, listPolicies, syncPolicyFiles } from "@swe/db";
+import { closeAgentDB, closeWorkspaceDB, createPolicy, deletePolicy, listPolicies, syncPolicyFiles } from "@moneypenny/db";
 import { openSession, openWorkspace } from "../session";
 import { printError } from "../display";
 
@@ -104,7 +104,7 @@ policyCommand
 
 policyCommand
   .command("sync")
-  .description("Sync .swe/policies/*.yaml files into the database")
+  .description("Sync .mp/policies/*.yaml files into the database")
   .option("--repo <path>", "Repository path", process.cwd())
   .option("--session <id>", "Session / agent DB", "default")
   .action((opts: { repo: string; session: string }) => {
@@ -112,7 +112,7 @@ policyCommand
     const workspace = openWorkspace(repoPath);
     const db = openSession(repoPath, { session: opts.session, workspace });
     try {
-      const policiesDir = path.join(repoPath, ".swe", "policies");
+      const policiesDir = path.join(repoPath, ".mp", "policies");
       const result = syncPolicyFiles(db, policiesDir);
       process.stdout.write(
         `Synced: ${String(result.added)} added, ${String(result.updated)} updated, ${String(result.removed)} removed\n`,

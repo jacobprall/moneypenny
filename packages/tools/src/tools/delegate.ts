@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { getSkill, getSubagentDef } from "@swe/db";
+import { getSkill, getSubagentDef } from "@moneypenny/db";
 import type { ToolDefinition, ToolContext } from "../types.js";
 import { truncate } from "../utils.js";
 

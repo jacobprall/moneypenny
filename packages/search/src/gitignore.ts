@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { globMatch } from "@swe/db/glob";
+import { globMatch } from "@moneypenny/db/glob";
 
 export interface GitRule {
   pattern: string;

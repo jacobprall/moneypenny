@@ -4,8 +4,8 @@ import * as path from "node:path";
 
 import { bold, accent, chrome, success, error, warning } from "../display";
 import { globalConfigPath } from "../config";
-import { getDbPath, getSweDir } from "../session";
-import { probeExtensions } from "@swe/db";
+import { getDbPath, getMpDir } from "../session";
+import { probeExtensions } from "@moneypenny/db";
 
 type Status = "pass" | "warn" | "fail";
 
@@ -98,7 +98,7 @@ function checkApiKeys(): Check[] {
     checks.push({
       label: `${spec.label} API key`,
       status: "warn",
-      detail: `Not found. Set ${spec.envVar} or run: swe config set ${spec.configKey} <key>`,
+      detail: `Not found. Set ${spec.envVar} or run: mp config set ${spec.configKey} <key>`,
       group: "Auth",
     });
   }
@@ -173,48 +173,48 @@ async function checkGit(): Promise<Check> {
 }
 
 function checkRepoMpDir(repoPath: string): Check {
-  const sweDir = getSweDir(repoPath);
-  if (!existsSync(sweDir)) {
+  const mpDir = getMpDir(repoPath);
+  if (!existsSync(mpDir)) {
     return {
-      label: ".swe/ directory",
+      label: ".mp/ directory",
       status: "warn",
-      detail: `Not found at ${sweDir} — will be created on first swe chat`,
+      detail: `Not found at ${mpDir} — will be created on first mp chat`,
       group: "Repository",
     };
   }
-  return { label: ".swe/ directory", status: "pass", detail: sweDir, group: "Repository" };
+  return { label: ".mp/ directory", status: "pass", detail: mpDir, group: "Repository" };
 }
 
 function checkDefaultSession(repoPath: string): Check {
-  const dbPath = getDbPath(repoPath, "default");
+  const dbPath = getDbPath(repoPath);
   if (!existsSync(dbPath)) {
-    return { label: "Default session DB", status: "warn", detail: "No default session yet", group: "Repository" };
+    return { label: "Database (mp.db)", status: "warn", detail: "No database yet — will be created on first mp chat", group: "Repository" };
   }
 
   try {
     const st = statSync(dbPath);
     const sizeKb = (st.size / 1024).toFixed(0);
-    return { label: "Default session DB", status: "pass", detail: `${dbPath} (${sizeKb} KB)`, group: "Repository" };
+    return { label: "Database (mp.db)", status: "pass", detail: `${dbPath} (${sizeKb} KB)`, group: "Repository" };
   } catch {
-    return { label: "Default session DB", status: "warn", detail: "Could not stat database file", group: "Repository" };
+    return { label: "Database (mp.db)", status: "warn", detail: "Could not stat database file", group: "Repository" };
   }
 }
 
 function checkSessions(repoPath: string): Check {
-  const agentsDir = path.join(getSweDir(repoPath), "agents");
+  const agentsDir = path.join(getMpDir(repoPath), "agents");
   if (!existsSync(agentsDir)) {
-    return { label: "Named agents", status: "pass", detail: "None (only default)", group: "Repository" };
+    return { label: "Agent definitions", status: "pass", detail: "None yet — will be created on first mp chat", group: "Repository" };
   }
 
   try {
-    const files = readdirSync(agentsDir).filter((f) => f.endsWith(".db") && f !== "default.db");
+    const files = readdirSync(agentsDir).filter((f) => f.endsWith(".md") && !f.startsWith("_"));
     if (files.length === 0) {
-      return { label: "Named agents", status: "pass", detail: "None", group: "Repository" };
+      return { label: "Agent definitions", status: "pass", detail: "None", group: "Repository" };
     }
-    const names = files.map((f) => f.replace(".db", ""));
-    return { label: "Named agents", status: "pass", detail: `${String(files.length)}: ${names.join(", ")}`, group: "Repository" };
+    const names = files.map((f) => f.replace(".md", ""));
+    return { label: "Agent definitions", status: "pass", detail: `${String(files.length)}: ${names.join(", ")}`, group: "Repository" };
   } catch {
-    return { label: "Named agents", status: "warn", detail: "Could not read agents directory", group: "Repository" };
+    return { label: "Agent definitions", status: "warn", detail: "Could not read agents directory", group: "Repository" };
   }
 }
 
@@ -260,7 +260,7 @@ function checkSqliteExtensions(_repoPath: string): Check {
 }
 
 function checkEmbeddingModel(): Check {
-  const modelsDir = path.join(process.env.HOME ?? "~", ".swe", "models");
+  const modelsDir = path.join(process.env.HOME ?? "~", ".mp", "models");
   const modelFile = "nomic-embed-text-v1.5.Q8_0.gguf";
   const modelPath = path.join(modelsDir, modelFile);
 
@@ -283,7 +283,7 @@ function checkEmbeddingModel(): Check {
 }
 
 function checkTextGenModel(): Check {
-  const modelsDir = path.join(process.env.HOME ?? "~", ".swe", "models");
+  const modelsDir = path.join(process.env.HOME ?? "~", ".mp", "models");
   const modelFile = "qwen2.5-0.5b-instruct-q4_k_m.gguf";
   const modelPath = path.join(modelsDir, modelFile);
 
@@ -291,7 +291,7 @@ function checkTextGenModel(): Check {
     return {
       label: "Text gen model",
       status: "warn",
-      detail: `${modelFile} not found. Session naming/extraction will use cloud API. Run: swe setup models`,
+      detail: `${modelFile} not found. Session naming/extraction will use cloud API. Run: mp setup models`,
       group: "Runtime",
     };
   }
@@ -339,7 +339,7 @@ export const doctorCommand = new Command("doctor")
     const warns = checks.filter((c) => c.status === "warn").length;
 
     process.stdout.write("\n");
-    process.stdout.write(`  ${bold(accent("swe doctor"))}\n`);
+    process.stdout.write(`  ${bold(accent("mp doctor"))}\n`);
     process.stdout.write(`  ${doctorRule()}\n`);
 
     const groups = ["Runtime", "Auth", "Repository"];

@@ -1,8 +1,8 @@
-import { definePrompt, type AnthropicToolDef, type Prompt } from "@swe/ctx";
-import { getConfig, getConversation, listSkillCatalog } from "@swe/db";
+import { definePrompt, type AnthropicToolDef, type Prompt } from "@moneypenny/ctx";
+import { getConfig, getConversation, listSkillCatalog } from "@moneypenny/db";
 
 const DEFAULT_SYSTEM_INSTRUCTIONS = [
-  "You are swe, an expert AI coding assistant running locally against the user's repository.",
+  "You are mp, an expert AI coding assistant running locally against the user's repository.",
   "",
   "- When exploring or answering questions about the codebase, **search first** — use code_search before reading individual files. It returns the most relevant snippets across the whole repo in one call.",
   "- Use file_read when you already know the exact file and line range you need, or to read a file discovered via search.",

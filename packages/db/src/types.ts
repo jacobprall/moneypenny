@@ -78,6 +78,9 @@ export interface AgentBlueprint {
   subagents?: SubagentDef[];
 }
 
+/** Agent definition — a file-based persona with tools, permissions, and instructions. */
+export type AgentDef = AgentBlueprint;
+
 export interface Session {
   id: string;
   label: string | null;
@@ -89,6 +92,7 @@ export interface Session {
 export interface SessionSummary {
   id: string;
   label: string | null;
+  agentName: string;
   turns: number;
   costUsd: number;
   lastActiveAt: number;

@@ -1,8 +1,10 @@
 /**
- * Policy file loader — scans a directory of YAML files, parses policy
- * definitions, and syncs them into the policies table. File-sourced
- * policies are tracked by `source = 'file'` and checksummed for
- * change detection.
+ * Policy file loader — scans `.mp/policies/` for YAML files, parses policy
+ * definitions, and syncs them into the policies table. File-sourced policies
+ * are tracked by `source = 'file'` and checksummed for change detection.
+ *
+ * Convention: `base.yaml` is always loaded if it exists on disk, regardless
+ * of the `only` filter. This provides a non-negotiable governance floor.
  */
 
 import { createHash } from "crypto";
@@ -14,9 +16,7 @@ import {
   createPolicy,
   deleteFilePolicies,
   listFilePolicies,
-  updatePolicy,
   type PolicyEffect,
-  type Policy,
 } from "./policies";
 import type { AgentDB } from "./types";
 
@@ -33,6 +33,15 @@ export interface PolicyFileEntry {
   enabled?: boolean;
 }
 
+export interface PolicySyncOptions {
+  /**
+   * If set, only load the named policy files (plus base.yaml).
+   * `only: []` = base.yaml only (yolo mode).
+   * If omitted, all `.yaml` files are loaded.
+   */
+  only?: string[];
+}
+
 export interface PolicyScanResult {
   added: number;
   updated: number;
@@ -40,10 +49,15 @@ export interface PolicyScanResult {
   errors: Array<{ file: string; message: string }>;
 }
 
+const BASE_FILENAME = "base.yaml";
 const VALID_EFFECTS = new Set<string>(["allow", "deny", "audit", "confirm"]);
 
 function sha256(content: string): string {
   return createHash("sha256").update(content).digest("hex");
+}
+
+function stripExt(filename: string): string {
+  return filename.replace(/\.ya?ml$/, "");
 }
 
 function validateEntry(entry: unknown, file: string, index: number): PolicyFileEntry | string {
@@ -87,6 +101,10 @@ function parseFile(filePath: string): { entries: PolicyFileEntry[]; errors: stri
     return { entries: [], errors: [`${file}: invalid YAML — ${e instanceof Error ? e.message : String(e)}`] };
   }
 
+  if (parsed == null) {
+    return { entries: [], errors: [] };
+  }
+
   const items: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
   const entries: PolicyFileEntry[] = [];
   const errors: string[] = [];
@@ -104,10 +122,58 @@ function parseFile(filePath: string): { entries: PolicyFileEntry[]; errors: stri
 }
 
 /**
- * Scan `.swe/policies/` for YAML files and sync into the DB.
- * File-sourced policies are upserted; policies from removed files are deleted.
+ * Determine which YAML files to load based on the `only` filter.
+ *
+ * - No filter → all `.yaml` files in the directory
+ * - `only: ["readonly"]` → `base.yaml` + `readonly.yaml`
+ * - `only: []` → `base.yaml` only
+ *
+ * `base.yaml` is always included if it exists on disk.
  */
-export function syncPolicyFiles(db: AgentDB, policiesDir: string): PolicyScanResult {
+function resolveFileList(
+  policiesDir: string,
+  opts?: PolicySyncOptions,
+): { files: string[]; errors: Array<{ file: string; message: string }> } {
+  const allFiles = readdirSync(policiesDir).filter(
+    (f) => (f.endsWith(".yaml") || f.endsWith(".yml")) && !f.startsWith("."),
+  );
+
+  if (!opts?.only) {
+    return { files: allFiles, errors: [] };
+  }
+
+  const requested = new Set(opts.only.map((n) => n.toLowerCase()));
+  const selected = new Set<string>();
+  const errors: Array<{ file: string; message: string }> = [];
+
+  if (allFiles.includes(BASE_FILENAME)) {
+    selected.add(BASE_FILENAME);
+  }
+
+  for (const name of requested) {
+    const match = allFiles.find((f) => stripExt(f).toLowerCase() === name);
+    if (match) {
+      selected.add(match);
+    } else {
+      errors.push({ file: name, message: `policy file not found: ${name}.yaml` });
+    }
+  }
+
+  return { files: [...selected], errors };
+}
+
+/**
+ * Sync policy files from `.mp/policies/` into the agent DB.
+ *
+ * - `syncPolicyFiles(db, dir)` — loads base.yaml + all other files
+ * - `syncPolicyFiles(db, dir, { only: ["readonly"] })` — loads base.yaml + readonly.yaml
+ * - `syncPolicyFiles(db, dir, { only: [] })` — loads base.yaml only (yolo mode)
+ */
+export function syncPolicyFiles(
+  db: AgentDB,
+  policiesDir: string,
+  opts?: PolicySyncOptions,
+): PolicyScanResult {
   const result: PolicyScanResult = { added: 0, updated: 0, removed: 0, errors: [] };
 
   if (!existsSync(policiesDir)) {
@@ -115,9 +181,8 @@ export function syncPolicyFiles(db: AgentDB, policiesDir: string): PolicyScanRes
     scaffoldDefaults(policiesDir);
   }
 
-  const files = readdirSync(policiesDir).filter(
-    (f) => (f.endsWith(".yaml") || f.endsWith(".yml")) && !f.startsWith("."),
-  );
+  const { files, errors: resolveErrors } = resolveFileList(policiesDir, opts);
+  result.errors.push(...resolveErrors);
 
   const seenFiles = new Set<string>();
 
@@ -186,8 +251,14 @@ export function syncPolicyFiles(db: AgentDB, policiesDir: string): PolicyScanRes
   return result;
 }
 
-const DEFAULT_POLICIES = `# Default swe policies — edit or add new .yaml files to this directory.
-# Each file can contain a single policy or a YAML array of policies.
+// ---------------------------------------------------------------------------
+// Default policy files scaffolded on first init
+// ---------------------------------------------------------------------------
+
+const BASE_POLICIES = `# Base security policies — always loaded for every agent.
+# Edit or extend these rules. They apply even when an agent
+# specifies policies: [] (yolo mode). Delete this file to remove
+# the governance floor entirely (visible in git).
 #
 # Fields:
 #   name     (required) — human-readable policy name
@@ -198,28 +269,68 @@ const DEFAULT_POLICIES = `# Default swe policies — edit or add new .yaml files
 #   cost               — e.g. "session_cost > 5.00"
 #   args               — regex tested against serialized tool arguments
 #   actor              — glob pattern matching actor identity
-#   message            — human-readable reason shown when policy triggers
+#   message            — reason shown when policy triggers
 #   enabled            — true | false (default true)
 
 - name: protect-env-files
   effect: deny
   path: "*.env*"
-  message: Prevent agent from reading or writing environment files
+  message: Prevent reading or writing environment files
 
 - name: no-force-push
   effect: deny
   tool: bash
   args: "push.*--force|push.*-f"
   message: Block force-push to any remote
+
+- name: no-rm-rf
+  effect: deny
+  tool: bash
+  args: "rm\\\\s+-rf\\\\s+/"
+  message: Block recursive delete from root
+
+- name: audit-all-bash
+  effect: audit
+  tool: bash
+  message: Log all shell commands for review
+`;
+
+const READONLY_POLICIES = `# Read-only agent profile. Reference from an agent definition:
+#
+#   ---
+#   name: PR Reviewer
+#   policies: [readonly]
+#   ---
+#
+# base.yaml is always loaded alongside any referenced policies.
+
+- name: no-file-writes
+  effect: deny
+  tool: file_write
+  message: This agent is read-only
+
+- name: no-file-edits
+  effect: deny
+  tool: file_edit
+  message: This agent is read-only
+
+- name: no-bash
+  effect: deny
+  tool: bash
+  message: This agent cannot run shell commands
 `;
 
 function scaffoldDefaults(policiesDir: string): void {
-  const defaultFile = join(policiesDir, "defaults.yaml");
-  if (!existsSync(defaultFile)) {
-    writeFileSync(defaultFile, DEFAULT_POLICIES, "utf8");
+  const basePath = join(policiesDir, "base.yaml");
+  if (!existsSync(basePath)) {
+    writeFileSync(basePath, BASE_POLICIES, "utf8");
+  }
+  const readonlyPath = join(policiesDir, "readonly.yaml");
+  if (!existsSync(readonlyPath)) {
+    writeFileSync(readonlyPath, READONLY_POLICIES, "utf8");
   }
 }
 
-export function getPoliciesDir(sweDir: string): string {
-  return join(sweDir, "policies");
+export function getPoliciesDir(mpDir: string): string {
+  return join(mpDir, "policies");
 }

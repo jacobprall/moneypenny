@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import * as path from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
-import { writeClaudeConfig, writeCursorConfig } from "@swe/mcp";
+import { writeClaudeConfig, writeCursorConfig } from "@moneypenny/mcp";
 import { accent, chrome, success, printError } from "../display.js";
 
 interface ModelSpec {
@@ -24,7 +24,7 @@ const MODELS: ModelSpec[] = [
 ];
 
 function modelsDir(): string {
-  return path.join(process.env.HOME ?? "~", ".swe", "models");
+  return path.join(process.env.HOME ?? "~", ".mp", "models");
 }
 
 async function downloadModel(spec: ModelSpec): Promise<boolean> {
@@ -103,7 +103,7 @@ const modelsSubcommand = new Command("models")
     if (allOk) {
       process.stdout.write(`  ${success("[OK]")} All models ready.\n\n`);
     } else {
-      printError("Some models failed to download. Re-run: swe setup models");
+      printError("Some models failed to download. Re-run: mp setup models");
       process.exitCode = 1;
     }
   });
@@ -114,7 +114,7 @@ export const setupCommand = new Command("setup")
   .option("--repo <path>", "Repository path", process.cwd())
   .action((target: string | undefined, opts: { repo: string }) => {
     if (!target) {
-      process.stdout.write("Usage: swe setup <cursor|claude|models>\n");
+      process.stdout.write("Usage: mp setup <cursor|claude|models>\n");
       return;
     }
 
@@ -128,7 +128,7 @@ export const setupCommand = new Command("setup")
       }
       if (t === "claude") {
         writeClaudeConfig(repoPath);
-        process.stdout.write("Merged swe entry into Claude Desktop config.\n");
+        process.stdout.write("Merged mp entry into Claude Desktop config.\n");
         return;
       }
       process.stderr.write(`Unknown target "${target}". Use: cursor | claude | models\n`);

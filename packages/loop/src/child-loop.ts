@@ -1,13 +1,13 @@
-import type { ChildLoopFactory, ChildLoopParams, ChildLoopResult, ToolRegistry } from "@swe/tools";
-import { createToolRegistry } from "@swe/tools";
+import type { ChildLoopFactory, ChildLoopParams, ChildLoopResult, ToolRegistry } from "@moneypenny/tools";
+import { createToolRegistry } from "@moneypenny/tools";
 import {
   definePrompt,
   createHookPipeline,
   costGuard,
   credentialRedactor,
   toolGovernance,
-} from "@swe/ctx";
-import { getConversation } from "@swe/db";
+} from "@moneypenny/ctx";
+import { getConversation } from "@moneypenny/db";
 import { createAgentLoop } from "./loop.js";
 import type { ProviderName, LLMProvider } from "./provider.js";
 
@@ -51,7 +51,7 @@ export function createChildLoopFactory(config: CreateChildLoopFactoryConfig): Ch
             name: "subagent-context",
             placement: "static",
             resolve: () => [
-              "You are a focused subagent within the swe system.",
+              "You are a focused subagent within the moneypenny system.",
               "Complete the task you are given thoroughly, then provide a clear summary of your findings or actions.",
               "You operate against the same codebase as the parent agent.",
             ].join("\n"),

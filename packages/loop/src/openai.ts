@@ -5,7 +5,7 @@ import type {
   ChatCompletionTool,
   ChatCompletionChunk,
 } from "openai/resources/chat/completions/completions";
-import type { ContentBlock } from "@swe/ctx";
+import type { ContentBlock } from "@moneypenny/ctx";
 import { DEFAULT_MAX_TOKENS } from "./types.js";
 import type { AssistantMessage, TokenUsage } from "./types.js";
 import type { CompletionParams, LLMProvider, StreamEvent } from "./provider.js";

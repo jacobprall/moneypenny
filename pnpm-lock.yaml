@@ -10,34 +10,34 @@ importers:
 
   apps/cli:
     dependencies:
-      '@swe/agents':
+      '@moneypenny/agents':
         specifier: workspace:*
         version: link:../../packages/agents
-      '@swe/cloud':
+      '@moneypenny/cloud':
         specifier: workspace:*
         version: link:../../packages/cloud
-      '@swe/ctx':
+      '@moneypenny/ctx':
         specifier: workspace:*
         version: link:../../packages/ctx
-      '@swe/db':
+      '@moneypenny/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@swe/http':
+      '@moneypenny/http':
         specifier: workspace:*
         version: link:../../packages/http
-      '@swe/loop':
+      '@moneypenny/loop':
         specifier: workspace:*
         version: link:../../packages/loop
-      '@swe/mcp':
+      '@moneypenny/mcp':
         specifier: workspace:*
         version: link:../../packages/mcp
-      '@swe/search':
+      '@moneypenny/search':
         specifier: workspace:*
         version: link:../../packages/search
-      '@swe/skills':
+      '@moneypenny/skills':
         specifier: workspace:*
         version: link:../../packages/skills
-      '@swe/tools':
+      '@moneypenny/tools':
         specifier: workspace:*
         version: link:../../packages/tools
       commander:
@@ -53,16 +53,16 @@ importers:
 
   packages/agents:
     dependencies:
-      '@swe/ctx':
+      '@moneypenny/ctx':
         specifier: workspace:*
         version: link:../ctx
-      '@swe/db':
+      '@moneypenny/db':
         specifier: workspace:*
         version: link:../db
-      '@swe/loop':
+      '@moneypenny/loop':
         specifier: workspace:*
         version: link:../loop
-      '@swe/tools':
+      '@moneypenny/tools':
         specifier: workspace:*
         version: link:../tools
       chokidar:
@@ -90,7 +90,7 @@ importers:
 
   packages/cloud:
     dependencies:
-      '@swe/db':
+      '@moneypenny/db':
         specifier: workspace:*
         version: link:../db
     devDependencies:
@@ -106,7 +106,7 @@ importers:
 
   packages/ctx:
     dependencies:
-      '@swe/db':
+      '@moneypenny/db':
         specifier: workspace:*
         version: link:../db
     devDependencies:
@@ -122,6 +122,9 @@ importers:
 
   packages/db:
     dependencies:
+      '@moneypenny/search':
+        specifier: workspace:*
+        version: link:../search
       '@sqliteai/sqlite-ai':
         specifier: ^0.7.56
         version: 0.7.59
@@ -131,9 +134,6 @@ importers:
       '@sqliteai/sqlite-vector':
         specifier: ^0.9.45
         version: 0.9.95
-      '@swe/search':
-        specifier: workspace:*
-        version: link:../search
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
@@ -150,19 +150,19 @@ importers:
 
   packages/http:
     dependencies:
-      '@swe/agents':
+      '@moneypenny/agents':
         specifier: workspace:*
         version: link:../agents
-      '@swe/cloud':
+      '@moneypenny/cloud':
         specifier: workspace:*
         version: link:../cloud
-      '@swe/ctx':
+      '@moneypenny/ctx':
         specifier: workspace:*
         version: link:../ctx
-      '@swe/db':
+      '@moneypenny/db':
         specifier: workspace:*
         version: link:../db
-      '@swe/search':
+      '@moneypenny/search':
         specifier: workspace:*
         version: link:../search
       hono:
@@ -190,13 +190,13 @@ importers:
       '@google/genai':
         specifier: ^0.7.0
         version: 0.7.0
-      '@swe/ctx':
+      '@moneypenny/ctx':
         specifier: workspace:*
         version: link:../ctx
-      '@swe/db':
+      '@moneypenny/db':
         specifier: workspace:*
         version: link:../db
-      '@swe/tools':
+      '@moneypenny/tools':
         specifier: workspace:*
         version: link:../tools
       openai:
@@ -218,13 +218,13 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.12.1
         version: 1.29.0(zod@3.25.76)
-      '@swe/db':
+      '@moneypenny/db':
         specifier: workspace:*
         version: link:../db
-      '@swe/search':
+      '@moneypenny/search':
         specifier: workspace:*
         version: link:../search
-      '@swe/tools':
+      '@moneypenny/tools':
         specifier: workspace:*
         version: link:../tools
       zod:
@@ -243,7 +243,7 @@ importers:
 
   packages/search:
     dependencies:
-      '@swe/db':
+      '@moneypenny/db':
         specifier: workspace:*
         version: link:../db
     devDependencies:
@@ -262,7 +262,7 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.39.0
         version: 0.39.0
-      '@swe/db':
+      '@moneypenny/db':
         specifier: workspace:*
         version: link:../db
     devDependencies:
@@ -278,13 +278,13 @@ importers:
 
   packages/tools:
     dependencies:
-      '@swe/ctx':
+      '@moneypenny/ctx':
         specifier: workspace:*
         version: link:../ctx
-      '@swe/db':
+      '@moneypenny/db':
         specifier: workspace:*
         version: link:../db
-      '@swe/search':
+      '@moneypenny/search':
         specifier: workspace:*
         version: link:../search
       zod:

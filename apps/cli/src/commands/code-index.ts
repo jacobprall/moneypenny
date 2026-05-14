@@ -1,5 +1,5 @@
-import { closeAgentDB, closeWorkspaceDB } from "@swe/db";
-import { getIndexStatus, indexCodebase } from "@swe/search";
+import { closeAgentDB, closeWorkspaceDB } from "@moneypenny/db";
+import { getIndexStatus, indexCodebase } from "@moneypenny/search";
 import { Command } from "commander";
 import * as path from "node:path";
 

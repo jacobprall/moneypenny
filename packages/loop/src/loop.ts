@@ -6,9 +6,9 @@ import {
   getSessionMetrics,
   recordTurnMetrics,
   type AgentDB,
-} from "@swe/db";
-import type { HookContext } from "@swe/ctx";
-import type { ToolContext } from "@swe/tools";
+} from "@moneypenny/db";
+import type { HookContext } from "@moneypenny/ctx";
+import type { ToolContext } from "@moneypenny/tools";
 import { createProvider, type LLMProvider } from "./provider.js";
 import { calculateCost } from "./cost.js";
 import {

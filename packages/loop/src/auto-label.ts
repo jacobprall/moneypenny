@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import * as path from "node:path";
 import {
   createAgentDB,
@@ -7,7 +7,7 @@ import {
   labelSession,
   type AgentDB,
   type LocalGen,
-} from "@swe/db";
+} from "@moneypenny/db";
 import { summariseSession, type SummariseConfig } from "./summarise.js";
 
 export interface AutoLabelConfig extends SummariseConfig {
@@ -15,21 +15,10 @@ export interface AutoLabelConfig extends SummariseConfig {
   localGen?: LocalGen;
 }
 
-function discoverAgentDbPaths(repoPath: string): string[] {
-  const agentsDir = path.join(repoPath, ".swe", "agents");
-  const paths: string[] = [];
-
-  if (existsSync(agentsDir)) {
-    try {
-      for (const f of readdirSync(agentsDir)) {
-        if (f.endsWith(".db")) {
-          paths.push(path.join(agentsDir, f));
-        }
-      }
-    } catch { /* skip */ }
-  }
-
-  return paths;
+/** Returns the single mp.db path for a repo. */
+function getMpDbPath(repoPath: string): string | null {
+  const dbPath = path.join(repoPath, ".mp", "mp.db");
+  return existsSync(dbPath) ? dbPath : null;
 }
 
 interface EarlyMessages {
@@ -64,39 +53,38 @@ function getFirstMessages(db: AgentDB, sessionId: string): EarlyMessages {
 }
 
 /**
- * Scans all agent DBs for the repo, finds eligible unlabelled sessions,
+ * Opens the single mp.db, finds eligible unlabelled sessions,
  * and labels them. Resolves when done. Never rejects.
  */
 export async function runAutoLabel(config: AutoLabelConfig): Promise<void> {
   try {
-    const dbPaths = discoverAgentDbPaths(config.repoPath);
+    const dbPath = getMpDbPath(config.repoPath);
+    if (!dbPath) return;
 
-    for (const dbPath of dbPaths) {
-      let db: AgentDB | undefined;
-      try {
-        db = createAgentDB(dbPath);
-        const sessions = listSessions(db);
+    let db: AgentDB | undefined;
+    try {
+      db = createAgentDB(dbPath);
+      const sessions = listSessions(db);
 
-        for (const session of sessions) {
-          if (session.label !== null) continue;
-          if (session.id === db.activeSessionId) continue;
+      for (const session of sessions) {
+        if (session.label !== null) continue;
+        if (session.id === db.activeSessionId) continue;
 
-          try {
-            const { userText, assistantText } = getFirstMessages(db, session.id);
-            if (!userText || !assistantText) continue;
+        try {
+          const { userText, assistantText } = getFirstMessages(db, session.id);
+          if (!userText || !assistantText) continue;
 
-            const label = await summariseSession(
-              { userText, assistantText },
-              { ...config, localGen: config.localGen },
-            );
-            if (label) {
-              labelSession(db, session.id, label);
-            }
-          } catch { /* skip this session */ }
-        }
-      } catch { /* skip this DB */ } finally {
-        if (db) try { closeAgentDB(db); } catch { /* best effort */ }
+          const label = await summariseSession(
+            { userText, assistantText },
+            { ...config, localGen: config.localGen },
+          );
+          if (label) {
+            labelSession(db, session.id, label);
+          }
+        } catch { /* skip this session */ }
       }
+    } catch { /* skip */ } finally {
+      if (db) try { closeAgentDB(db); } catch { /* best effort */ }
     }
   } catch { /* never reject */ }
 }

@@ -1,30 +1,30 @@
 {
-  "name": "swe",
+  "name": "moneypenny",
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "swe": "./src/index.ts"
+    "mp": "./src/index.ts"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {
-    "build": "bun build src/index.ts --compile --outfile dist/swe --target bun",
+    "build": "bun build src/index.ts --compile --outfile dist/mp --target bun",
     "dev": "bun run src/index.ts",
-    "install:global": "bun run build && ln -sf \"$(pwd)/dist/swe\" /usr/local/bin/swe",
+    "install:global": "bun run build && ln -sf \"$(pwd)/dist/mp\" /usr/local/bin/mp",
     "test": "bun test",
     "typecheck": "echo 'skipped: hono+bun-types conflict — runtime-verified'"
   },
   "dependencies": {
-    "@swe/db": "workspace:*",
-    "@swe/search": "workspace:*",
-    "@swe/ctx": "workspace:*",
-    "@swe/loop": "workspace:*",
-    "@swe/tools": "workspace:*",
-    "@swe/skills": "workspace:*",
-    "@swe/mcp": "workspace:*",
-    "@swe/http": "workspace:*",
-    "@swe/cloud": "workspace:*",
-    "@swe/agents": "workspace:*",
+    "@moneypenny/db": "workspace:*",
+    "@moneypenny/search": "workspace:*",
+    "@moneypenny/ctx": "workspace:*",
+    "@moneypenny/loop": "workspace:*",
+    "@moneypenny/tools": "workspace:*",
+    "@moneypenny/skills": "workspace:*",
+    "@moneypenny/mcp": "workspace:*",
+    "@moneypenny/http": "workspace:*",
+    "@moneypenny/cloud": "workspace:*",
+    "@moneypenny/agents": "workspace:*",
     "commander": "^13.0.0"
   },
   "devDependencies": {

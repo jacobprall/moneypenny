@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import * as path from "node:path";
-import { sqlError } from "@swe/db/errors";
-import type { AgentDB, Skill } from "@swe/db/types";
+import { sqlError } from "@moneypenny/db/errors";
+import type { AgentDB, Skill } from "@moneypenny/db/types";
 
 // --- DB queries ---
 

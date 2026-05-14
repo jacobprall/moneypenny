@@ -1,5 +1,5 @@
 {
-  "name": "@swe/agents",
+  "name": "@moneypenny/agents",
   "version": "0.1.0",
   "type": "module",
   "main": "src/index.ts",
@@ -10,10 +10,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@swe/db": "workspace:*",
-    "@swe/loop": "workspace:*",
-    "@swe/ctx": "workspace:*",
-    "@swe/tools": "workspace:*",
+    "@moneypenny/db": "workspace:*",
+    "@moneypenny/loop": "workspace:*",
+    "@moneypenny/ctx": "workspace:*",
+    "@moneypenny/tools": "workspace:*",
     "gray-matter": "^4.0.3",
     "chokidar": "^4.0.3",
     "cron-parser": "^5.0.0",

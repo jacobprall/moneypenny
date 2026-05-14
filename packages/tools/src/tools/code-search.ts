@@ -2,9 +2,9 @@ import path from "node:path";
 import { readdir, lstat } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { z } from "zod";
-import { hybridSearch } from "@swe/search";
-import { validateAndRefreshResults } from "@swe/db/workspace";
-import type { SearchOptions, SearchResult } from "@swe/db/types";
+import { hybridSearch } from "@moneypenny/search";
+import { validateAndRefreshResults } from "@moneypenny/db/workspace";
+import type { SearchOptions, SearchResult } from "@moneypenny/db/types";
 import type { ToolDefinition } from "../types.js";
 import { truncate, MAX_FILE_SIZE } from "../utils.js";
 

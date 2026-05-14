@@ -1,4 +1,4 @@
-import { globMatch } from "@swe/db/glob";
+import { globMatch } from "@moneypenny/db/glob";
 import { BoundedMap } from "../bounded-map.js";
 import type { GovernanceConfig, Hook, HookContext, PreHookResult } from "./types.js";
 

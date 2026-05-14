@@ -1,5 +1,5 @@
 import { statSync, type Stats } from "node:fs";
-import type { FileEntry } from "@swe/db/types";
+import type { FileEntry } from "@moneypenny/db/types";
 
 export function tryStat(fullPath: string): Stats | null {
   try {

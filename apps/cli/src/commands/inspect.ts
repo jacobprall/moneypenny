@@ -1,4 +1,4 @@
-import { closeAgentDB, closeWorkspaceDB, getConversation, getEvents } from "@swe/db";
+import { closeAgentDB, closeWorkspaceDB, getConversation, getEvents } from "@moneypenny/db";
 import { Command } from "commander";
 import * as path from "node:path";
 

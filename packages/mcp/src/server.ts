@@ -3,9 +3,9 @@ import {
   getConversation,
   getEvents,
   type AgentDB,
-} from "@swe/db";
-import { getIndexStatus, hybridSearch, indexCodebase } from "@swe/search";
-import { createToolRegistry, registerBuiltinTools, type ToolContext } from "@swe/tools";
+} from "@moneypenny/db";
+import { getIndexStatus, hybridSearch, indexCodebase } from "@moneypenny/search";
+import { createToolRegistry, registerBuiltinTools, type ToolContext } from "@moneypenny/tools";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -261,7 +261,7 @@ function registerRegistryTools(
 
     const shape = zodShape(tool.inputSchema);
     if (shape == null) {
-      console.warn(`[swe-mcp] Skipping tool "${tool.name}": could not extract input schema shape`);
+      console.warn(`[mp-mcp] Skipping tool "${tool.name}": could not extract input schema shape`);
       continue;
     }
 
@@ -332,7 +332,7 @@ function registerMCPResources(server: McpServer, db: AgentDB, config?: MCPServer
 
 export function createMCPServer(db: AgentDB, config?: MCPServerConfig): MCPServerHandle {
   const server = new McpServer({
-    name: "swe",
+    name: "moneypenny",
     version: "0.1.0",
   });
 

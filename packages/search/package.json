@@ -1,5 +1,5 @@
 {
-  "name": "@swe/search",
+  "name": "@moneypenny/search",
   "version": "0.1.0",
   "type": "module",
   "main": "src/index.ts",
@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@swe/db": "workspace:*"
+    "@moneypenny/db": "workspace:*"
   },
   "devDependencies": {
     "bun-types": "latest",

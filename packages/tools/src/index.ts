@@ -22,3 +22,7 @@ export type {
   ChildLoopParams,
   ChildLoopResult,
 } from "./tools/delegate.js";
+export { createWebFetchTool, webFetchTool } from "./tools/web-fetch.js";
+export type { WebFetchConfig } from "./tools/web-fetch.js";
+export { createWebSearchTool, webSearchTool } from "./tools/web-search.js";
+export type { WebSearchConfig } from "./tools/web-search.js";

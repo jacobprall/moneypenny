@@ -2,9 +2,9 @@ import {
   appendEvent,
   appendMessage,
   type AgentDB,
-} from "@swe/db";
-import type { HookContext, HookPipeline } from "@swe/ctx";
-import type { ToolContext, ToolRegistry } from "@swe/tools";
+} from "@moneypenny/db";
+import type { HookContext, HookPipeline } from "@moneypenny/ctx";
+import type { ToolContext, ToolRegistry } from "@moneypenny/tools";
 import { LoopError, type LoopEvent, type ToolCallInfo } from "./types.js";
 
 export interface ToolExecutorConfig {

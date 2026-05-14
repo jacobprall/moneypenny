@@ -33,7 +33,7 @@ function writeAll(data: Record<string, unknown>): void {
   invalidateGlobalConfigCache();
 }
 
-export const configCommand = new Command("config").description("Manage global ~/.swe/config.json");
+export const configCommand = new Command("config").description("Manage global ~/.mp/config.json");
 
 configCommand
   .command("list")
@@ -84,7 +84,7 @@ configCommand
       cfg = readAll();
     } catch (e) {
       printError(`Cannot read existing config: ${e instanceof Error ? e.message : String(e)}`);
-      printError("Fix or remove ~/.swe/config.json before setting values.");
+      printError("Fix or remove ~/.mp/config.json before setting values.");
       process.exitCode = 1;
       return;
     }

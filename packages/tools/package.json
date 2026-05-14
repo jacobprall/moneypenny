@@ -1,13 +1,13 @@
 {
-  "name": "@swe/tools",
+  "name": "@moneypenny/tools",
   "version": "0.1.0",
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
   "dependencies": {
-    "@swe/db": "workspace:*",
-    "@swe/ctx": "workspace:*",
-    "@swe/search": "workspace:*",
+    "@moneypenny/db": "workspace:*",
+    "@moneypenny/ctx": "workspace:*",
+    "@moneypenny/search": "workspace:*",
     "zod": "^3.23.0"
   },
   "scripts": {

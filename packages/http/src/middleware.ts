@@ -1,6 +1,6 @@
 import type { Context, Next, MiddlewareHandler } from "hono";
 import type { ZodError } from "zod";
-import type { AgentDB } from "@swe/db";
+import type { AgentDB } from "@moneypenny/db";
 
 export type HttpVars = {
   db: AgentDB;

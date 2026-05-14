@@ -1,5 +1,5 @@
 {
-  "name": "swe",
+  "name": "moneypenny",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@9.15.4",
@@ -9,6 +9,8 @@
     "check": "biome check .",
     "check:fix": "biome check --write .",
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "dev": "bun run apps/cli/src/index.ts",
+    "chat": "bun run apps/cli/src/index.ts chat"
   }
 }

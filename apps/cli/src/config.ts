@@ -1,7 +1,7 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
-import { join as pathJoin } from "node:path";
-import { inferProvider, type ProviderName } from "@swe/loop";
+import { dirname, join as pathJoin } from "node:path";
+import { inferProvider, type ProviderName } from "@moneypenny/loop";
 
 export interface ResolvedConfig {
   provider: ProviderName;
@@ -15,7 +15,7 @@ export interface ResolvedConfig {
 let _globalcache: Record<string, unknown> | null | undefined;
 
 export function globalConfigPath(): string {
-  return pathJoin(homedir(), ".swe", "config.json");
+  return pathJoin(homedir(), ".mp", "config.json");
 }
 
 function loadGlobalRaw(): Record<string, unknown> {
@@ -44,8 +44,26 @@ export function invalidateGlobalConfigCache(): void {
   _globalcache = undefined;
 }
 
-/** Global config value as string (`true` / `false` for booleans), or undefined if absent. */
-function readGlobalConfig(key: string): string | undefined {
+export function writeGlobalConfigKey(key: string, value: unknown): void {
+  const p = globalConfigPath();
+  let obj: Record<string, unknown> = {};
+  if (existsSync(p)) {
+    try {
+      const raw = JSON.parse(readFileSync(p, "utf8")) as unknown;
+      if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+        obj = raw as Record<string, unknown>;
+      }
+    } catch { /* overwrite corrupt file */ }
+  }
+  obj[key] = value;
+  mkdirSync(dirname(p), { recursive: true });
+  writeFileSync(p, `${JSON.stringify(obj, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  try { chmodSync(p, 0o600); } catch { /* best effort */ }
+  invalidateGlobalConfigCache();
+}
+
+/** Read a global config value as a string. Public for theme/config access. */
+export function readGlobalConfig(key: string): string | undefined {
   const obj = loadGlobalRaw();
   if (!(key in obj)) return undefined;
   const v = obj[key];
@@ -80,7 +98,7 @@ export function availableProviders(): ProviderName[] {
 export function resolveConfig(flags: Partial<ResolvedConfig>): ResolvedConfig {
   const model =
     flags.model ??
-    process.env.SWE_MODEL ??
+    process.env.MP_MODEL ??
     readGlobalConfig("model") ??
     "claude-sonnet-4-6";
 
@@ -95,7 +113,7 @@ export function resolveConfig(flags: Partial<ResolvedConfig>): ResolvedConfig {
   if (!apiKey) {
     const spec = PROVIDER_KEY_MAP[provider];
     throw new Error(
-      `No ${spec.label} API key found. Set ${spec.envVar} or run \`swe config set ${spec.configKey} <key>\``,
+      `No ${spec.label} API key found. Set ${spec.envVar} or run \`mp config set ${spec.configKey} <key>\``,
     );
   }
 

@@ -1,9 +1,9 @@
 import * as readline from "node:readline";
-import { createAgentLoop, createChildLoopFactory, runAutoLabel, type AgentLoop, type ProviderName } from "@swe/loop";
-import { createSession, getConfig, setActiveSession, createLocalGen, type AgentDB, type LocalGen } from "@swe/db";
-import type { ToolRegistry } from "@swe/tools";
-import { confirmationGate, createHookPipeline, type Hook, type Prompt } from "@swe/ctx";
-import { extractSessionKnowledge } from "@swe/skills";
+import { createAgentLoop, createChildLoopFactory, runAutoLabel, type AgentLoop, type ProviderName } from "@moneypenny/loop";
+import { createSession, getConfig, getActiveSession, setActiveSession, createLocalGen, type AgentDB, type LocalGen } from "@moneypenny/db";
+import type { ToolRegistry } from "@moneypenny/tools";
+import { confirmationGate, createHookPipeline, type Hook, type Prompt } from "@moneypenny/ctx";
+import { extractSessionKnowledge } from "@moneypenny/skills";
 import { accent, muted, printError, printInfo, printTurnSeparator } from "./display.js";
 import { handleSlashCommand, type SlashContext } from "./slash-commands.js";
 import { resolveConfig } from "./config.js";
@@ -12,6 +12,7 @@ import { EventRenderer } from "./event-renderer.js";
 export interface ReplConfig {
   db: AgentDB;
   repoPath: string;
+  agentName: string;
   initialMessage?: string;
 
   model: string;
@@ -54,7 +55,7 @@ function buildHookPipeline(
   const hookList = [...hooks];
   if (confirmDestructive) {
     hookList.push(confirmationGate({
-      requireConfirmation: ["bash", "file_write", "file_edit", "git_commit"],
+      requireConfirmation: ["bash", "file_write", "file_edit", "git_commit", "web_fetch", "web_search"],
       promptFn: (toolName: string, input: unknown) => {
         const preview =
           typeof input === "object" && input !== null
@@ -149,8 +150,20 @@ export async function runRepl(cfg: ReplConfig): Promise<void> {
   const localGen = createLocalGen();
 
   let { model: activeModel, provider: activeProvider, apiKey: activeApiKey } = cfg;
+  let activeAgentName = cfg.agentName;
 
-  const slashCtx: SlashContext = { db: cfg.db, repoPath: cfg.repoPath };
+  const activeDb = cfg.db;
+  const slashCtx: SlashContext = { db: activeDb, repoPath: cfg.repoPath };
+
+  function sessionLabel(): string {
+    const session = getActiveSession(activeDb);
+    return session?.label ?? session?.id.slice(0, 8) ?? "—";
+  }
+
+  function statusLine(): string {
+    const sep = muted("·");
+    return `  ${muted(activeAgentName)} ${sep} ${muted(sessionLabel())} ${sep} ${muted(activeModel)}`;
+  }
 
   process.once("SIGINT", () => {
     renderer.stop();
@@ -168,11 +181,12 @@ export async function runRepl(cfg: ReplConfig): Promise<void> {
 
   try {
     if (cfg.initialMessage) {
-      await runTurn(loop, cfg.db, cfg.initialMessage, renderer);
+      await runTurn(loop, activeDb, cfg.initialMessage, renderer);
     }
 
     for (;;) {
-      const input = await question(rl, `\n  ${accent(">")} `);
+      process.stdout.write(`\n${statusLine()}\n`);
+      const input = await question(rl, `  ${accent(">")} `);
       if (input === null) break;
       const trimmed = input.trim();
       if (!trimmed) continue;
@@ -190,6 +204,7 @@ export async function runRepl(cfg: ReplConfig): Promise<void> {
               activeApiKey = newConfig.apiKey;
               loop = await buildLoop({
                 ...cfg,
+                db: activeDb,
                 model: activeModel,
                 provider: activeProvider,
                 apiKey: activeApiKey,
@@ -200,9 +215,19 @@ export async function runRepl(cfg: ReplConfig): Promise<void> {
             }
           }
           if (result && "newSession" in result && result.newSession) {
-            const session = createSession(cfg.db);
-            setActiveSession(cfg.db, session.id);
+            const session = createSession(activeDb, undefined, activeAgentName);
+            setActiveSession(activeDb, session.id);
             printInfo(muted(`  Fresh session started (${session.id.slice(0, 8)})`));
+          }
+          if (result && "switchSession" in result && result.switchSession) {
+            setActiveSession(activeDb, result.switchSession.sessionId);
+            loop = await buildLoop({
+              ...cfg,
+              db: activeDb,
+              model: activeModel,
+              provider: activeProvider,
+              apiKey: activeApiKey,
+            }, pipeline);
           }
         } catch (e) {
           printError(e instanceof Error ? e.message : String(e));
@@ -210,12 +235,12 @@ export async function runRepl(cfg: ReplConfig): Promise<void> {
         continue;
       }
 
-      await runTurn(loop, cfg.db, trimmed, renderer);
+      await runTurn(loop, activeDb, trimmed, renderer);
     }
   } finally {
     renderer.stop();
     rl.close();
-    await maybeExtractKnowledge(cfg, localGen);
+    await maybeExtractKnowledge({ ...cfg, db: activeDb }, localGen);
     localGen.close();
   }
 }

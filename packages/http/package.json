@@ -1,5 +1,5 @@
 {
-  "name": "@swe/http",
+  "name": "@moneypenny/http",
   "version": "0.1.0",
   "type": "module",
   "main": "src/index.ts",
@@ -10,11 +10,11 @@
     "typecheck": "echo 'skipped: hono+bun-types conflict — runtime-verified'"
   },
   "dependencies": {
-    "@swe/db": "workspace:*",
-    "@swe/search": "workspace:*",
-    "@swe/agents": "workspace:*",
-    "@swe/ctx": "workspace:*",
-    "@swe/cloud": "workspace:*",
+    "@moneypenny/db": "workspace:*",
+    "@moneypenny/search": "workspace:*",
+    "@moneypenny/agents": "workspace:*",
+    "@moneypenny/ctx": "workspace:*",
+    "@moneypenny/cloud": "workspace:*",
     "hono": "^4.7.0",
     "zod": "^3.23.0"
   },

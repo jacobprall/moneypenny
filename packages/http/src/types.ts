@@ -1,4 +1,4 @@
-import type { AgentDB } from "@swe/db";
+import type { AgentDB } from "@moneypenny/db";
 
 export type { AgentDB };
 
@@ -7,7 +7,7 @@ export interface CreateHttpAppOptions {
   getDb: () => AgentDB | null;
   /** API key for on-demand agent runs from HTTP. */
   getApiKey?: () => string | undefined;
-  /** Directory scanned for blueprint agent.md definitions (reload, optional). */
+  /** Directory scanned for agent.md definitions (reload, optional). */
   blueprintsDir?: string;
   /** Directory scanned for policy YAML files (reload, optional). */
   policiesDir?: string;

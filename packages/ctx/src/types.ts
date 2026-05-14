@@ -1,4 +1,4 @@
-import type { AgentDB } from "@swe/db";
+import type { AgentDB } from "@moneypenny/db";
 
 export type MaybePromise<T> = T | Promise<T>;
 

@@ -1,4 +1,4 @@
-import type { ProviderName } from "@swe/loop";
+import type { ProviderName } from "@moneypenny/loop";
 import {
   closeAgentDB,
   closeWorkspaceDB,
@@ -10,22 +10,23 @@ import {
   setActiveSession,
   syncPolicyFiles,
   type Permission,
-} from "@swe/db";
-import { getIndexStatus, indexCodebase } from "@swe/search";
+} from "@moneypenny/db";
+import { getIndexStatus, indexCodebase } from "@moneypenny/search";
 import {
   credentialRedactor,
   dbPolicyHook,
   toolGovernance,
   type GovernanceConfig,
-} from "@swe/ctx";
-import { createToolRegistry, registerBuiltinTools } from "@swe/tools";
+} from "@moneypenny/ctx";
+import { createToolRegistry, registerBuiltinTools } from "@moneypenny/tools";
 import { Command } from "commander";
 import * as path from "node:path";
 
-import { success, Spinner, printBanner, printDebug, printError } from "../display.js";
-import { resolveConfig } from "../config.js";
+import { success, Spinner, printBanner, printDebug, printError, printInfo, muted } from "../display.js";
+import { resolveConfig, readGlobalConfig } from "../config.js";
+import { isThemeName, setTheme } from "../theme.js";
 import { createDefaultPrompt } from "../prompt.js";
-import { openAgent, openWorkspace } from "../session.js";
+import { ensureAgentDefaults, migrateToSingleDb, openAgent, openWorkspace } from "../session.js";
 import { resolveAgentInteractively } from "../pickers.js";
 import { runRepl, runPiped } from "../repl.js";
 
@@ -61,7 +62,7 @@ export const chatCommand = new Command("chat")
   .option("--repo <path>", "Repository path", process.cwd())
   .option("--agent <name>", "Agent name (default: interactive picker)")
   .option("--session <id>", "Resume a specific session ID")
-  .option("--new", "Create new agent with default blueprint + fresh session")
+  .option("--new", "Create new agent with fresh session")
   .option("--model <model>", "Override model")
   .option("--provider <provider>", "LLM provider (anthropic, openai, google)")
   .option("--no-index", "Skip index freshness check")
@@ -80,8 +81,18 @@ export const chatCommand = new Command("chat")
       let db: ReturnType<typeof openAgent> | undefined;
       let workspace: ReturnType<typeof openWorkspace> | undefined;
 
+      const savedTheme = readGlobalConfig("theme");
+      if (savedTheme && isThemeName(savedTheme)) setTheme(savedTheme);
+
       try {
         const repoPath = path.resolve(opts.repo);
+
+        const migration = migrateToSingleDb(repoPath);
+        if (migration.migrated) {
+          printInfo(muted(`  Migrated ${String(migration.agents.length)} agent DB${migration.agents.length === 1 ? "" : "s"} to mp.db (backups in .mp/agents.backup/)`));
+        }
+
+        ensureAgentDefaults(repoPath);
         const config = resolveConfig({
           model: opts.model,
           provider: opts.provider as ProviderName | undefined,
@@ -101,7 +112,7 @@ export const chatCommand = new Command("chat")
         if (resolved.explicitSessionId) {
           setActiveSession(db, resolved.explicitSessionId);
         } else if (resolved.startFreshSession) {
-          const session = createSession(db);
+          const session = createSession(db, undefined, resolved.agentName);
           setActiveSession(db, session.id);
           printDebug(`New session started (${session.id.slice(0, 8)})`);
         } else {
@@ -109,7 +120,7 @@ export const chatCommand = new Command("chat")
           if (existing) {
             setActiveSession(db, existing.id);
           } else {
-            const session = createSession(db);
+            const session = createSession(db, undefined, resolved.agentName);
             setActiveSession(db, session.id);
           }
         }
@@ -150,14 +161,14 @@ export const chatCommand = new Command("chat")
           toolGovernance(governanceConfig),
         ];
 
-        const userSkillsDir = path.join(repoPath, ".swe", "skills");
+        const userSkillsDir = path.join(repoPath, ".mp", "skills");
         const bundledSkillsDir = path.resolve(import.meta.dir, "../../../packages/skills/bundled");
         scanSkillDirs(db, [
           { dir: bundledSkillsDir, source: "builtin" },
           { dir: userSkillsDir, source: "user" },
         ]);
 
-        syncPolicyFiles(db, path.join(repoPath, ".swe", "policies"));
+        syncPolicyFiles(db, path.join(repoPath, ".mp", "policies"));
 
         const prompt = createDefaultPrompt(toolDefs);
 
@@ -165,6 +176,7 @@ export const chatCommand = new Command("chat")
         const replConfig = {
           db,
           repoPath,
+          agentName: resolved.agentName,
           model: config.model,
           provider: config.provider,
           apiKey: config.apiKey,

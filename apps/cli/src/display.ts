@@ -1,45 +1,44 @@
-export const COLORS_ENABLED = !process.env.SWE_NO_COLOR && !process.env.NO_COLOR;
+import { getTheme, type ThemeColors } from "./theme.js";
+
+export const COLORS_ENABLED = !process.env.MP_NO_COLOR && !process.env.NO_COLOR;
 
 const TRUECOLOR =
   COLORS_ENABLED &&
   (process.env.COLORTERM === "truecolor" || process.env.COLORTERM === "24bit");
 
+// ── ANSI helpers ────────────────────────────────────────────────────────
+
 function ansi(code: string): (s: string) => string {
   return (s) => (COLORS_ENABLED ? `\x1b[${code}m${s}\x1b[0m` : s);
 }
 
-function rgb(r: number, g: number, b: number, fallbackCode: string): (s: string) => string {
-  if (!COLORS_ENABLED) return (s) => s;
-  if (TRUECOLOR) return (s) => `\x1b[38;2;${r};${g};${b}m${s}\x1b[0m`;
-  return ansi(fallbackCode);
+function makeColor(key: keyof ThemeColors): (s: string) => string {
+  return (s: string): string => {
+    if (!COLORS_ENABLED) return s;
+    const [r, g, b, fb] = getTheme().colors[key];
+    if (TRUECOLOR) return `\x1b[38;2;${r};${g};${b}m${s}\x1b[0m`;
+    return `\x1b[${fb}m${s}\x1b[0m`;
+  };
 }
 
-// ── Base formatters ──────────────────────────────────────────────────────
+// ── Base formatters (theme-independent) ─────────────────────────────────
 
 export const dim = ansi("2");
 export const bold = ansi("1");
 export const italic = ansi("3");
 
-// ── Palette ─────────────────────────────────────────────────────────────
+// ── Palette (reads from active theme) ───────────────────────────────────
 
-export const accent = rgb(94, 214, 148, "32");
-export const data = rgb(130, 190, 230, "36");
-export const success = rgb(72, 199, 142, "32");
-export const error = rgb(235, 87, 87, "31");
-export const warning = rgb(240, 185, 80, "33");
-export const chrome = rgb(108, 118, 128, "2");
+export const accent = makeColor("accent");
+export const data = makeColor("data");
+export const success = makeColor("success");
+export const error = makeColor("error");
+export const warning = makeColor("warning");
+export const chrome = makeColor("chrome");
 
 export const muted = chrome;
 
-// ── Layout helpers ──────────────────────────────────────────────────────
-
-function rule(width = 40): string {
-  return chrome("─".repeat(width));
-}
-
-// ── Spinner ──────────────────────────────────────────────────────────────
-
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+// ── Spinner ─────────────────────────────────────────────────────────────
 
 export class Spinner {
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -63,12 +62,13 @@ export class Spinner {
   }
 
   private render(text: string): void {
-    const frame = SPINNER_FRAMES[this.frameIdx % SPINNER_FRAMES.length]!;
+    const t = getTheme();
+    const frame = t.spinner[this.frameIdx % t.spinner.length]!;
     process.stdout.write(`\r\x1b[2K  ${accent(frame)} ${chrome(text)}`);
   }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────
+// ── Helpers ─────────────────────────────────────────────────────────────
 
 export function shortenPath(p: string): string {
   const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
@@ -76,7 +76,7 @@ export function shortenPath(p: string): string {
   return p;
 }
 
-function humanTokens(n: number): string {
+export function humanTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return String(n);
@@ -87,7 +87,7 @@ function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-// ── Tool output ──────────────────────────────────────────────────────────
+// ── Tool output ─────────────────────────────────────────────────────────
 
 function toolSummary(input: unknown): string {
   if (typeof input !== "object" || input === null) return String(input);
@@ -98,11 +98,13 @@ function toolSummary(input: unknown): string {
 }
 
 export function printToolStart(name: string, input: unknown): void {
+  const t = getTheme();
   const summary = toolSummary(input);
-  process.stdout.write(`  ${accent("▸")} ${accent(name)}  ${chrome(summary)}\n`);
+  process.stdout.write(`  ${accent(t.toolMarker)} ${accent(name)}  ${chrome(summary)}\n`);
 }
 
 export function printToolComplete(_name: string, output: string, durationMs: number): void {
+  const t = getTheme();
   const isFileOp = /^file_(edit|write|patch)$/.test(_name);
   const lines = output.split("\n");
 
@@ -111,37 +113,39 @@ export function printToolComplete(_name: string, output: string, durationMs: num
   } else {
     const maxShow = 5;
     for (const line of lines.slice(0, maxShow)) {
-      process.stdout.write(`    ${chrome("│")} ${line}\n`);
+      process.stdout.write(`    ${chrome(t.pipe)} ${line}\n`);
     }
     if (lines.length > maxShow) {
       process.stdout.write(
-        `    ${chrome("│")} ${chrome(`… ${String(lines.length - maxShow)} more lines`)}\n`,
+        `    ${chrome(t.pipe)} ${chrome(`… ${String(lines.length - maxShow)} more lines`)}\n`,
       );
     }
   }
 
-  process.stdout.write(`    ${chrome("╰")} ${data(formatDuration(durationMs))}\n\n`);
+  process.stdout.write(`    ${chrome(t.corner)} ${data(formatDuration(durationMs))}\n\n`);
 }
 
 function printDiffLines(lines: string[]): void {
+  const t = getTheme();
   for (const line of lines) {
     if (line.startsWith("+")) {
-      process.stdout.write(`    ${chrome("│")} ${success(line)}\n`);
+      process.stdout.write(`    ${chrome(t.pipe)} ${success(line)}\n`);
     } else if (line.startsWith("-")) {
-      process.stdout.write(`    ${chrome("│")} ${error(line)}\n`);
+      process.stdout.write(`    ${chrome(t.pipe)} ${error(line)}\n`);
     } else if (line.startsWith("@@")) {
-      process.stdout.write(`    ${chrome("│")} ${chrome(line)}\n`);
+      process.stdout.write(`    ${chrome(t.pipe)} ${chrome(line)}\n`);
     } else {
-      process.stdout.write(`    ${chrome("│")} ${line}\n`);
+      process.stdout.write(`    ${chrome(t.pipe)} ${line}\n`);
     }
   }
 }
 
 export function printToolError(_name: string, err: string): void {
-  process.stdout.write(`    ${chrome("╰")} ${error("error")} ${err}\n\n`);
+  const t = getTheme();
+  process.stdout.write(`    ${chrome(t.corner)} ${error("error")} ${err}\n\n`);
 }
 
-// ── Cost / turn footer ──────────────────────────────────────────────────
+// ── Cost / turn footer ─────────────────────────────────────────────────
 
 export function printCost(cost: {
   model: string;
@@ -150,27 +154,35 @@ export function printCost(cost: {
   costUsd: number;
   turnNumber: number;
 }): void {
+  const t = getTheme();
   const sep = chrome("·");
+
+  const tokenPart = t.costTokenFormat === "compact"
+    ? `${humanTokens(cost.inputTokens)}${chrome("→")}${humanTokens(cost.outputTokens)}`
+    : `${humanTokens(cost.inputTokens)} in ${sep} ${humanTokens(cost.outputTokens)} out`;
+
   const parts = [
-    chrome(`turn ${String(cost.turnNumber)}`),
-    `${humanTokens(cost.inputTokens)} in`,
-    `${humanTokens(cost.outputTokens)} out`,
+    chrome(`${t.turnLabel} ${String(cost.turnNumber)}`),
+    tokenPart,
     `$${cost.costUsd.toFixed(4)}`,
     chrome(cost.model),
   ];
   process.stdout.write(`\n  ${chrome(parts.join(` ${sep} `))}\n`);
 }
 
-// ── Turn separator ──────────────────────────────────────────────────────
+// ── Turn separator ─────────────────────────────────────────────────────
 
 export function printTurnSeparator(): void {
-  process.stdout.write(`\n  ${rule(44)}\n`);
+  const t = getTheme();
+  const width = Math.ceil(44 / t.separator.length);
+  process.stdout.write(`\n  ${chrome(t.separator.repeat(width).slice(0, 44))}\n`);
 }
 
-// ── Standard messages ────────────────────────────────────────────────────
+// ── Standard messages ──────────────────────────────────────────────────
 
 export function printError(msg: string): void {
-  process.stderr.write(`  ${error("[ERR]")} ${msg}\n`);
+  const t = getTheme();
+  process.stderr.write(`  ${error(t.errorTag)} ${msg}\n`);
 }
 
 export function printInfo(msg: string): void {
@@ -178,16 +190,17 @@ export function printInfo(msg: string): void {
 }
 
 export function printWarn(msg: string): void {
-  process.stderr.write(`  ${warning("[!!]")} ${msg}\n`);
+  const t = getTheme();
+  process.stderr.write(`  ${warning(t.warnTag)} ${msg}\n`);
 }
 
 export function printDebug(msg: string): void {
-  if (process.env.SWE_VERBOSE === "1" || process.env.DEBUG) {
+  if (process.env.MP_VERBOSE === "1" || process.env.DEBUG) {
     process.stderr.write(`  ${chrome("[dbg]")} ${chrome(msg)}\n`);
   }
 }
 
-// ── Banner ──────────────────────────────────────────────────────────────
+// ── Banner ─────────────────────────────────────────────────────────────
 
 export function printBanner(opts: {
   version: string;
@@ -196,22 +209,58 @@ export function printBanner(opts: {
   provider?: string;
   repoPath: string;
 }): void {
+  const t = getTheme();
   const repo = shortenPath(opts.repoPath);
+  const sep = chrome("·");
 
   const modelDisplay = opts.provider && opts.provider !== "anthropic"
     ? `${opts.model} ${chrome(`(${opts.provider})`)}`
     : opts.model;
 
-  const sep = chrome("·");
-
   process.stdout.write("\n");
-  process.stdout.write(`  ${bold(accent("swe"))} ${chrome(`v${opts.version}`)}\n`);
-  process.stdout.write(`  ${modelDisplay} ${sep} ${repo} ${sep} ${chrome(opts.session)}\n`);
-  process.stdout.write(`  ${chrome("/help for commands")} ${sep} ${chrome("/exit to quit")}\n`);
+
+  if (t.id === "phosphor") {
+    const modelRaw = opts.provider && opts.provider !== "anthropic"
+      ? `${opts.model} (${opts.provider})`
+      : opts.model;
+    const contentWidths = [
+      9 + modelRaw.length,
+      9 + repo.length,
+      9 + opts.session.length,
+      30 + opts.version.length,
+    ];
+    const W = Math.max(48, Math.max(...contentWidths) + 6);
+
+    const pad = (s: string, raw: number): string => s + " ".repeat(Math.max(0, W - 4 - raw));
+    const bc = t.boxChar;
+    const top = chrome(`  ┌${bc.repeat(W - 2)}┐`);
+    const bot = chrome(`  └${bc.repeat(W - 2)}┘`);
+    const row = (content: string, rawLen: number): string =>
+      `  ${chrome("│")} ${pad(content, rawLen)} ${chrome("│")}`;
+
+    process.stdout.write(top + "\n");
+    const title = `MONEYPENNY v${opts.version}`;
+    const tag = "TERMINAL ACTIVE";
+    const titleRow = `${accent(title)}${" ".repeat(Math.max(1, W - 4 - title.length - tag.length))}${chrome(tag)}`;
+    process.stdout.write(row(titleRow, W - 4) + "\n");
+    process.stdout.write(row(`${chrome("MODEL:")}   ${modelDisplay}`, 9 + modelRaw.length) + "\n");
+    process.stdout.write(row(`${chrome("PATH:")}    ${repo}`, 9 + repo.length) + "\n");
+    process.stdout.write(row(`${chrome("SESSION:")} ${opts.session}`, 9 + opts.session.length) + "\n");
+    process.stdout.write(bot + "\n");
+  } else if (t.id === "arcade") {
+    const title = " M  O  N  E  Y  P  E  N  N  Y ";
+    process.stdout.write(`  ${chrome("░▒▓")}${accent(title)}${chrome("▓▒░")}  ${chrome(`v${opts.version}`)}\n`);
+    process.stdout.write(`  ${modelDisplay} ${sep} ${repo}\n`);
+  } else {
+    process.stdout.write(`  ${bold(accent("moneypenny"))} ${chrome(`v${opts.version}`)}\n`);
+    process.stdout.write(`  ${modelDisplay} ${sep} ${repo} ${sep} ${chrome(opts.session)}\n`);
+    process.stdout.write(`  ${chrome("/help for commands")} ${sep} ${chrome("/exit to quit")}\n`);
+  }
+
   process.stdout.write("\n");
 }
 
-// ── Help ─────────────────────────────────────────────────────────────────
+// ── Help ────────────────────────────────────────────────────────────────
 
 export function printHelp(): void {
   const cmd = (name: string, args: string, desc: string): string => {
@@ -223,16 +272,15 @@ export function printHelp(): void {
 
   process.stdout.write("\n");
   process.stdout.write(`  ${bold("Commands")}\n\n`);
-  process.stdout.write(cmd("/compact", "[msg]", "Compact conversation history") + "\n");
-  process.stdout.write(cmd("/fresh", "", "Start a fresh session") + "\n");
-  process.stdout.write(cmd("/sessions", "", "List sessions") + "\n");
-  process.stdout.write(cmd("/agents", "", "List agents in this repo") + "\n");
+  process.stdout.write(cmd("/model", "[name|#]", "List or switch models") + "\n");
+  process.stdout.write(cmd("/theme", "[name]", "Switch visual theme") + "\n");
+  process.stdout.write(cmd("/agent", "[name|#]", "List or switch agents") + "\n");
+  process.stdout.write(cmd("/session", "[#|new]", "List, switch, or start sessions") + "\n");
   process.stdout.write(cmd("/search", "<q>", "Search the codebase") + "\n");
   process.stdout.write(cmd("/index", "", "Rebuild the code index") + "\n");
-  process.stdout.write(cmd("/model", "[id]", "List or switch models") + "\n");
+  process.stdout.write(cmd("/compact", "[msg]", "Compact conversation history") + "\n");
   process.stdout.write("\n");
-  process.stdout.write(cmd("/cost", "", "Session cost & tokens") + "\n");
-  process.stdout.write(cmd("/status", "", "Index and session status") + "\n");
+  process.stdout.write(cmd("/summary", "", "Turns, tokens, cost, index") + "\n");
   process.stdout.write(cmd("/help", "", "Show this help") + "\n");
   process.stdout.write(cmd("/exit", "", "End session") + "\n");
   process.stdout.write("\n");

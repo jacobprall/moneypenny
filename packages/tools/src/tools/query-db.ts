@@ -55,14 +55,14 @@ const SCHEMA_DESCRIPTION = `Run a read-only SELECT against the agent SQLite data
   created_at   INT         -- unix ms
 
 ## config — key-value settings
-  key          TEXT PK     -- e.g. 'system_instructions', 'blueprint_name'
+  key          TEXT PK     -- e.g. 'system_instructions', 'agent_name'
   value        TEXT
 
 ## skills — agent capabilities loaded from disk or learned
   name         TEXT PK
   description  TEXT
   instructions TEXT        -- full skill body (markdown)
-  source       TEXT        -- 'builtin' | 'blueprint' | 'user' | 'learned'
+  source       TEXT        -- 'builtin' | 'agent' | 'user' | 'learned'
   created_at   INT         -- unix ms
 
 ## policies — governance rules controlling tool access

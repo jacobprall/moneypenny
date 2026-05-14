@@ -31,7 +31,7 @@ const TEXTGEN_MODEL_FILE = "qwen2.5-0.5b-instruct-q4_k_m.gguf";
 
 export function defaultTextGenModelPath(): string {
   const home = process.env.HOME ?? process.env.USERPROFILE ?? "~";
-  return path.join(home, ".swe", "models", TEXTGEN_MODEL_FILE);
+  return path.join(home, ".mp", "models", TEXTGEN_MODEL_FILE);
 }
 
 function tryLoadAIExtension(database: Database): boolean {

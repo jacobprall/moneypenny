@@ -1,20 +1,20 @@
 import { Command } from "commander";
 import * as path from "node:path";
-import { createAgentDB, closeAgentDB, closeWorkspaceDB, DEFAULT_BLUEPRINT, syncPolicyFiles } from "@swe/db";
-import { createHttpApp } from "@swe/http";
-import { scan, startScheduler } from "@swe/agents";
-import { startBackgroundSync, initSyncTables } from "@swe/cloud";
+import { createAgentDB, closeAgentDB, closeWorkspaceDB, DEFAULT_BLUEPRINT, syncPolicyFiles } from "@moneypenny/db";
+import { createHttpApp } from "@moneypenny/http";
+import { scan, startScheduler } from "@moneypenny/agents";
+import { startBackgroundSync, initSyncTables } from "@moneypenny/cloud";
 import { getBlueprintsDir, getDbPath, openWorkspace } from "../session";
 
 export const serveCommand = new Command("serve")
   .description("Run HTTP API + scheduler + background sync")
   .option("--repo <path>", "Repository path", process.cwd())
   .option("--port <n>", "HTTP port", "3123")
-  .option("--session <id>", "Agent DB name", "default")
+  .option("--session <id>", "Agent DB name (ignored, uses mp.db)", "default")
   .action(async (opts: { repo: string; port: string; session: string }) => {
     const repoPath = path.resolve(opts.repo);
     const workspace = openWorkspace(repoPath);
-    const dbPath = getDbPath(repoPath, opts.session);
+    const dbPath = getDbPath(repoPath);
     const agentDb = createAgentDB(dbPath, {
       repoPath,
       workspace,
@@ -22,7 +22,7 @@ export const serveCommand = new Command("serve")
     });
     const blueprintsDir = getBlueprintsDir(repoPath);
     scan({ db: agentDb.db, blueprintsDir });
-    syncPolicyFiles(agentDb, path.join(repoPath, ".swe", "policies"));
+    syncPolicyFiles(agentDb, path.join(repoPath, ".mp", "policies"));
     try {
       initSyncTables(agentDb.db);
     } catch (e) {
@@ -33,7 +33,7 @@ export const serveCommand = new Command("serve")
     const stopSync = startBackgroundSync(agentDb.db);
 
     const port = parseInt(opts.port, 10) || 3123;
-    const policiesDir = path.join(repoPath, ".swe", "policies");
+    const policiesDir = path.join(repoPath, ".mp", "policies");
     const app = createHttpApp({
       getDb: () => agentDb,
       getApiKey: () => process.env.ANTHROPIC_API_KEY,
@@ -48,7 +48,7 @@ export const serveCommand = new Command("serve")
       hostname: "127.0.0.1",
     });
 
-    process.stderr.write(`swe HTTP listening on http://localhost:${String(server.port)}\n`);
+    process.stderr.write(`mp HTTP listening on http://localhost:${String(server.port)}\n`);
 
     const onStop = (): void => {
       stopSched();

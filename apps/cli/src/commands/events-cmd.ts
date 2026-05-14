@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import * as path from "node:path";
-import { closeAgentDB, closeWorkspaceDB, getEvents } from "@swe/db";
+import { closeAgentDB, closeWorkspaceDB, getEvents } from "@moneypenny/db";
 import { openSession, openWorkspace } from "../session";
 import { printError } from "../display";
 

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
-import { appendEvent, getEvents } from "@swe/db";
+import { appendEvent, getEvents } from "@moneypenny/db";
 import { createRequireDbMiddleware, zodErrorMessage, type HttpVars } from "../middleware.js";
 import type { CreateHttpAppOptions } from "../types.js";
 

@@ -5,7 +5,7 @@ import { sqlError } from "./errors";
 import type { WorkspaceDB } from "./types";
 import { WORKSPACE_SCHEMA_SQL, WORKSPACE_SCHEMA_VERSION, WORKSPACE_MIGRATIONS } from "./schema";
 import { DEFAULT_EXCLUDE_PATTERNS } from "./blueprint";
-import { languageFromExt, sha256Hex, chunkFileContent } from "@swe/search/chunker";
+import { languageFromExt, sha256Hex, chunkFileContent } from "@moneypenny/search/chunker";
 import { ensureCustomSQLite } from "./sqlite-init";
 
 ensureCustomSQLite();
@@ -95,13 +95,13 @@ function tryLoadExtensionsFromPath(database: Database, modelPath: string): boole
 
 /**
  * Open or create the shared workspace index database.
- * Stored at `<workspacePath>/.swe/workspace.sqlite`.
+ * Stored at `<workspacePath>/.mp/workspace.sqlite`.
  */
 export function createWorkspaceDB(
   workspacePath: string,
   opts?: { modelPath?: string },
 ): WorkspaceDB {
-  const mpDir = join(workspacePath, ".swe");
+  const mpDir = join(workspacePath, ".mp");
   if (!existsSync(mpDir)) {
     mkdirSync(mpDir, { recursive: true });
   }

@@ -1,4 +1,4 @@
-import type { AgentDB } from "@swe/db";
+import type { AgentDB } from "@moneypenny/db";
 import { formatConversation, normalizeToBlocks } from "./format.js";
 import type {
   ContentBlock,

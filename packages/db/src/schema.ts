@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 export const WORKSPACE_SCHEMA_VERSION = 1;
 
 export interface Migration {
@@ -209,6 +209,12 @@ ALTER TABLE policies ADD COLUMN file_path TEXT;
 ALTER TABLE policies ADD COLUMN checksum TEXT;
 `,
   },
+  {
+    version: 9,
+    sql: `
+ALTER TABLE sessions ADD COLUMN agent_name TEXT DEFAULT 'default';
+`,
+  },
 ];
 
 export const WORKSPACE_MIGRATIONS: Migration[] = [];
@@ -298,6 +304,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   label TEXT,
+  agent_name TEXT DEFAULT 'default',
   created_at INTEGER NOT NULL,
   last_active_at INTEGER NOT NULL,
   is_active INTEGER NOT NULL DEFAULT 1

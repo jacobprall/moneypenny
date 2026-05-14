@@ -1,6 +1,6 @@
 /**
- * Blueprint loader — scans `blueprintsDir` for directory-defined agent
- * blueprints, parses `agent.md` frontmatter + body, validates, and upserts
+ * Agent loader — scans `blueprintsDir` for directory-defined agent
+ * definitions, parses `agent.md` frontmatter + body, validates, and upserts
  * an `agents` row.
  */
 

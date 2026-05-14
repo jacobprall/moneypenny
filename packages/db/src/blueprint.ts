@@ -1,4 +1,4 @@
-import type { AgentBlueprint, AgentDB, Permission, ToolDef } from "./types";
+import type { AgentBlueprint, AgentDef, AgentDB, Permission, ToolDef } from "./types";
 import { sqlError } from "./errors";
 import { generateUUIDv7 } from "./uuid";
 import { DEFAULT_SKILLS, DEFAULT_SUBAGENT_DEFS } from "./default-skills";
@@ -7,7 +7,7 @@ export const DEFAULT_EXCLUDE_PATTERNS: string[] = [
   "**/node_modules/**",
   "**/vendor/**",
   "**/.git/**",
-  "**/.swe/**",
+  "**/.mp/**",
   "**/dist/**",
   "**/build/**",
   "**/out/**",
@@ -56,7 +56,7 @@ const defaultTool = (name: string, description: string, inputSchema: Record<stri
 });
 
 export const DEFAULT_BLUEPRINT: AgentBlueprint = {
-  name: "swe-default",
+  name: "mp-default",
   description: "General-purpose coding assistant",
   tools: [
     defaultTool("read_file", "Read file contents at a path.", {
@@ -264,3 +264,106 @@ export function getPermissions(db: AgentDB): Permission[] {
     throw sqlError("getPermissions", e);
   }
 }
+
+// ── New agent definition helpers ────────────────────────────────────────
+
+/** Alias for DEFAULT_BLUEPRINT — the canonical name going forward. */
+export const DEFAULT_AGENT_DEF: AgentDef = DEFAULT_BLUEPRINT;
+
+/**
+ * Parse flat permission keys (deny_paths, deny_tools, allow_paths) into
+ * the internal Permission[] format.
+ */
+export function parseFlatPermissions(data: Record<string, unknown>): Permission[] {
+  const perms: Permission[] = [];
+  const add = (type: Permission["type"], patterns: unknown) => {
+    if (!Array.isArray(patterns)) return;
+    for (const p of patterns) {
+      if (typeof p === "string") {
+        perms.push({ id: `${type}:${p}`, type, pattern: p });
+      }
+    }
+  };
+  add("path_deny", data.deny_paths);
+  add("path_allow", data.allow_paths);
+  add("tool_deny", data.deny_tools);
+  add("tool_allow", data.allow_tools);
+  return perms;
+}
+
+/** Content for the auto-generated `.mp/agents/default.md`. */
+export const DEFAULT_AGENT_MD = `---
+name: default
+description: General-purpose coding assistant
+tools:
+  - read_file
+  - write_file
+  - list_dir
+  - grep
+  - run_terminal_cmd
+max_turns: 64
+---
+
+You are a skilled software engineer. Help the user with coding tasks
+including writing, debugging, refactoring, and explaining code. Use the
+available tools to read files, search the codebase, and make changes.
+
+Be concise. Prefer showing code over explaining it. When making changes,
+always read the relevant file first to understand context.
+`;
+
+/** Content for the auto-generated `.mp/agents/_global.yaml`. */
+export const DEFAULT_GLOBAL_YAML = `# .mp/agents/_global.yaml
+# Repo-wide defaults applied to all agents.
+
+# Paths the agent cannot read or write (glob patterns)
+deny_paths:
+  - "**/.git/**"
+  - "**/node_modules/**"
+
+# Tools the agent cannot use (exact name or glob)
+# deny_tools:
+#   - "run_terminal_cmd"
+
+# If set, ONLY these paths are accessible (allowlist mode)
+# allow_paths:
+#   - "src/**"
+
+# Files to skip during indexing and search (glob patterns)
+exclude_patterns:
+  - "**/node_modules/**"
+  - "**/.git/**"
+  - "**/.mp/**"
+  - "**/dist/**"
+  - "**/build/**"
+  - "**/out/**"
+  - "**/.next/**"
+  - "**/target/**"
+  - "**/coverage/**"
+  - "**/__pycache__/**"
+  - "**/.venv/**"
+  - "**/venv/**"
+  - "**/*.lock"
+  - "**/package-lock.json"
+  - "**/*.min.js"
+  - "**/*.min.css"
+  - "**/*.map"
+  - "**/*.png"
+  - "**/*.jpg"
+  - "**/*.gif"
+  - "**/*.ico"
+  - "**/*.pdf"
+  - "**/*.zip"
+  - "**/*.wasm"
+
+# Default turn limit (agents can override)
+max_turns: 64
+
+# Default model (agents can override)
+# model: claude-sonnet-4-6
+
+# Knowledge extraction after sessions
+extraction:
+  enabled: true
+  # model: claude-haiku
+`;

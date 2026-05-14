@@ -6,7 +6,7 @@
  * Prefers local gen (zero-cost) with cloud Anthropic as fallback.
  */
 
-import type { AgentDB, Skill, LocalGen } from "@swe/db";
+import type { AgentDB, Skill, LocalGen } from "@moneypenny/db";
 import { upsertSkill, listSkills } from "./skills.js";
 
 const MIN_TURNS_FOR_EXTRACTION = 3;

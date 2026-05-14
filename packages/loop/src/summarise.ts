@@ -1,4 +1,4 @@
-import type { LocalGen } from "@swe/db";
+import type { LocalGen } from "@moneypenny/db";
 import { createProvider, type ProviderName } from "./provider.js";
 
 export interface SummariseConfig {
@@ -14,7 +14,12 @@ export interface MessagePair {
 }
 
 const SYSTEM_PROMPT =
-  "You are a session labeller. Reply with ONLY a short title (max 60 chars, no quotes, no punctuation at the end) that describes what the conversation is about. Do not explain your answer.";
+  "Generate a concise session label (max 50 chars). " +
+  "Focus on the specific task, not the category — e.g. " +
+  '"Fix auth token refresh bug" not "Authentication Issue", ' +
+  '"Add Redis caching to /users" not "Database Query Results". ' +
+  "Use verb phrases when possible. " +
+  "Reply with ONLY the label — no quotes, no trailing punctuation, no explanation.";
 
 function buildLocalPrompt(pair: MessagePair): string {
   return `<|im_start|>system
@@ -30,7 +35,7 @@ function cleanLabel(raw: string): string | null {
   let label = raw.trim().replace(/^["']|["']$/g, "").trim();
   label = label.split("\n")[0]?.trim() ?? "";
   if (label.length === 0) return null;
-  return label.slice(0, 60);
+  return label.slice(0, 50);
 }
 
 /**

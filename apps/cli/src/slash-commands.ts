@@ -1,16 +1,16 @@
-import { inferProvider, type ProviderName } from "@swe/loop";
+import { inferProvider, type ProviderName } from "@moneypenny/loop";
 import {
   compactConversation,
-  createSession,
   getCurrentTurn,
   getSessionMetrics,
   listSessions,
-  setActiveSession,
   type AgentDB,
-} from "@swe/db";
-import { getIndexStatus, hybridSearch, indexCodebase } from "@swe/search";
+} from "@moneypenny/db";
+import { getIndexStatus, hybridSearch, indexCodebase } from "@moneypenny/search";
 import {
   accent,
+  bold,
+  humanTokens,
   muted,
   success,
   Spinner,
@@ -18,9 +18,10 @@ import {
   printHelp,
   printInfo,
 } from "./display.js";
-import { availableProviders, resolveConfig } from "./config.js";
-import { listAgents, type AgentInfo } from "./session.js";
+import { availableProviders, writeGlobalConfigKey } from "./config.js";
+import { listAgentDefs } from "./session.js";
 import { timeAgo } from "./pickers.js";
+import { getTheme, setTheme, isThemeName, THEME_NAMES, THEMES } from "./theme.js";
 
 interface ModelEntry {
   id: string;
@@ -50,6 +51,7 @@ export interface SlashContext {
 
 export type SlashResult =
   | { switchModel: { model: string; provider: ProviderName } }
+  | { switchSession: { sessionId: string } }
   | { newSession: true }
   | void;
 
@@ -79,35 +81,13 @@ export async function handleSlashCommand(
     case "fresh": {
       return { newSession: true };
     }
-    case "sessions": {
-      const sessions = listSessions(db);
-      if (sessions.length === 0) {
-        printInfo("  No sessions yet.");
-        break;
-      }
-      process.stdout.write("\n");
-      for (const s of sessions) {
-        const label = s.label ?? "(unlabeled)";
-        const active = s.id === db.activeSessionId ? accent(" \u2190") : "";
-        const info = `${String(s.turns)} turns ${muted("\u00b7")} $${s.costUsd.toFixed(2)} ${muted("\u00b7")} ${timeAgo(s.lastActiveAt)}`;
-        process.stdout.write(`  ${label}  ${info}${active}\n`);
-      }
-      process.stdout.write("\n");
-      break;
+    case "sessions":
+    case "session": {
+      return handleSessionCommand(db, argRest);
     }
-    case "agents": {
-      const agents = listAgents(repoPath);
-      if (agents.length === 0) {
-        printInfo("  No agents.");
-        break;
-      }
-      process.stdout.write("\n");
-      for (const a of agents) {
-        const bpLabel = a.blueprintDescription ?? a.blueprintName ?? "unknown";
-        process.stdout.write(`  ${a.name}  ${muted(bpLabel)}\n`);
-      }
-      process.stdout.write("\n");
-      break;
+    case "agents":
+    case "agent": {
+      return handleAgentCommand(repoPath, db, argRest);
     }
     case "search": {
       const q = argRest;
@@ -142,27 +122,27 @@ export async function handleSlashCommand(
       );
       break;
     }
-    case "cost": {
-      const m = getSessionMetrics(db);
-      const parts = [
-        `${String(m.totalTurns)} turns`,
-        `${String(m.totalInputTokens)} in`,
-        `${String(m.totalOutputTokens)} out`,
-        `${String(m.totalToolCalls)} tools`,
-        `$${m.totalCostUsd.toFixed(4)}`,
-      ];
-      printInfo(`  ${parts.join(` ${muted("\u00b7")} `)}`);
-      break;
-    }
+    case "summary":
+    case "cost":
     case "status": {
       const st = getIndexStatus(db);
       const m = getSessionMetrics(db);
-      printInfo(`  ${muted("index")}    ${String(st.totalFiles)} files, ${String(st.totalChunks)} chunks`);
-      printInfo(`  ${muted("session")}  ${String(m.totalTurns)} turns, $${m.totalCostUsd.toFixed(4)}`);
+      const sep = muted("·");
+      process.stdout.write("\n");
+      process.stdout.write(`    ${muted("turns")}    ${String(m.totalTurns)}\n`);
+      process.stdout.write(`    ${muted("in")}       ${humanTokens(m.totalInputTokens)} tokens\n`);
+      process.stdout.write(`    ${muted("out")}      ${humanTokens(m.totalOutputTokens)} tokens\n`);
+      process.stdout.write(`    ${muted("tools")}    ${String(m.totalToolCalls)} calls\n`);
+      process.stdout.write(`    ${muted("cost")}     $${m.totalCostUsd.toFixed(4)}\n`);
+      process.stdout.write(`    ${muted("index")}    ${String(st.totalFiles)} files ${sep} ${String(st.totalChunks)} chunks\n`);
+      process.stdout.write("\n");
       break;
     }
     case "model": {
       return handleModelCommand(argRest);
+    }
+    case "theme": {
+      return handleThemeCommand(argRest);
     }
     default:
       printError(`Unknown command /${cmd}. Type /help.`);
@@ -174,12 +154,28 @@ function handleModelCommand(
   argRest: string,
 ): { switchModel: { model: string; provider: ProviderName } } | void {
   const available = availableProviders();
+  const filtered = MODEL_CATALOG.filter((m) => available.includes(m.provider));
 
   if (argRest) {
+    if (/^\d+$/.test(argRest)) {
+      const num = parseInt(argRest, 10);
+      if (filtered.length === 0) {
+        printError("No API keys configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY.");
+        return;
+      }
+      if (num < 1 || num > filtered.length) {
+        printError(`Invalid model number. Choose 1\u2013${String(filtered.length)}. Type /model to see the list.`);
+        return;
+      }
+      const picked = filtered[num - 1]!;
+      printInfo(`  Switching to ${accent(picked.label)} ${muted(`(${picked.id})`)}`);
+      return { switchModel: { model: picked.id, provider: picked.provider } };
+    }
+
     const exact = MODEL_CATALOG.find((m) => m.id === argRest || m.label.toLowerCase() === argRest.toLowerCase());
     if (exact) {
       if (!available.includes(exact.provider)) {
-        printError(`No API key configured for ${exact.provider}. Run \`swe config set ${exact.provider}_api_key <key>\``);
+        printError(`No API key configured for ${exact.provider}. Run \`mp config set ${exact.provider}_api_key <key>\``);
         return;
       }
       printInfo(`  Switching to ${accent(exact.label)} ${muted(`(${exact.id})`)}`);
@@ -195,7 +191,6 @@ function handleModelCommand(
     return { switchModel: { model: argRest, provider: inferred } };
   }
 
-  const filtered = MODEL_CATALOG.filter((m) => available.includes(m.provider));
   if (filtered.length === 0) {
     printError("No API keys configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY.");
     return;
@@ -207,9 +202,112 @@ function handleModelCommand(
     const entry = filtered[i]!;
     if (entry.provider !== currentProvider) {
       currentProvider = entry.provider;
-      process.stdout.write(`  ${accent(currentProvider)}\n`);
+      process.stdout.write(`  ${bold(currentProvider)}\n`);
     }
     process.stdout.write(`    ${muted(String(i + 1) + ".")} ${entry.label} ${muted(`(${entry.id})`)}\n`);
   }
-  process.stdout.write(`\n  ${muted("Usage: /model <name|number>")}\n\n`);
+  process.stdout.write(`\n  ${muted("/model <name|#> to switch")}\n\n`);
+}
+
+// ── /theme ──────────────────────────────────────────────────────────────
+
+function handleThemeCommand(argRest: string): void {
+  if (argRest) {
+    const name = argRest.toLowerCase();
+    if (!isThemeName(name)) {
+      printError(`Unknown theme "${argRest}". Options: ${THEME_NAMES.join(", ")}`);
+      return;
+    }
+    setTheme(name);
+    writeGlobalConfigKey("theme", name);
+    printInfo(`  Switched to ${accent(THEMES[name]!.label)} theme`);
+    return;
+  }
+
+  const current = getTheme();
+  process.stdout.write("\n");
+  for (const name of THEME_NAMES) {
+    const t = THEMES[name];
+    const marker = t.id === current.id ? accent("●") : muted("○");
+    process.stdout.write(`    ${marker} ${t.label}${t.id === current.id ? muted(" (active)") : ""}\n`);
+  }
+  process.stdout.write(`\n  ${muted("/theme <name> to switch")}\n\n`);
+}
+
+// ── /session ─────────────────────────────────────────────────────────────
+
+function handleSessionCommand(
+  db: AgentDB,
+  argRest: string,
+): SlashResult {
+  const sessions = listSessions(db);
+
+  if (argRest === "new" || argRest === "fresh") {
+    return { newSession: true };
+  }
+
+  if (argRest) {
+    const num = parseInt(argRest, 10);
+    if (!isNaN(num) && num >= 1 && num <= sessions.length) {
+      const picked = sessions[num - 1]!;
+      const label = picked.label ?? picked.id.slice(0, 8);
+      printInfo(`  Switching to session ${accent(label)}`);
+      return { switchSession: { sessionId: picked.id } };
+    }
+
+    const byId = sessions.find((s) => s.id.startsWith(argRest));
+    if (byId) {
+      const label = byId.label ?? byId.id.slice(0, 8);
+      printInfo(`  Switching to session ${accent(label)}`);
+      return { switchSession: { sessionId: byId.id } };
+    }
+
+    const byLabel = sessions.find((s) => s.label?.toLowerCase() === argRest.toLowerCase());
+    if (byLabel) {
+      printInfo(`  Switching to session ${accent(byLabel.label!)}`);
+      return { switchSession: { sessionId: byLabel.id } };
+    }
+
+    printError(`No session matching "${argRest}". Use /session to list.`);
+    return;
+  }
+
+  if (sessions.length === 0) {
+    printInfo("  No sessions yet.");
+    return;
+  }
+
+  process.stdout.write("\n");
+  for (let i = 0; i < sessions.length; i++) {
+    const s = sessions[i]!;
+    const label = s.label ?? muted("(unlabeled)");
+    const active = s.id === db.activeSessionId ? accent(" ←") : "";
+    const sep = muted("·");
+    const info = `${String(s.turns)} turns ${sep} $${s.costUsd.toFixed(2)} ${sep} ${timeAgo(s.lastActiveAt)}`;
+    process.stdout.write(`    ${muted(String(i + 1) + ".")} ${label}  ${info}${active}\n`);
+  }
+  process.stdout.write(`\n  ${muted("/session <#|id> to switch · /session new to start fresh")}\n\n`);
+}
+
+// ── /agent ───────────────────────────────────────────────────────────────
+
+function handleAgentCommand(
+  repoPath: string,
+  _db: AgentDB,
+  _argRest: string,
+): SlashResult {
+  const defs = listAgentDefs(repoPath);
+
+  if (defs.length === 0) {
+    printInfo("  No agent definitions found. Create .mp/agents/default.md to get started.");
+    return;
+  }
+
+  process.stdout.write("\n");
+  for (let i = 0; i < defs.length; i++) {
+    const d = defs[i]!;
+    const desc = d.description ? muted(d.description) : "";
+    process.stdout.write(`    ${muted(String(i + 1) + ".")} ${d.name}  ${desc}\n`);
+  }
+  process.stdout.write(`\n  ${muted("Agent definitions in .mp/agents/")}\n\n`);
 }

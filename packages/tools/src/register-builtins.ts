@@ -10,6 +10,8 @@ import { fileWriteTool } from "./tools/file-write.js";
 import { gitCommitTool, gitDiffTool, gitStatusTool } from "./tools/git.js";
 import { queryDbTool } from "./tools/query-db.js";
 import { readSkillTool } from "./tools/read-skill.js";
+import { webFetchTool } from "./tools/web-fetch.js";
+import { webSearchTool } from "./tools/web-search.js";
 
 /** Registers built-in coding-agent tools on the given registry. */
 export function registerBuiltinTools(registry: ToolRegistry): void {
@@ -26,4 +28,6 @@ export function registerBuiltinTools(registry: ToolRegistry): void {
   registry.register(delegateTool);
   registry.register(readSkillTool);
   registry.register(queryDbTool);
+  registry.register(webFetchTool);
+  registry.register(webSearchTool);
 }

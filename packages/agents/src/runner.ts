@@ -1,7 +1,8 @@
-import type { AgentDB } from "@swe/db";
-import { createAgentLoop, type LoopEvent } from "@swe/loop";
-import { definePrompt, createHookPipeline, costGuard, credentialRedactor, toolGovernance, dbPolicyHook } from "@swe/ctx";
-import { createToolRegistry, registerBuiltinTools } from "@swe/tools";
+import { type AgentDB, syncPolicyFiles } from "@moneypenny/db";
+import { createAgentLoop, type LoopEvent } from "@moneypenny/loop";
+import { definePrompt, createHookPipeline, costGuard, credentialRedactor, toolGovernance, dbPolicyHook } from "@moneypenny/ctx";
+import { createToolRegistry, registerBuiltinTools } from "@moneypenny/tools";
+import { join } from "node:path";
 import * as repo from "./repository.js";
 import { frontmatterSchema, type AgentFrontmatter } from "./schema.js";
 
@@ -56,6 +57,10 @@ export async function runAgent(options: RunAgentOptions): Promise<{ events: Loop
     ],
     tools: registry.listForLLM(),
   });
+
+  const policiesDir = join(repoPath, ".mp", "policies");
+  const policyOpts = config.policies != null ? { only: config.policies } : undefined;
+  syncPolicyFiles(agentDb, policiesDir, policyOpts);
 
   const maxCostSession = config.max_cost_per_session ?? 5.0;
   const maxCostTurn = config.max_cost_per_turn;
