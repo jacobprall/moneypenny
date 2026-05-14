@@ -2,11 +2,25 @@ import { sqlError } from "@mp/db/errors";
 import { globMatch } from "@mp/db/glob";
 import type { AgentDB, SearchOptions, SearchResult } from "@mp/db/types";
 import { getWorkspaceHandle } from "@mp/db/workspace";
+import {
+  RRF_K,
+  DEFAULT_SEARCH_LIMIT,
+  DEFAULT_BM25_WEIGHT,
+  DEFAULT_VECTOR_WEIGHT,
+  FETCH_LIMIT_MULTIPLIER,
+  FETCH_LIMIT_FLOOR,
+} from "./constants";
 
-const RRF_K = 60;
+// Strip FTS5 operators that survive inside double-quotes or at token boundaries.
+const FTS5_OPERATOR_RE = /\b(AND|OR|NOT|NEAR)\b/gi;
+const FTS5_WILDCARD_RE = /\*/g;
 
 function ftsMatchExpression(query: string): string {
-  const terms = query
+  const sanitized = query
+    .replace(FTS5_OPERATOR_RE, "")
+    .replace(FTS5_WILDCARD_RE, "");
+
+  const terms = sanitized
     .trim()
     .split(/\s+/)
     .filter((t) => t.length > 0)
@@ -21,42 +35,47 @@ function matchesFilters(r: SearchResult, languages?: string[], paths?: string[])
     if (!languages.includes(lang)) return false;
   }
   if (paths != null && paths.length > 0) {
-    const hit = paths.some((p) => globMatch(p, r.path));
-    if (!hit) return false;
+    if (!paths.some((p) => globMatch(p, r.path))) return false;
   }
   return true;
 }
 
-function probeVectorScan(db: AgentDB): boolean {
-  const ws = db.workspace;
-  if (ws) {
-    if (ws.vectorAvailable !== undefined) return ws.vectorAvailable;
-    let available = false;
-    try {
-      ws.db.prepare(`SELECT 1 FROM vector_quantize_scan('code_chunks', 'embedding', ?, 1) LIMIT 1`).get(new Uint8Array(4));
-      available = true;
-    } catch {
-      available = false;
-    }
-    (ws as { vectorAvailable?: boolean }).vectorAvailable = available;
-    return available;
-  }
-  if (db.vectorAvailable !== undefined) return db.vectorAvailable;
+// ---------------------------------------------------------------------------
+// Vector availability cache — uses a WeakMap instead of monkey-patching
+// ---------------------------------------------------------------------------
+
+const vectorAvailableCache = new WeakMap<object, boolean>();
+
+function probeVectorOnHandle(handle: import("bun:sqlite").Database, cacheKey: object): boolean {
+  const cached = vectorAvailableCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
   let available = false;
   try {
-    db.db.prepare(`SELECT 1 FROM vector_quantize_scan('code_chunks', 'embedding', ?, 1) LIMIT 1`).get(new Uint8Array(4));
+    handle
+      .prepare(`SELECT 1 FROM vector_quantize_scan('code_chunks', 'embedding', ?, 1) LIMIT 1`)
+      .get(new Uint8Array(4));
     available = true;
   } catch {
     available = false;
   }
-  (db as { vectorAvailable?: boolean }).vectorAvailable = available;
+  vectorAvailableCache.set(cacheKey, available);
   return available;
+}
+
+function probeVectorScan(db: AgentDB): boolean {
+  if (db.workspace) {
+    return probeVectorOnHandle(db.workspace.db, db.workspace);
+  }
+  return probeVectorOnHandle(db.db, db);
 }
 
 function tryQueryEmbedding(database: import("bun:sqlite").Database, query: string): Uint8Array | null {
   const prefixed = `search_query: ${query}`;
   try {
-    const row = database.prepare(`SELECT llm_embed_generate(?) AS e`).get(prefixed) as { e: Uint8Array | Buffer } | undefined;
+    const row = database
+      .prepare(`SELECT llm_embed_generate(?) AS e`)
+      .get(prefixed) as { e: Uint8Array | Buffer } | undefined;
     if (!row?.e) return null;
     return new Uint8Array(row.e);
   } catch {
@@ -152,15 +171,15 @@ function mergeRrf(
   return merged.slice(0, limit);
 }
 
-/** BM25 via FTS5, optional vector ANN when extensions + embeddings exist; fused with weighted RRF (k=60). */
+/** BM25 via FTS5, optional vector ANN when extensions + embeddings exist; fused with weighted RRF. */
 export function hybridSearch(db: AgentDB, query: string, opts?: SearchOptions): SearchResult[] {
   if (!query.trim()) return [];
 
   const wsHandle = getWorkspaceHandle(db);
-  const limit = opts?.limit ?? 20;
-  const bm25Weight = opts?.bm25Weight ?? 0.3;
-  const vectorWeight = opts?.vectorWeight ?? 0.7;
-  const fetchLimit = Math.max(limit * 5, 50);
+  const limit = opts?.limit ?? DEFAULT_SEARCH_LIMIT;
+  const bm25Weight = opts?.bm25Weight ?? DEFAULT_BM25_WEIGHT;
+  const vectorWeight = opts?.vectorWeight ?? DEFAULT_VECTOR_WEIGHT;
+  const fetchLimit = Math.max(limit * FETCH_LIMIT_MULTIPLIER, FETCH_LIMIT_FLOOR);
 
   const match = ftsMatchExpression(query);
   const bm25Raw = bm25Search(wsHandle, match, fetchLimit);

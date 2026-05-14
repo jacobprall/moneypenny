@@ -195,6 +195,8 @@ export interface IndexOptions {
   chunkSize?: number;
   chunkOverlap?: number;
   forceReindex?: boolean;
+  /** Additional file extensions to treat as binary (merged with built-in set). */
+  binaryExtensions?: string[];
 }
 
 export interface SearchOptions {

@@ -3,10 +3,11 @@ import { listSessions } from "@mp/db";
 import { createRequireDbMiddleware, type HttpVars } from "../middleware.js";
 import type { CreateHttpAppOptions } from "../types.js";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function createSessionsRouter(
   getDb: CreateHttpAppOptions["getDb"],
-): Hono<{ Variables: HttpVars }> {
-  const r = new Hono<{ Variables: HttpVars }>();
+): Hono<any, any, any> {
+  const r = new Hono<any, any, any>();
   r.use("*", createRequireDbMiddleware(getDb));
 
   r.get("/sessions", (c) => {

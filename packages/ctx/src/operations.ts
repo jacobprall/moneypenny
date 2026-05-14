@@ -9,23 +9,57 @@ export interface Operation<TInput = unknown, TOutput = unknown> {
   execute(ctx: OperationContext, input: TInput): Promise<TOutput>;
 }
 
-const registry = new Map<string, Operation>();
+export interface OperationRegistryOptions {
+  denyByDefault?: boolean;
+}
+
+export class OperationRegistry {
+  private readonly ops = new Map<string, Operation>();
+  private readonly denyByDefault: boolean;
+
+  constructor(options?: OperationRegistryOptions) {
+    this.denyByDefault = options?.denyByDefault ?? false;
+  }
+
+  register<TInput = unknown, TOutput = unknown>(op: Operation<TInput, TOutput>): void {
+    if (this.ops.has(op.name)) {
+      throw new Error(`Operation already registered: ${op.name}`);
+    }
+    this.ops.set(op.name, op as Operation);
+  }
+
+  get(name: string): Operation | undefined {
+    return this.ops.get(name);
+  }
+
+  list(): string[] {
+    return Array.from(this.ops.keys());
+  }
+
+  async execute<TInput = unknown, TOutput = unknown>(
+    name: string,
+    input: TInput,
+    options: ExecuteOptions
+  ): Promise<TOutput> {
+    return executeOp(this.ops, this.denyByDefault, name, input, options);
+  }
+}
+
+/** Default global registry — preserved for backward compatibility. */
+const defaultRegistry = new OperationRegistry();
 
 export function register<TInput = unknown, TOutput = unknown>(
   op: Operation<TInput, TOutput>
 ): void {
-  if (registry.has(op.name)) {
-    throw new Error(`Operation already registered: ${op.name}`);
-  }
-  registry.set(op.name, op as Operation);
+  defaultRegistry.register(op);
 }
 
 export function get(name: string): Operation | undefined {
-  return registry.get(name);
+  return defaultRegistry.get(name);
 }
 
 export function list(): string[] {
-  return Array.from(registry.keys());
+  return defaultRegistry.list();
 }
 
 export interface ExecuteOptions {
@@ -34,16 +68,6 @@ export interface ExecuteOptions {
   sessionId?: string;
   denyByDefault?: boolean;
   resource?: string;
-}
-
-let _defaultDenyByDefault = false;
-
-export function setDefaultDenyByDefault(value: boolean): void {
-  _defaultDenyByDefault = value;
-}
-
-export function getDefaultDenyByDefault(): boolean {
-  return _defaultDenyByDefault;
 }
 
 function runPreHooks(
@@ -66,15 +90,15 @@ function runPreHooks(
 
 function decidePolicy(
   db: Database,
-  options: ExecuteOptions,
-  name: string,
+  actor: string,
+  resource: string,
   currentInput: unknown,
   denyByDefault: boolean,
 ): PolicyDecision {
-  let decision = evaluatePolicy(db, {
-    actor: options.actor,
-    toolName: name,
-    path: options.resource ?? name,
+  const decision = evaluatePolicy(db, {
+    actor,
+    toolName: resource,
+    path: resource,
     args: currentInput,
   });
   if (decision.effect === "allow" && decision.matchedPolicy === null && denyByDefault) {
@@ -85,14 +109,6 @@ function decidePolicy(
     };
   }
   return decision;
-}
-
-async function runOperation<TInput, TOutput>(
-  op: Operation<TInput, TOutput>,
-  ctx: OperationContext,
-  input: TInput
-): Promise<TOutput> {
-  return op.execute(ctx, input) as Promise<TOutput>;
 }
 
 function runPostHooks(
@@ -147,16 +163,14 @@ function appendEvent(
   });
 }
 
-/**
- * Execute an operation: pre-hooks → policy → run → post-hooks → append event.
- * Returns the operation output. Throws on error or policy deny.
- */
-export async function execute<TInput = unknown, TOutput = unknown>(
+async function executeOp<TInput = unknown, TOutput = unknown>(
+  ops: Map<string, Operation>,
+  registryDenyByDefault: boolean,
   name: string,
   input: TInput,
-  options: ExecuteOptions
+  options: ExecuteOptions,
 ): Promise<TOutput> {
-  const op = registry.get(name);
+  const op = ops.get(name);
   if (!op) throw new Error(`Unknown operation: ${name}`);
 
   const ctx: OperationContext = {
@@ -165,7 +179,7 @@ export async function execute<TInput = unknown, TOutput = unknown>(
     sessionId: options.sessionId,
   };
 
-  const denyByDefault = options.denyByDefault ?? _defaultDenyByDefault;
+  const denyByDefault = options.denyByDefault ?? registryDenyByDefault;
   const resource = options.resource ?? name;
 
   const currentInput = runPreHooks(
@@ -176,7 +190,7 @@ export async function execute<TInput = unknown, TOutput = unknown>(
     input
   ) as TInput;
 
-  const decision = decidePolicy(options.db, options, name, currentInput, denyByDefault);
+  const decision = decidePolicy(options.db, options.actor, resource, currentInput, denyByDefault);
 
   if (decision.effect === "deny") {
     const error = `Policy denied: ${decision.reason}`;
@@ -197,7 +211,7 @@ export async function execute<TInput = unknown, TOutput = unknown>(
   const start = Date.now();
   let output: TOutput;
   try {
-    output = await runOperation(op as Operation<TInput, TOutput>, ctx, currentInput);
+    output = await op.execute(ctx, currentInput) as TOutput;
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     appendEvent(
@@ -236,4 +250,16 @@ export async function execute<TInput = unknown, TOutput = unknown>(
   );
 
   return finalOutput as TOutput;
+}
+
+/**
+ * Execute an operation: pre-hooks → policy → run → post-hooks → append event.
+ * Returns the operation output. Throws on error or policy deny.
+ */
+export async function execute<TInput = unknown, TOutput = unknown>(
+  name: string,
+  input: TInput,
+  options: ExecuteOptions
+): Promise<TOutput> {
+  return defaultRegistry.execute(name, input, options);
 }

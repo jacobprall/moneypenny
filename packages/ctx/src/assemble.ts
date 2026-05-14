@@ -29,15 +29,15 @@ interface ResolvedSection {
 export function definePrompt(config: PromptConfig): Prompt {
   return {
     async assemble(db: AgentDB, context: AssemblyContext): Promise<AssembleResult> {
-      const resolved: ResolvedSection[] = [];
-
-      for (const section of config.sections) {
-        const result = await section.resolve(db, context);
-        const blocks = normalizeToBlocks(result);
-        const priority = (section as SectionWithPriority).priority ?? 0;
-        const tokens = estimateBlockTokens(blocks);
-        resolved.push({ blocks, placement: section.placement, priority, tokens });
-      }
+      const resolved = await Promise.all(
+        config.sections.map(async (section) => {
+          const result = await section.resolve(db, context);
+          const blocks = normalizeToBlocks(result);
+          const priority = (section as SectionWithPriority).priority ?? 0;
+          const tokens = estimateBlockTokens(blocks);
+          return { blocks, placement: section.placement, priority, tokens } as ResolvedSection;
+        })
+      );
 
       const maxTokens = config.maxSystemTokens;
       let sections = resolved;

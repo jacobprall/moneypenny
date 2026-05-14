@@ -40,21 +40,33 @@ function applyPatterns(
   return out;
 }
 
+/**
+ * Mutates `obj` in-place, replacing string values that match credential
+ * patterns. Returns true if any value was changed. The in-place mutation
+ * is intentional: preTool hooks receive the input by reference before the
+ * tool executes, so modifications propagate without a return channel.
+ */
 function redactObject(
   obj: unknown,
   compiled: RegExp[],
   replacement: string,
-): void {
-  if (typeof obj !== "object" || obj === null) return;
+): boolean {
+  if (typeof obj !== "object" || obj === null) return false;
   const record = obj as Record<string, unknown>;
+  let changed = false;
   for (const key of Object.keys(record)) {
     const val = record[key];
     if (typeof val === "string") {
-      record[key] = applyPatterns(val, compiled, replacement);
+      const redacted = applyPatterns(val, compiled, replacement);
+      if (redacted !== val) {
+        record[key] = redacted;
+        changed = true;
+      }
     } else if (typeof val === "object" && val !== null) {
-      redactObject(val, compiled, replacement);
+      if (redactObject(val, compiled, replacement)) changed = true;
     }
   }
+  return changed;
 }
 
 export function credentialRedactor(config?: RedactorConfig): Hook {

@@ -41,8 +41,9 @@ const PolicyPostBody = z.object({
   message: z.string().nullable().optional(),
 });
 
-export function createHttpApp(opts: CreateHttpAppOptions): Hono {
-  const app = new Hono();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function createHttpApp(opts: CreateHttpAppOptions): Hono<any, any, any> {
+  const app = new Hono<any, any, any>();
 
   app.get("/health", (c) => {
     return c.json({ status: "ok", service: "moneypenny", version: "0.1.0" });
@@ -56,7 +57,7 @@ export function createHttpApp(opts: CreateHttpAppOptions): Hono {
     });
   });
 
-  const api = new Hono<{ Variables: HttpVars }>();
+  const api = new Hono<any, any, any>();
   if (opts.getApiKey) {
     api.use("*", createTokenAuthMiddleware(opts.getApiKey));
   }

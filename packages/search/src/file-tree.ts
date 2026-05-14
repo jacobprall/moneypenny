@@ -1,28 +1,32 @@
 import { sqlError } from "@mp/db/errors";
 import type { AgentDB, FileEntry } from "@mp/db/types";
 import { getWorkspaceHandle } from "@mp/db/workspace";
+import { mapFileRow, type FileRow } from "./fs-utils";
 
 export function getFileTree(db: AgentDB): FileEntry[] {
   const wsHandle = getWorkspaceHandle(db);
   try {
-    const rows = wsHandle.prepare(`SELECT path, hash, size, modified_at, language, indexed_at FROM file_tree ORDER BY path`).all() as {
-      path: string;
-      hash: string;
-      size: number | null;
-      modified_at: number | null;
-      language: string | null;
-      indexed_at: number | null;
-    }[];
-    return rows.map((r) => ({
-      path: r.path,
-      hash: r.hash,
-      size: r.size,
-      modifiedAt: r.modified_at,
-      language: r.language,
-      indexedAt: r.indexed_at,
-    }));
+    const rows = wsHandle
+      .prepare(`SELECT path, hash, size, modified_at, language, indexed_at FROM file_tree ORDER BY path`)
+      .all() as FileRow[];
+    return rows.map(mapFileRow);
   } catch (e) {
     throw sqlError("getFileTree", e);
+  }
+}
+
+/**
+ * Read exclude patterns from a raw database handle.
+ * Works with both workspace and session databases.
+ */
+export function getExcludePatternsFromDb(database: import("bun:sqlite").Database): string[] {
+  try {
+    const rows = database
+      .prepare(`SELECT pattern FROM exclude_patterns ORDER BY pattern`)
+      .all() as { pattern: string }[];
+    return rows.map((r) => r.pattern);
+  } catch {
+    return [];
   }
 }
 
@@ -33,15 +37,11 @@ export function getFileTree(db: AgentDB): FileEntry[] {
 export function getExcludePatterns(db: AgentDB): string[] {
   try {
     const wsHandle = getWorkspaceHandle(db);
-    const rows = wsHandle.prepare(`SELECT pattern FROM exclude_patterns ORDER BY pattern`).all() as { pattern: string }[];
-    const patterns = new Set(rows.map((r) => r.pattern));
+    const patterns = new Set(getExcludePatternsFromDb(wsHandle));
 
     if (db.workspace) {
-      try {
-        const sessionRows = db.db.prepare(`SELECT pattern FROM exclude_patterns ORDER BY pattern`).all() as { pattern: string }[];
-        for (const r of sessionRows) patterns.add(r.pattern);
-      } catch {
-        // session DB may not have exclude_patterns in split mode
+      for (const p of getExcludePatternsFromDb(db.db)) {
+        patterns.add(p);
       }
     }
 

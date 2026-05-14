@@ -11,8 +11,9 @@ const AppendBody = z.object({
   turn: z.number().optional(),
 });
 
-export function createEventsRouter(getDb: CreateHttpAppOptions["getDb"]): Hono<{ Variables: HttpVars }> {
-  const r = new Hono<{ Variables: HttpVars }>();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function createEventsRouter(getDb: CreateHttpAppOptions["getDb"]): Hono<any, any, any> {
+  const r = new Hono<any, any, any>();
   r.use("*", createRequireDbMiddleware(getDb));
 
   r.get("/events", async (c) => {

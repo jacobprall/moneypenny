@@ -1,4 +1,4 @@
-import type { MiddlewareHandler } from "hono";
+import type { Context, Next, MiddlewareHandler } from "hono";
 import type { ZodError } from "zod";
 import type { AgentDB } from "@mp/db";
 
@@ -9,7 +9,7 @@ export type HttpVars = {
 export function createRequireDbMiddleware(
   getDb: () => AgentDB | null,
 ): MiddlewareHandler<{ Variables: HttpVars }> {
-  return async (c, next) => {
+  return async (c: Context<{ Variables: HttpVars }>, next: Next) => {
     const db = getDb();
     if (!db) {
       return c.json({ error: "Database not ready" }, 503);
@@ -22,7 +22,7 @@ export function createRequireDbMiddleware(
 export function createTokenAuthMiddleware(
   getApiKey: () => string | undefined,
 ): MiddlewareHandler {
-  return async (c, next) => {
+  return async (c: Context, next: Next) => {
     const expected = getApiKey();
     if (!expected) {
       await next();

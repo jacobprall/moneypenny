@@ -1,94 +1,54 @@
-import { statSync, readFileSync, readdirSync, existsSync, lstatSync } from "node:fs";
+import { readFileSync, readdirSync, lstatSync } from "node:fs";
 import { join, relative, normalize } from "node:path";
 import { sqlError } from "@mp/db/errors";
 import type { AgentDB, FileEntry, IndexOptions, IndexResult, IndexStatus, TreeDiff, WorkspaceDB } from "@mp/db/types";
-import { getExcludePatterns } from "./file-tree";
+import { getExcludePatterns, getExcludePatternsFromDb } from "./file-tree";
 import { getWorkspaceHandle } from "@mp/db/workspace";
 import { globMatch } from "@mp/db/glob";
 import { languageFromExt, sha256Hex, chunkFileContent } from "./chunker";
+import { tryStat, mapFileRow, type FileRow } from "./fs-utils";
+import { loadGitRules, gitIgnored, type GitRule } from "./gitignore";
+import {
+  MAX_FILE_SIZE,
+  DEFAULT_CHUNK_SIZE,
+  DEFAULT_CHUNK_OVERLAP,
+  MIN_CHUNK_SIZE,
+  DEFAULT_BINARY_EXTENSIONS,
+  MAX_WALK_DEPTH,
+} from "./constants";
 
-const BINARY_EXTENSIONS = new Set([
-  "png", "jpg", "jpeg", "gif", "webp", "ico", "bmp", "tif", "tiff",
-  "pdf", "zip", "gz", "tgz", "bz2", "xz", "7z", "rar",
-  "woff", "woff2", "ttf", "otf", "eot",
-  "mp3", "mp4", "wav", "webm", "mov", "avi", "mkv",
-  "exe", "dll", "so", "dylib", "bin", "o", "a",
-  "class", "jar", "wasm", "sqlite", "db", "parquet", "gifv",
-]);
+// ---------------------------------------------------------------------------
+// Binary detection
+// ---------------------------------------------------------------------------
 
-// --- Gitignore handling (supports nested .gitignore files) ---
-// NOTE: This is a simplified .gitignore parser and does not fully match git's
-// behavior (e.g. rooted patterns, ** globs, escaped characters). A proper
-// git-compatible parser (or shelling out to `git check-ignore`) would be a
-// future improvement.
-
-interface GitRule {
-  pattern: string;
-  negated: boolean;
-  dirOnly: boolean;
-  basePath: string;
-}
-
-function parseGitignoreLines(content: string, basePath: string): GitRule[] {
-  const rules: GitRule[] = [];
-  for (let line of content.split("\n")) {
-    line = line.replace(/\r$/, "").trim();
-    if (!line || line.startsWith("#")) continue;
-    let negated = false;
-    if (line.startsWith("!")) {
-      negated = true;
-      line = line.slice(1).trim();
-    }
-    let dirOnly = line.endsWith("/");
-    if (dirOnly) line = line.slice(0, -1);
-    if (line) rules.push({ pattern: line, negated, dirOnly, basePath });
-  }
-  return rules;
-}
-
-function loadGitRules(dirPath: string, basePath: string): GitRule[] {
-  const p = join(dirPath, ".gitignore");
-  if (!existsSync(p)) return [];
-  try {
-    const raw = readFileSync(p, "utf8");
-    return parseGitignoreLines(raw, basePath);
-  } catch {
-    return [];
-  }
-}
-
-function gitIgnored(rel: string, isDir: boolean, rules: GitRule[]): boolean {
-  let ignored = false;
-  const norm = rel.replace(/\\/g, "/");
-  for (const r of rules) {
-    if (r.dirOnly && !isDir) continue;
-    const target = r.basePath ? (norm.startsWith(r.basePath + "/") ? norm.slice(r.basePath.length + 1) : norm) : norm;
-    if (globMatch(r.pattern, target)) {
-      ignored = !r.negated;
-    }
-  }
-  return ignored;
-}
-
-function isBinaryPath(rel: string): boolean {
+function isBinaryPath(rel: string, extensions: Set<string>): boolean {
   const seg = rel.split("/").pop() ?? rel;
   const dot = seg.lastIndexOf(".");
   if (dot <= 0) return false;
-  return BINARY_EXTENSIONS.has(seg.slice(dot + 1).toLowerCase());
+  return extensions.has(seg.slice(dot + 1).toLowerCase());
 }
 
-// --- File walking ---
+// ---------------------------------------------------------------------------
+// File walking (with depth limit for symlink-loop safety)
+// ---------------------------------------------------------------------------
 
-function listSourceFiles(
-  repoPath: string,
-  exclude: string[],
-  include: string[] | undefined,
-  gitRules: GitRule[],
-): string[] {
+interface WalkOptions {
+  repoPath: string;
+  exclude: string[];
+  include: string[] | undefined;
+  gitRules: GitRule[];
+  binaryExtensions: Set<string>;
+}
+
+function listSourceFiles(opts: WalkOptions): string[] {
+  const { repoPath, exclude, include, gitRules, binaryExtensions } = opts;
   const out: string[] = [];
   const normRoot = normalize(repoPath);
+  const visitedInodes = new Set<string>();
 
-  const walk = (dir: string, rules: GitRule[]) => {
+  const walk = (dir: string, rules: GitRule[], depth: number) => {
+    if (depth > MAX_WALK_DEPTH) return;
+
     let entries;
     try {
       entries = readdirSync(dir, { withFileTypes: true });
@@ -102,24 +62,31 @@ function listSourceFiles(
     for (const e of entries) {
       const full = join(dir, e.name);
       const entryRel = relative(normRoot, full).replace(/\\/g, "/");
+
+      let lst;
       try {
-        if (lstatSync(full).isSymbolicLink()) continue;
+        lst = lstatSync(full);
       } catch {
         continue;
       }
+      if (lst.isSymbolicLink()) continue;
+
       if (e.isDirectory()) {
+        const inodeKey = `${lst.dev}:${lst.ino}`;
+        if (visitedInodes.has(inodeKey)) continue;
+        visitedInodes.add(inodeKey);
+
         if (e.name === ".git" || e.name === ".moneypenny") continue;
         if (exclude.some((p) => globMatch(p, entryRel) || globMatch(p, `${entryRel}/`))) continue;
         if (gitIgnored(entryRel, true, localRules)) continue;
-        walk(full, localRules);
+        walk(full, localRules, depth + 1);
       } else if (e.isFile()) {
         if (e.name === ".gitignore") continue;
-        if (isBinaryPath(entryRel)) continue;
+        if (isBinaryPath(entryRel, binaryExtensions)) continue;
         if (exclude.some((p) => globMatch(p, entryRel))) continue;
         if (gitIgnored(entryRel, false, localRules)) continue;
         if (include != null && include.length > 0) {
-          const ok = include.some((p) => globMatch(p, entryRel));
-          if (!ok) continue;
+          if (!include.some((p) => globMatch(p, entryRel))) continue;
         }
         out.push(entryRel);
       }
@@ -127,88 +94,140 @@ function listSourceFiles(
   };
 
   const rootRules = loadGitRules(normRoot, "");
-  walk(normRoot, [...gitRules, ...rootRules]);
+  walk(normRoot, [...gitRules, ...rootRules], 0);
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// DB helpers
+// ---------------------------------------------------------------------------
+
 function loadFileTreeMap(database: import("bun:sqlite").Database): Map<string, FileEntry> {
-  const rows = database.prepare(`SELECT path, hash, size, modified_at, language, indexed_at FROM file_tree`).all() as {
-    path: string;
-    hash: string;
-    size: number | null;
-    modified_at: number | null;
-    language: string | null;
-    indexed_at: number | null;
-  }[];
+  const rows = database
+    .prepare(`SELECT path, hash, size, modified_at, language, indexed_at FROM file_tree`)
+    .all() as FileRow[];
   const m = new Map<string, FileEntry>();
-  for (const r of rows) {
-    m.set(r.path, {
-      path: r.path,
-      hash: r.hash,
-      size: r.size,
-      modifiedAt: r.modified_at,
-      language: r.language,
-      indexedAt: r.indexed_at,
-    });
-  }
+  for (const r of rows) m.set(r.path, mapFileRow(r));
   return m;
 }
 
 /** Check if file likely changed using mtime+size before expensive hash. */
 function fileAppearsChanged(fullPath: string, prev: FileEntry): boolean {
-  try {
-    const st = statSync(fullPath);
-    if (prev.size != null && st.size !== prev.size) return true;
-    if (prev.modifiedAt != null && Math.trunc(st.mtimeMs) !== prev.modifiedAt) return true;
-    return false;
-  } catch {
-    return true;
-  }
+  const st = tryStat(fullPath);
+  if (!st) return true;
+  if (prev.size != null && st.size !== prev.size) return true;
+  if (prev.modifiedAt != null && Math.trunc(st.mtimeMs) !== prev.modifiedAt) return true;
+  return false;
 }
 
-/**
- * Incrementally index text files under repoPath; uses mtime+size for fast skip.
- * When the AgentDB has a workspace attached, indexing targets the workspace DB.
- */
-export function indexCodebase(db: AgentDB, repoPath: string, opts?: IndexOptions): IndexResult {
-  const wsHandle = getWorkspaceHandle(db);
-  return indexCodebaseInto(wsHandle, db, repoPath, opts);
+// ---------------------------------------------------------------------------
+// Phase 1: Scan disk — read, hash, and chunk changed files into memory
+// ---------------------------------------------------------------------------
+
+interface MetaUpdate {
+  rel: string;
+  hash: string;
+  size: number;
+  mtimeMs: number;
+  language: string | null;
+  indexedAt: number | null;
 }
 
-/**
- * Index directly into a WorkspaceDB (no AgentDB needed).
- */
-export function indexWorkspace(ws: WorkspaceDB, opts?: IndexOptions): IndexResult {
-  return indexCodebaseInto(ws.db, undefined, ws.workspacePath, opts);
+interface FileUpdate {
+  rel: string;
+  hash: string;
+  lang: string | null;
+  parts: { startLine: number; endLine: number; text: string }[];
+  size: number;
+  mtimeMs: number | null;
 }
 
-function indexCodebaseInto(
-  targetDb: import("bun:sqlite").Database,
-  agentDb: AgentDB | undefined,
+interface ScanResult {
+  tracked: Set<string>;
+  metaUpdates: MetaUpdate[];
+  fileUpdates: FileUpdate[];
+  unreadable: string[];
+  filesChanged: number;
+  chunksCreated: number;
+}
+
+function scanFiles(
+  files: string[],
   repoPath: string,
-  opts?: IndexOptions,
-): IndexResult {
-  const t0 = Date.now();
-  const chunkSize = opts?.chunkSize ?? 1000;
-  const chunkOverlap = opts?.chunkOverlap ?? 150;
-  const minChunk = 250;
-  const force = opts?.forceReindex ?? false;
-
-  const fromDb = agentDb ? getExcludePatterns(agentDb) : getExcludePatternsRaw(targetDb);
-  const exclude = [...fromDb, ...(opts?.exclude ?? [])];
-
-  const gitRules = loadGitRules(repoPath, "");
-  let files: string[] = [];
-  try {
-    files = listSourceFiles(repoPath, exclude, opts?.include, gitRules);
-  } catch (e) {
-    throw sqlError("indexCodebase (scan)", e);
-  }
-
-  const prevMap = loadFileTreeMap(targetDb);
-  const now = Date.now();
+  prevMap: Map<string, FileEntry>,
+  chunkSize: number,
+  chunkOverlap: number,
+  minChunk: number,
+  force: boolean,
+): ScanResult {
+  const tracked = new Set<string>();
+  const metaUpdates: MetaUpdate[] = [];
+  const fileUpdates: FileUpdate[] = [];
+  const unreadable: string[] = [];
   let filesChanged = 0;
   let chunksCreated = 0;
+
+  for (const rel of files) {
+    tracked.add(rel);
+    const fullPath = join(repoPath, rel);
+    const prev = prevMap.get(rel);
+
+    if (!force && prev && !fileAppearsChanged(fullPath, prev)) continue;
+
+    const st = tryStat(fullPath);
+    if (st && st.size > MAX_FILE_SIZE) continue;
+
+    let content: string;
+    try {
+      content = readFileSync(fullPath, "utf8");
+    } catch {
+      if (prevMap.has(rel)) unreadable.push(rel);
+      continue;
+    }
+
+    const hash = sha256Hex(content);
+    if (!force && prev && prev.hash === hash) {
+      if (st) {
+        metaUpdates.push({
+          rel,
+          hash,
+          size: st.size,
+          mtimeMs: Math.trunc(st.mtimeMs),
+          language: prev.language,
+          indexedAt: prev.indexedAt,
+        });
+      }
+      continue;
+    }
+
+    filesChanged++;
+    const lang = languageFromExt(rel);
+    const parts = chunkFileContent(content, chunkSize, chunkOverlap, minChunk);
+    chunksCreated += parts.length;
+    fileUpdates.push({
+      rel,
+      hash,
+      lang,
+      parts,
+      size: st?.size ?? content.length,
+      mtimeMs: st != null ? Math.trunc(st.mtimeMs) : null,
+    });
+  }
+
+  return { tracked, metaUpdates, fileUpdates, unreadable, filesChanged, chunksCreated };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2: Write scan results into the DB in a single transaction
+// ---------------------------------------------------------------------------
+
+function writeResults(
+  targetDb: import("bun:sqlite").Database,
+  scan: ScanResult,
+  prevMap: Map<string, FileEntry>,
+  now: number,
+): { filesChanged: number } {
+  let { filesChanged } = scan;
 
   const deleteChunksStmt = targetDb.prepare(`DELETE FROM code_chunks WHERE path = ?`);
   const insertChunkStmt = targetDb.prepare(
@@ -221,57 +240,12 @@ function indexCodebaseInto(
   );
   const deleteFileStmt = targetDb.prepare(`DELETE FROM file_tree WHERE path = ?`);
 
-  // Phase 1: Read files, hash, and chunk in memory (no DB write lock held)
-  const tracked = new Set<string>();
-  const metaUpdates: { rel: string; hash: string; size: number; mtimeMs: number; language: string | null; indexedAt: number | null }[] = [];
-  const fileUpdates: { rel: string; hash: string; lang: string | null; parts: { startLine: number; endLine: number; text: string }[]; size: number; mtimeMs: number | null }[] = [];
-  const unreadable: string[] = [];
-
-  for (const rel of files) {
-    tracked.add(rel);
-    const fullPath = join(repoPath, rel);
-    const prev = prevMap.get(rel);
-
-    if (!force && prev) {
-      if (!fileAppearsChanged(fullPath, prev)) continue;
-    }
-
-    let content: string;
-    try {
-      content = readFileSync(fullPath, "utf8");
-    } catch {
-      if (prevMap.has(rel)) unreadable.push(rel);
-      continue;
-    }
-
-    const hash = sha256Hex(content);
-    if (!force && prev && prev.hash === hash) {
-      const st = (() => { try { return statSync(fullPath); } catch { return null; } })();
-      if (st) {
-        metaUpdates.push({ rel, hash, size: st.size, mtimeMs: Math.trunc(st.mtimeMs), language: prev.language, indexedAt: prev.indexedAt });
-      }
-      continue;
-    }
-
-    filesChanged++;
-    const lang = languageFromExt(rel);
-    const parts = chunkFileContent(content, chunkSize, chunkOverlap, minChunk);
-    chunksCreated += parts.length;
-    const st = (() => { try { return statSync(fullPath); } catch { return null; } })();
-    fileUpdates.push({
-      rel, hash, lang, parts,
-      size: st?.size ?? content.length,
-      mtimeMs: st != null ? Math.trunc(st.mtimeMs) : null,
-    });
-  }
-
-  // Phase 2: Write all collected results to DB in a single transaction
   const tx = targetDb.transaction(() => {
-    for (const u of metaUpdates) {
+    for (const u of scan.metaUpdates) {
       upsertFileStmt.run(u.rel, u.hash, u.size, u.mtimeMs, u.language, u.indexedAt);
     }
 
-    for (const u of fileUpdates) {
+    for (const u of scan.fileUpdates) {
       deleteChunksStmt.run(u.rel);
       let idx = 0;
       for (const part of u.parts) {
@@ -280,13 +254,13 @@ function indexCodebaseInto(
       upsertFileStmt.run(u.rel, u.hash, u.size, u.mtimeMs, u.lang, now);
     }
 
-    for (const rel of unreadable) {
+    for (const rel of scan.unreadable) {
       deleteChunksStmt.run(rel);
       deleteFileStmt.run(rel);
     }
 
     for (const p of prevMap.keys()) {
-      if (!tracked.has(p)) {
+      if (!scan.tracked.has(p)) {
         deleteChunksStmt.run(p);
         deleteFileStmt.run(p);
         filesChanged++;
@@ -300,23 +274,65 @@ function indexCodebaseInto(
     throw sqlError("indexCodebase", e);
   }
 
+  return { filesChanged };
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/**
+ * Incrementally index text files under repoPath; uses mtime+size for fast skip.
+ * When the AgentDB has a workspace attached, indexing targets the workspace DB.
+ */
+export function indexCodebase(db: AgentDB, repoPath: string, opts?: IndexOptions): IndexResult {
+  const wsHandle = getWorkspaceHandle(db);
+  return indexCodebaseInto(wsHandle, db, repoPath, opts);
+}
+
+/** Index directly into a WorkspaceDB (no AgentDB needed). */
+export function indexWorkspace(ws: WorkspaceDB, opts?: IndexOptions): IndexResult {
+  return indexCodebaseInto(ws.db, undefined, ws.workspacePath, opts);
+}
+
+function indexCodebaseInto(
+  targetDb: import("bun:sqlite").Database,
+  agentDb: AgentDB | undefined,
+  repoPath: string,
+  opts?: IndexOptions,
+): IndexResult {
+  const t0 = Date.now();
+  const chunkSize = opts?.chunkSize ?? DEFAULT_CHUNK_SIZE;
+  const chunkOverlap = opts?.chunkOverlap ?? DEFAULT_CHUNK_OVERLAP;
+  const force = opts?.forceReindex ?? false;
+
+  const fromDb = agentDb ? getExcludePatterns(agentDb) : getExcludePatternsFromDb(targetDb);
+  const exclude = [...fromDb, ...(opts?.exclude ?? [])];
+  const binaryExtensions = opts?.binaryExtensions
+    ? new Set([...DEFAULT_BINARY_EXTENSIONS, ...opts.binaryExtensions])
+    : DEFAULT_BINARY_EXTENSIONS;
+
+  const gitRules = loadGitRules(repoPath, "");
+  let files: string[] = [];
+  try {
+    files = listSourceFiles({ repoPath, exclude, include: opts?.include, gitRules, binaryExtensions });
+  } catch (e) {
+    throw sqlError("indexCodebase (scan)", e);
+  }
+
+  const prevMap = loadFileTreeMap(targetDb);
+  const now = Date.now();
+
+  const scan = scanFiles(files, repoPath, prevMap, chunkSize, chunkOverlap, MIN_CHUNK_SIZE, force);
+  const { filesChanged } = writeResults(targetDb, scan, prevMap, now);
+
   return {
     filesScanned: files.length,
     filesChanged,
-    chunksCreated,
+    chunksCreated: scan.chunksCreated,
     embeddingsGenerated: 0,
     elapsedMs: Date.now() - t0,
   };
-}
-
-/** Read exclude patterns directly from a database handle (for workspace-only use). */
-function getExcludePatternsRaw(database: import("bun:sqlite").Database): string[] {
-  try {
-    const rows = database.prepare(`SELECT pattern FROM exclude_patterns ORDER BY pattern`).all() as { pattern: string }[];
-    return rows.map((r) => r.pattern);
-  } catch {
-    return [];
-  }
 }
 
 export function getIndexStatus(db: AgentDB): IndexStatus {
@@ -326,10 +342,9 @@ export function getIndexStatus(db: AgentDB): IndexStatus {
     const totalChunksRow = wsHandle.prepare(`SELECT COUNT(*) AS c FROM code_chunks`).get() as { c: number };
     const lastRow = wsHandle.prepare(`SELECT MAX(indexed_at) AS m FROM file_tree`).get() as { m: number | null };
     const pendingRow = wsHandle.prepare(`SELECT COUNT(*) AS c FROM file_tree WHERE indexed_at IS NULL`).get() as { c: number };
-    const langRows = wsHandle.prepare(`SELECT language, COUNT(*) AS c FROM code_chunks GROUP BY language`).all() as {
-      language: string | null;
-      c: number;
-    }[];
+    const langRows = wsHandle
+      .prepare(`SELECT language, COUNT(*) AS c FROM code_chunks GROUP BY language`)
+      .all() as { language: string | null; c: number }[];
     const languageBreakdown: Record<string, number> = {};
     for (const r of langRows) {
       const k = r.language ?? "unknown";
@@ -354,7 +369,13 @@ export function getFileTreeDiff(db: AgentDB, repoPath: string): TreeDiff {
   const gitRules = loadGitRules(repoPath, "");
   let files: string[] = [];
   try {
-    files = listSourceFiles(repoPath, fromDb, undefined, gitRules);
+    files = listSourceFiles({
+      repoPath,
+      exclude: fromDb,
+      include: undefined,
+      gitRules,
+      binaryExtensions: DEFAULT_BINARY_EXTENSIONS,
+    });
   } catch (e) {
     throw sqlError("getFileTreeDiff", e);
   }
@@ -373,6 +394,10 @@ export function getFileTreeDiff(db: AgentDB, repoPath: string): TreeDiff {
     }
     const fullPath = join(repoPath, p);
     if (!fileAppearsChanged(fullPath, prev)) continue;
+
+    const st = tryStat(fullPath);
+    if (st && st.size > MAX_FILE_SIZE) continue;
+
     let content: string;
     try {
       content = readFileSync(fullPath, "utf8");

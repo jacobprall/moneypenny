@@ -12,6 +12,7 @@ import {
   readdirSync,
   readFileSync,
   statSync,
+  writeFileSync,
 } from "fs";
 import { join } from "path";
 import type { Database } from "bun:sqlite";
@@ -25,6 +26,7 @@ import {
   type AgentFrontmatter,
   type ValidationError,
 } from "./schema.js";
+import { DEFAULT_AGENTS } from "./defaults.js";
 
 export interface LoaderOptions {
   db: Database;
@@ -246,9 +248,22 @@ function syncJobForAgent(
   return jobId;
 }
 
+function scaffoldDefaults(agentsDir: string): void {
+  const existing = listAgentDirs(agentsDir);
+  if (existing.length > 0) return;
+
+  for (const [id, content] of Object.entries(DEFAULT_AGENTS)) {
+    const dir = join(agentsDir, id);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "agent.md"), content, "utf8");
+  }
+}
+
 export function scan(options: LoaderOptions): ScanResult {
   const { db, agentsDir, onChange } = options;
+  const isNew = !existsSync(agentsDir);
   ensureDir(agentsDir);
+  if (isNew) scaffoldDefaults(agentsDir);
 
   const dirs = listAgentDirs(agentsDir);
   const known = new Set(repo.allKnownIds(db));

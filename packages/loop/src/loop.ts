@@ -262,6 +262,7 @@ export async function createAgentLoop(config: LoopConfig): Promise<AgentLoop> {
           repoPath: config.repoPath,
           workingDir,
           signal: config.signal,
+          childLoopFactory: config.childLoopFactory,
         };
 
         if (config.parallelToolExecution && assistantMsg.toolCalls.length > 1) {

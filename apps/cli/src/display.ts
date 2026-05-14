@@ -175,22 +175,6 @@ export function printDebug(msg: string): void {
 
 // ── Banner ──────────────────────────────────────────────────────────────
 
-const BOWTIE = [
-  `  ${accent("|\\                     /|")}`,
-  `  ${accent("|  \\                 /  |")}`,
-  `  ${accent("|    \\             /    |")}`,
-  `  ${accent("|      \\         /      |")}`,
-  `  ${accent("|       \\_______/       |")}`,
-  `  ${accent("|       |       |       |")}`,
-  `  ${accent("|       |       |       |")}`,
-  `  ${accent("|       |_______|       |")}`,
-  `  ${accent("|       /       \\       |")}`,
-  `  ${accent("|      /         \\      |")}`,
-  `  ${accent("|    /             \\    |")}`,
-  `  ${accent("|  /                 \\  |")}`,
-  `  ${accent("|/                     \\|")}`,
-];
-
 export function printBanner(opts: {
   version: string;
   session: string;
@@ -200,19 +184,12 @@ export function printBanner(opts: {
 }): void {
   const repo = shortenPath(opts.repoPath);
 
-  const title = `${bold("moneypenny")} ${muted(`v${opts.version}`)}`;
-  const titleRaw = `moneypenny v${opts.version}`;
-  const pad = Math.max(0, Math.floor((25 - titleRaw.length) / 2));
-
   const modelDisplay = opts.provider && opts.provider !== "anthropic"
     ? `${opts.model} ${muted(`(${opts.provider})`)}`
     : opts.model;
 
   process.stdout.write("\n");
-  for (const line of BOWTIE) {
-    process.stdout.write(line + "\n");
-  }
-  process.stdout.write(`  ${" ".repeat(pad)}${title}\n`);
+  process.stdout.write(`  ${bold("moneypenny")} ${muted(`v${opts.version}`)}\n`);
   process.stdout.write("\n");
   process.stdout.write(`  ${muted("session")}  ${opts.session}\n`);
   process.stdout.write(`  ${muted("model")}    ${modelDisplay}\n`);

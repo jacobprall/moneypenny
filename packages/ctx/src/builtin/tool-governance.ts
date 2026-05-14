@@ -1,4 +1,5 @@
 import { globMatch } from "@mp/db/glob";
+import { BoundedMap } from "../bounded-map.js";
 import type { GovernanceConfig, Hook, HookContext, PreHookResult } from "./types.js";
 
 const PATH_KEYS = [
@@ -17,7 +18,7 @@ const PATH_KEYS = [
   "url",
 ] as const;
 
-const segmentRegexCache = new Map<string, RegExp>();
+const segmentRegexCache = new BoundedMap<string, RegExp>(256);
 
 function getSegmentRegex(patternSeg: string): RegExp {
   let re = segmentRegexCache.get(patternSeg);

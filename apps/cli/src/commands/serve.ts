@@ -41,7 +41,8 @@ export const serveCommand = new Command("serve")
 
     const server = Bun.serve({
       port,
-      fetch: app.fetch,
+      fetch: (app as any).fetch,
+      hostname: "127.0.0.1",
     });
 
     process.stderr.write(`Moneypenny HTTP listening on http://localhost:${String(server.port)}\n`);

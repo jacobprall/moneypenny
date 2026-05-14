@@ -102,7 +102,13 @@ export function chunkFileContent(
           }
         }
         if (lj >= blockLines.length) break;
-        const overlapLines = Math.max(1, Math.ceil(overlap / 80));
+        let overlapChars = 0;
+        let overlapLines = 0;
+        for (let k = lj - 1; k >= li + 1 && overlapChars < overlap; k--) {
+          overlapChars += blockLines[k]!.length + 1;
+          overlapLines++;
+        }
+        if (overlapLines < 1) overlapLines = 1;
         li = Math.max(li + 1, lj - overlapLines);
       }
     }

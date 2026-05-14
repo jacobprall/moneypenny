@@ -1,4 +1,6 @@
 import type { Database } from "bun:sqlite";
+import { BoundedMap } from "./bounded-map.js";
+import { compileUserRegex } from "./safe-regex.js";
 
 export type PolicyEffect = "allow" | "deny" | "audit" | "confirm";
 
@@ -22,16 +24,11 @@ export interface PolicyDecision {
   reason: string;
 }
 
-const globCache = new Map<string, RegExp>();
-const MAX_GLOB_CACHE = 512;
+const globCache = new BoundedMap<string, RegExp>(512);
 
 function getGlobRegex(pattern: string): RegExp {
   let re = globCache.get(pattern);
   if (re) return re;
-  if (globCache.size >= MAX_GLOB_CACHE) {
-    const firstKey = globCache.keys().next().value;
-    if (firstKey !== undefined) globCache.delete(firstKey);
-  }
   const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
   re = new RegExp(`^${escaped}$`);
   globCache.set(pattern, re);
@@ -61,23 +58,13 @@ function matchesCostCondition(condition: string | null, context: { sessionCost?:
   }
 }
 
-const argsRegexCache = new Map<string, RegExp | null>();
-const MAX_ARGS_CACHE = 256;
+const argsRegexCache = new BoundedMap<string, RegExp | null>(256);
 
 function getArgsRegex(pattern: string): RegExp | null {
   if (argsRegexCache.has(pattern)) return argsRegexCache.get(pattern)!;
-  if (argsRegexCache.size >= MAX_ARGS_CACHE) {
-    const firstKey = argsRegexCache.keys().next().value;
-    if (firstKey !== undefined) argsRegexCache.delete(firstKey);
-  }
-  try {
-    const re = new RegExp(pattern);
-    argsRegexCache.set(pattern, re);
-    return re;
-  } catch {
-    argsRegexCache.set(pattern, null);
-    return null;
-  }
+  const re = compileUserRegex(pattern);
+  argsRegexCache.set(pattern, re);
+  return re;
 }
 
 function matchesArgsPattern(pattern: string | null, args: unknown): boolean {

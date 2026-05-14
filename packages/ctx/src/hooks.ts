@@ -4,6 +4,8 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { BoundedMap } from "./bounded-map.js";
+import { compileUserRegex } from "./safe-regex.js";
 
 export interface HookContext {
   operation: string;
@@ -32,30 +34,54 @@ interface HookRow {
   script: string;
 }
 
-const hookMatchCache = new Map<string, RegExp | null>();
-const MAX_HOOK_MATCH_CACHE = 256;
+const hookMatchCache = new BoundedMap<string, RegExp | null>(256);
 
 function matchesOperation(pattern: string, operation: string): boolean {
   let re = hookMatchCache.get(pattern);
   if (re === undefined) {
-    if (hookMatchCache.size >= MAX_HOOK_MATCH_CACHE) {
-      const firstKey = hookMatchCache.keys().next().value;
-      if (firstKey !== undefined) hookMatchCache.delete(firstKey);
-    }
-    try {
-      re = new RegExp(pattern);
-    } catch {
-      re = null;
-    }
+    re = compileUserRegex(pattern);
     hookMatchCache.set(pattern, re);
   }
   return re ? re.test(operation) : false;
 }
 
-const SAFE_GLOBALS = Object.freeze(["undefined", "NaN", "Infinity", "JSON", "Math", "Date", "parseInt", "parseFloat", "isNaN", "isFinite", "String", "Number", "Boolean", "Array", "Object", "RegExp", "Error"]);
-const BLOCKED_PATTERNS = [/\bprocess\b/, /\brequire\b/, /\bimport\b/, /\beval\b/, /\bFunction\b/, /\bBun\b/, /\bDeno\b/, /\bglobalThis\b/];
+const MAX_HOOK_SCRIPT_LENGTH = 10_000;
+
+/**
+ * Globals explicitly shadowed as `undefined` inside the Function constructor
+ * to block access to runtime APIs. This is defence-in-depth — not a full sandbox.
+ */
+const SHADOWED_GLOBALS = [
+  "process", "require", "import", "eval", "Function",
+  "Bun", "Deno", "globalThis", "window", "self",
+  "Proxy", "Reflect",
+  "fetch", "XMLHttpRequest", "WebSocket",
+  "Worker", "SharedWorker", "importScripts",
+  "setTimeout", "setInterval", "setImmediate", "queueMicrotask",
+] as const;
+
+const BLOCKED_PATTERNS = [
+  /\bconstructor\b/,
+  /\b__proto__\b/,
+  /\bprototype\b/,
+  /\bgetOwnPropertyDescriptor\b/,
+  /\bdefineProperty\b/,
+  /\bprocess\b/,
+  /\brequire\b/,
+  /\bimport\b/,
+  /\beval\b/,
+  /\bFunction\b/,
+  /\bBun\b/,
+  /\bDeno\b/,
+  /\bglobalThis\b/,
+  /\bProxy\b/,
+  /\bReflect\b/,
+];
 
 function validateHookScript(script: string): void {
+  if (script.length > MAX_HOOK_SCRIPT_LENGTH) {
+    throw new Error(`Hook script exceeds maximum length of ${MAX_HOOK_SCRIPT_LENGTH}`);
+  }
   for (const pattern of BLOCKED_PATTERNS) {
     if (pattern.test(script)) {
       throw new Error(`Hook script contains blocked keyword: ${pattern.source}`);
@@ -63,9 +89,15 @@ function validateHookScript(script: string): void {
   }
 }
 
+const UNDEFINED_ARGS = SHADOWED_GLOBALS.map(() => undefined);
+
 function runHookScript(script: string, ctx: HookContext): HookResult {
   validateHookScript(script);
+
+  const frozenCtx = Object.freeze({ ...ctx });
+
   const fn = new Function(
+    ...SHADOWED_GLOBALS,
     "ctx",
     `"use strict";
     const { operation, actor, sessionId, phase, input, output } = ctx;
@@ -74,8 +106,12 @@ function runHookScript(script: string, ctx: HookContext): HookResult {
     })();
   `
   );
-  const result = fn(ctx);
+  const result = fn(...UNDEFINED_ARGS, frozenCtx);
   if (result && typeof result === "object" && "action" in result) {
+    const action = result.action;
+    if (action !== "continue" && action !== "abort" && action !== "mutate") {
+      return { action: "continue" };
+    }
     return result as HookResult;
   }
   return { action: "continue" };
