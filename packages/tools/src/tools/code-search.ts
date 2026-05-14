@@ -142,7 +142,7 @@ const inputSchema = z.object({
 export const codeSearchTool: ToolDefinition = {
   name: "code_search",
   description:
-    "Hybrid lexical/semantic code search over the indexed repo when available; otherwise scans files for substring matches.",
+    "Search the codebase by keyword or natural-language query. This is the fastest way to locate relevant code — prefer it over reading files when you don't already know the exact path. Uses hybrid lexical/semantic search when an index is available, falls back to substring scan otherwise.",
   inputSchema,
   async execute(input, context): Promise<string> {
     try {

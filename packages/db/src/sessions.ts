@@ -94,6 +94,16 @@ export function getActiveSession(db: AgentDB): Session | null {
   }
 }
 
+export function labelSession(db: AgentDB, sessionId: string, label: string): void {
+  try {
+    db.db
+      .prepare(`UPDATE sessions SET label = ? WHERE id = ? AND label IS NULL`)
+      .run(label, sessionId);
+  } catch (e) {
+    throw sqlError("labelSession", e);
+  }
+}
+
 export function setActiveSession(db: AgentDB, sessionId: string): void {
   db.activeSessionId = sessionId;
   try {

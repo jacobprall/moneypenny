@@ -1,5 +1,5 @@
 import * as readline from "node:readline";
-import { createAgentLoop, createChildLoopFactory, type AgentLoop, type ProviderName } from "@swe/loop";
+import { createAgentLoop, createChildLoopFactory, runAutoLabel, type AgentLoop, type ProviderName } from "@swe/loop";
 import { createSession, getConfig, setActiveSession, type AgentDB } from "@swe/db";
 import type { ToolRegistry } from "@swe/tools";
 import { confirmationGate, createHookPipeline, type Hook, type Prompt } from "@swe/ctx";
@@ -155,13 +155,20 @@ export async function runRepl(cfg: ReplConfig): Promise<void> {
     rl.close();
   });
 
+  void runAutoLabel({
+    repoPath: cfg.repoPath,
+    model: activeModel,
+    provider: activeProvider,
+    apiKey: activeApiKey,
+  });
+
   try {
     if (cfg.initialMessage) {
       await runTurn(loop, cfg.db, cfg.initialMessage, renderer);
     }
 
     for (;;) {
-      const input = await question(rl, `\n  ${accent("\u276f")} `);
+      const input = await question(rl, `\n  ${accent(">_")} `);
       if (input === null) break;
       const trimmed = input.trim();
       if (!trimmed) continue;

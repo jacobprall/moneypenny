@@ -22,3 +22,7 @@ export {
   DEFAULT_MAX_TOKENS,
   DEFAULT_MAX_TOOL_OUTPUT_BYTES,
 } from "./types.js";
+export { summariseSession } from "./summarise.js";
+export type { SummariseConfig, MessagePair } from "./summarise.js";
+export { runAutoLabel } from "./auto-label.js";
+export type { AutoLabelConfig } from "./auto-label.js";

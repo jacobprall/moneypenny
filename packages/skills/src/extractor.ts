@@ -12,7 +12,7 @@ import type { AgentDB, Skill } from "@swe/db/types";
 import { upsertSkill, listSkills } from "./skills.js";
 
 const MIN_TURNS_FOR_EXTRACTION = 3;
-const DEFAULT_EXTRACT_MODEL = "claude-haiku-4-5-20241022";
+const DEFAULT_EXTRACT_MODEL = "claude-haiku-4-5-20251001";
 
 export interface ExtractorConfig {
   apiKey: string;

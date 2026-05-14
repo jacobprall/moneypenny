@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import * as path from "node:path";
 
-import { bold, muted, success, error, warning } from "../display";
+import { bold, accent, chrome, success, error, warning } from "../display";
 import { globalConfigPath } from "../config";
 import { getDbPath, getSweDir } from "../session";
 import { probeExtensions } from "@swe/db";
@@ -19,11 +19,11 @@ interface Check {
 function icon(s: Status): string {
   switch (s) {
     case "pass":
-      return success("✔");
+      return success("[OK]");
     case "warn":
-      return warning("⚠");
+      return warning("[!!]");
     case "fail":
-      return error("✖");
+      return error("[XX]");
   }
 }
 
@@ -282,6 +282,12 @@ function checkEmbeddingModel(): Check {
   }
 }
 
+const W = 44;
+
+function hline(left: string, fill: string, right: string, width = W): string {
+  return chrome(`${left}${fill.repeat(width)}${right}`);
+}
+
 export const doctorCommand = new Command("doctor")
   .description("Check environment and configuration")
   .option("--repo <path>", "Repository path", process.cwd())
@@ -310,31 +316,42 @@ export const doctorCommand = new Command("doctor")
     const fails = checks.filter((c) => c.status === "fail").length;
     const warns = checks.filter((c) => c.status === "warn").length;
 
-    process.stdout.write(`\n  ${bold("swe doctor")}\n`);
+    process.stdout.write("\n");
+    process.stdout.write(`  ${hline("╔═", "═", "═╗")}\n`);
+    process.stdout.write(`  ${chrome("║")}  ${bold(accent("swe doctor"))}${" ".repeat(W - 11)}${chrome("║")}\n`);
+    process.stdout.write(`  ${hline("╚═", "═", "═╝")}\n`);
 
     const groups = ["Runtime", "Auth", "Repository"];
     for (const group of groups) {
       const groupChecks = checks.filter((c) => c.group === group);
       if (groupChecks.length === 0) continue;
 
-      process.stdout.write(`\n  ${muted(group)}\n`);
-      process.stdout.write(`  ${muted("─".repeat(40))}\n`);
+      process.stdout.write("\n");
+      process.stdout.write(`  ${hline("╔═", "═", "═╗")}\n`);
+      process.stdout.write(`  ${chrome("║")}  ${accent(group)}${" ".repeat(Math.max(0, W - group.length - 1))}${chrome("║")}\n`);
+      process.stdout.write(`  ${hline("╠─", "─", "─╣")}\n`);
 
       for (const check of groupChecks) {
-        const detail = check.detail ? muted(` — ${check.detail}`) : "";
-        process.stdout.write(`  ${icon(check.status)} ${check.label}${detail}\n`);
+        const statusIcon = icon(check.status);
+        const label = check.label;
+        process.stdout.write(`  ${chrome("║")}  ${statusIcon} ${label}\n`);
+        if (check.detail) {
+          process.stdout.write(`  ${chrome("║")}       ${chrome(check.detail)}\n`);
+        }
       }
+
+      process.stdout.write(`  ${hline("╚═", "═", "═╝")}\n`);
     }
 
     process.stdout.write("\n");
 
     if (fails > 0) {
-      process.stdout.write(`  ${error(`${String(fails)} problem${fails > 1 ? "s" : ""} found.`)}\n`);
+      process.stdout.write(`  ${error(`[XX] ${String(fails)} problem${fails > 1 ? "s" : ""} found.`)}\n`);
       process.exitCode = 1;
     } else if (warns > 0) {
-      process.stdout.write(`  ${warning(`${String(warns)} warning${warns > 1 ? "s" : ""}, no critical issues.`)}\n`);
+      process.stdout.write(`  ${warning(`[!!] ${String(warns)} warning${warns > 1 ? "s" : ""}, no critical issues.`)}\n`);
     } else {
-      process.stdout.write(`  ${success("All checks passed.")}\n`);
+      process.stdout.write(`  ${success("[OK] All checks passed.")}\n`);
     }
 
     process.stdout.write("\n");

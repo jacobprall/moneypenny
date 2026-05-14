@@ -10,34 +10,34 @@ importers:
 
   apps/cli:
     dependencies:
-      '@mp/agents':
+      '@swe/agents':
         specifier: workspace:*
         version: link:../../packages/agents
-      '@mp/cloud':
+      '@swe/cloud':
         specifier: workspace:*
         version: link:../../packages/cloud
-      '@mp/ctx':
+      '@swe/ctx':
         specifier: workspace:*
         version: link:../../packages/ctx
-      '@mp/db':
+      '@swe/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@mp/http':
+      '@swe/http':
         specifier: workspace:*
         version: link:../../packages/http
-      '@mp/loop':
+      '@swe/loop':
         specifier: workspace:*
         version: link:../../packages/loop
-      '@mp/mcp':
+      '@swe/mcp':
         specifier: workspace:*
         version: link:../../packages/mcp
-      '@mp/search':
+      '@swe/search':
         specifier: workspace:*
         version: link:../../packages/search
-      '@mp/skills':
+      '@swe/skills':
         specifier: workspace:*
         version: link:../../packages/skills
-      '@mp/tools':
+      '@swe/tools':
         specifier: workspace:*
         version: link:../../packages/tools
       commander:
@@ -53,16 +53,16 @@ importers:
 
   packages/agents:
     dependencies:
-      '@mp/ctx':
+      '@swe/ctx':
         specifier: workspace:*
         version: link:../ctx
-      '@mp/db':
+      '@swe/db':
         specifier: workspace:*
         version: link:../db
-      '@mp/loop':
+      '@swe/loop':
         specifier: workspace:*
         version: link:../loop
-      '@mp/tools':
+      '@swe/tools':
         specifier: workspace:*
         version: link:../tools
       chokidar:
@@ -90,7 +90,7 @@ importers:
 
   packages/cloud:
     dependencies:
-      '@mp/db':
+      '@swe/db':
         specifier: workspace:*
         version: link:../db
     devDependencies:
@@ -106,7 +106,7 @@ importers:
 
   packages/ctx:
     dependencies:
-      '@mp/db':
+      '@swe/db':
         specifier: workspace:*
         version: link:../db
     devDependencies:
@@ -122,9 +122,6 @@ importers:
 
   packages/db:
     dependencies:
-      '@mp/search':
-        specifier: workspace:*
-        version: link:../search
       '@sqliteai/sqlite-ai':
         specifier: ^0.7.56
         version: 0.7.59
@@ -134,6 +131,9 @@ importers:
       '@sqliteai/sqlite-vector':
         specifier: ^0.9.45
         version: 0.9.95
+      '@swe/search':
+        specifier: workspace:*
+        version: link:../search
     devDependencies:
       bun-types:
         specifier: latest
@@ -147,19 +147,19 @@ importers:
 
   packages/http:
     dependencies:
-      '@mp/agents':
+      '@swe/agents':
         specifier: workspace:*
         version: link:../agents
-      '@mp/cloud':
+      '@swe/cloud':
         specifier: workspace:*
         version: link:../cloud
-      '@mp/ctx':
+      '@swe/ctx':
         specifier: workspace:*
         version: link:../ctx
-      '@mp/db':
+      '@swe/db':
         specifier: workspace:*
         version: link:../db
-      '@mp/search':
+      '@swe/search':
         specifier: workspace:*
         version: link:../search
       hono:
@@ -187,13 +187,13 @@ importers:
       '@google/genai':
         specifier: ^0.7.0
         version: 0.7.0
-      '@mp/ctx':
+      '@swe/ctx':
         specifier: workspace:*
         version: link:../ctx
-      '@mp/db':
+      '@swe/db':
         specifier: workspace:*
         version: link:../db
-      '@mp/tools':
+      '@swe/tools':
         specifier: workspace:*
         version: link:../tools
       openai:
@@ -215,13 +215,13 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.12.1
         version: 1.29.0(zod@3.25.76)
-      '@mp/db':
+      '@swe/db':
         specifier: workspace:*
         version: link:../db
-      '@mp/search':
+      '@swe/search':
         specifier: workspace:*
         version: link:../search
-      '@mp/tools':
+      '@swe/tools':
         specifier: workspace:*
         version: link:../tools
       zod:
@@ -240,7 +240,7 @@ importers:
 
   packages/search:
     dependencies:
-      '@mp/db':
+      '@swe/db':
         specifier: workspace:*
         version: link:../db
     devDependencies:
@@ -256,7 +256,10 @@ importers:
 
   packages/skills:
     dependencies:
-      '@mp/db':
+      '@anthropic-ai/sdk':
+        specifier: ^0.39.0
+        version: 0.39.0
+      '@swe/db':
         specifier: workspace:*
         version: link:../db
     devDependencies:
@@ -272,13 +275,13 @@ importers:
 
   packages/tools:
     dependencies:
-      '@mp/ctx':
+      '@swe/ctx':
         specifier: workspace:*
         version: link:../ctx
-      '@mp/db':
+      '@swe/db':
         specifier: workspace:*
         version: link:../db
-      '@mp/search':
+      '@swe/search':
         specifier: workspace:*
         version: link:../search
       zod:
