@@ -75,11 +75,11 @@ export function createAgentsRouter(opts: CreateHttpAppOptions): Hono<any, any, a
   });
 
   r.post("/agents/reload", (c) => {
-    const dir = opts.agentsDir;
+    const dir = opts.blueprintsDir;
     if (!dir) {
-      return c.json({ error: "agentsDir not configured" }, 501);
+      return c.json({ error: "blueprintsDir not configured" }, 501);
     }
-    const out = scan({ db: c.var.db.db, agentsDir: dir });
+    const out = scan({ db: c.var.db.db, blueprintsDir: dir });
     return c.json(out);
   });
 

@@ -7,8 +7,10 @@ export interface CreateHttpAppOptions {
   getDb: () => AgentDB | null;
   /** API key for on-demand agent runs from HTTP. */
   getApiKey?: () => string | undefined;
-  /** Directory scanned for agent.md definitions (reload, optional). */
-  agentsDir?: string;
+  /** Directory scanned for blueprint agent.md definitions (reload, optional). */
+  blueprintsDir?: string;
+  /** Directory scanned for policy YAML files (reload, optional). */
+  policiesDir?: string;
   /** If set, serves static files when the directory exists. */
   uiDistPath?: string;
 }

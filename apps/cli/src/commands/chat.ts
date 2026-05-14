@@ -8,6 +8,7 @@ import {
   getPermissions,
   scanSkillDirs,
   setActiveSession,
+  syncPolicyFiles,
   type Permission,
 } from "@swe/db";
 import { getIndexStatus, indexCodebase } from "@swe/search";
@@ -155,6 +156,8 @@ export const chatCommand = new Command("chat")
           { dir: bundledSkillsDir, source: "builtin" },
           { dir: userSkillsDir, source: "user" },
         ]);
+
+        syncPolicyFiles(db, path.join(repoPath, ".swe", "policies"));
 
         const prompt = createDefaultPrompt(toolDefs);
 

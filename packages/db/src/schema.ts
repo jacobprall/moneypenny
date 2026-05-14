@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 export const WORKSPACE_SCHEMA_VERSION = 1;
 
 export interface Migration {
@@ -199,6 +199,14 @@ CREATE TABLE IF NOT EXISTS gov_events (
 
 CREATE INDEX IF NOT EXISTS idx_gov_events_operation ON gov_events(operation);
 CREATE INDEX IF NOT EXISTS idx_gov_events_created ON gov_events(created_at);
+`,
+  },
+  {
+    version: 8,
+    sql: `
+ALTER TABLE policies ADD COLUMN source TEXT NOT NULL DEFAULT 'cli';
+ALTER TABLE policies ADD COLUMN file_path TEXT;
+ALTER TABLE policies ADD COLUMN checksum TEXT;
 `,
   },
 ];
@@ -475,6 +483,9 @@ CREATE TABLE IF NOT EXISTS policies (
   actor_pattern TEXT,
   message TEXT,
   enabled INTEGER DEFAULT 1,
+  source TEXT NOT NULL DEFAULT 'cli',
+  file_path TEXT,
+  checksum TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );

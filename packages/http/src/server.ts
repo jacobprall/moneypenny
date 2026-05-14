@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { z } from "zod";
-import { createPolicy, listPolicies } from "@swe/db";
+import { createPolicy, listPolicies, syncPolicyFiles } from "@swe/db";
 import { getIndexStatus, hybridSearch } from "@swe/search";
 import { evaluatePolicy } from "@swe/ctx";
 import { getSyncStatus, initSyncTables } from "@swe/cloud";
@@ -150,6 +150,15 @@ export function createHttpApp(opts: CreateHttpAppOptions): Hono<any, any, any> {
       enabled: 1,
     });
     return c.json({ policy: created });
+  });
+
+  api.post("/policies/reload", (c) => {
+    const dir = opts.policiesDir;
+    if (!dir) {
+      return c.json({ error: "policiesDir not configured" }, 501);
+    }
+    const out = syncPolicyFiles(c.var.db, dir);
+    return c.json(out);
   });
 
   api.post("/sync/init", (c) => {

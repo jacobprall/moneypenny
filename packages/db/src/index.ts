@@ -18,4 +18,5 @@ export * from "./subagents";
 export * from "./default-skills";
 export * from "./glob";
 export * from "./policies";
+export * from "./policy-loader";
 export * from "./local-gen";

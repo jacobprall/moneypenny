@@ -16,17 +16,13 @@ export interface AutoLabelConfig extends SummariseConfig {
 }
 
 function discoverAgentDbPaths(repoPath: string): string[] {
-  const sweDir = path.join(repoPath, ".swe");
+  const agentsDir = path.join(repoPath, ".swe", "agents");
   const paths: string[] = [];
 
-  const defaultDb = path.join(sweDir, "default.agent.db");
-  if (existsSync(defaultDb)) paths.push(defaultDb);
-
-  const agentsDir = path.join(sweDir, "agents");
   if (existsSync(agentsDir)) {
     try {
       for (const f of readdirSync(agentsDir)) {
-        if (f.endsWith(".agent.db")) {
+        if (f.endsWith(".db")) {
           paths.push(path.join(agentsDir, f));
         }
       }

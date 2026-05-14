@@ -1,11 +1,11 @@
 /**
- * Default agent scaffolded into `.swe/agents/` on first init.
+ * Default blueprint scaffolded into `.swe/blueprints/` on first init.
  */
 
 export const HELLO_AGENT_MD = `---
 name: Hello World
 description: >
-  A starter agent that proves the runtime is working. Run it with
+  A starter blueprint that proves the runtime is working. Run it with
   \`swe agents run hello\` or uncomment the schedule to fire it on a cron.
 enabled: true
 
@@ -37,8 +37,8 @@ runtime is working end-to-end: load, validate, run, and record output.
 Reply in a single short paragraph. Keep it under 50 words.
 
 <!--
-This file is an agent definition. Every folder inside \`.swe/agents/\`
-becomes an agent whose id is the folder name (e.g. this one is "hello").
+This file is an agent blueprint. Every folder inside \`.swe/blueprints/\`
+becomes a blueprint whose id is the folder name (e.g. this one is "hello").
 
 Frontmatter reference (all fields except \`name\` are optional):
 
@@ -59,10 +59,10 @@ Frontmatter reference (all fields except \`name\` are optional):
 
 Everything below the frontmatter is the agent's system prompt.
 
-To create a new agent:
+To create a new blueprint:
 
-  mkdir .swe/agents/my-agent
-  cp .swe/agents/hello/agent.md .swe/agents/my-agent/agent.md
+  mkdir .swe/blueprints/my-agent
+  cp .swe/blueprints/hello/agent.md .swe/blueprints/my-agent/agent.md
   # edit the new agent.md, then:
   swe agents reload   # or POST /api/agents/reload
   swe agents list     # verify it loaded

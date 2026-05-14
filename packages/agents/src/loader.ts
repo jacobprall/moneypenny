@@ -1,6 +1,7 @@
 /**
- * Agent loader — scans `agentsDir` for directory-defined agents, parses
- * `agent.md` frontmatter + body, validates, and upserts an `agents` row.
+ * Blueprint loader — scans `blueprintsDir` for directory-defined agent
+ * blueprints, parses `agent.md` frontmatter + body, validates, and upserts
+ * an `agents` row.
  */
 
 import cronParser from "cron-parser";
@@ -30,7 +31,7 @@ import { DEFAULT_AGENTS } from "./defaults.js";
 
 export interface LoaderOptions {
   db: Database;
-  agentsDir: string;
+  blueprintsDir: string;
   onChange?: (id: string, reason: "added" | "updated" | "removed" | "error") => void;
 }
 
@@ -248,24 +249,24 @@ function syncJobForAgent(
   return jobId;
 }
 
-function scaffoldDefaults(agentsDir: string): void {
-  const existing = listAgentDirs(agentsDir);
+function scaffoldDefaults(blueprintsDir: string): void {
+  const existing = listAgentDirs(blueprintsDir);
   if (existing.length > 0) return;
 
   for (const [id, content] of Object.entries(DEFAULT_AGENTS)) {
-    const dir = join(agentsDir, id);
+    const dir = join(blueprintsDir, id);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "agent.md"), content, "utf8");
   }
 }
 
 export function scan(options: LoaderOptions): ScanResult {
-  const { db, agentsDir, onChange } = options;
-  const isNew = !existsSync(agentsDir);
-  ensureDir(agentsDir);
-  if (isNew) scaffoldDefaults(agentsDir);
+  const { db, blueprintsDir, onChange } = options;
+  const isNew = !existsSync(blueprintsDir);
+  ensureDir(blueprintsDir);
+  if (isNew) scaffoldDefaults(blueprintsDir);
 
-  const dirs = listAgentDirs(agentsDir);
+  const dirs = listAgentDirs(blueprintsDir);
   const known = new Set(repo.allKnownIds(db));
   const seen = new Set<string>();
   const loaded: LoadedAgent[] = [];
@@ -376,8 +377,8 @@ export function rescanOne(options: LoaderOptions, dirPath: string): LoadedAgent 
 }
 
 export async function startWatcher(options: LoaderOptions): Promise<() => void> {
-  const { agentsDir } = options;
-  ensureDir(agentsDir);
+  const { blueprintsDir } = options;
+  ensureDir(blueprintsDir);
 
   let chokidar: typeof import("chokidar") | null = null;
   try {
@@ -387,7 +388,7 @@ export async function startWatcher(options: LoaderOptions): Promise<() => void> 
   }
 
   if (chokidar) {
-    const watcher = chokidar.watch(agentsDir, {
+    const watcher = chokidar.watch(blueprintsDir, {
       ignoreInitial: true,
       depth: 3,
       ignored: (p: string) => /\/\.|\/node_modules\//.test(p),
@@ -397,13 +398,13 @@ export async function startWatcher(options: LoaderOptions): Promise<() => void> 
     };
 
     const handle = (p: string) => {
-      const rel = p.slice(agentsDir.length).replace(/^\/+/, "");
+      const rel = p.slice(blueprintsDir.length).replace(/^\/+/, "");
       const topSegment = rel.split("/")[0];
       if (!topSegment) {
         scan(options);
         return;
       }
-      const dirPath = join(agentsDir, topSegment);
+      const dirPath = join(blueprintsDir, topSegment);
       if (!existsSync(dirPath)) {
         scan(options);
         return;
@@ -423,7 +424,7 @@ export async function startWatcher(options: LoaderOptions): Promise<() => void> 
   }
 
   const fs = await import("fs");
-  const watcher = fs.watch(agentsDir, { recursive: true }, (_event, filename) => {
+  const watcher = fs.watch(blueprintsDir, { recursive: true }, (_event, filename) => {
     if (!filename) {
       scan(options);
       return;
@@ -433,7 +434,7 @@ export async function startWatcher(options: LoaderOptions): Promise<() => void> 
       scan(options);
       return;
     }
-    const dirPath = join(agentsDir, topSegment);
+    const dirPath = join(blueprintsDir, topSegment);
     if (!existsSync(dirPath)) {
       scan(options);
       return;

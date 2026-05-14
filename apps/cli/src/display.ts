@@ -20,41 +20,26 @@ export const dim = ansi("2");
 export const bold = ansi("1");
 export const italic = ansi("3");
 
-// ── Pip-Boy palette ─────────────────────────────────────────────────────
+// ── Palette ─────────────────────────────────────────────────────────────
 
-export const accent = rgb(57, 255, 20, "32");
-export const data = rgb(0, 229, 255, "36");
-export const success = rgb(57, 255, 20, "32");
-export const error = rgb(255, 49, 49, "31");
-export const warning = rgb(255, 182, 39, "33");
-export const chrome = rgb(90, 110, 90, "2");
+export const accent = rgb(94, 214, 148, "32");
+export const data = rgb(130, 190, 230, "36");
+export const success = rgb(72, 199, 142, "32");
+export const error = rgb(235, 87, 87, "31");
+export const warning = rgb(240, 185, 80, "33");
+export const chrome = rgb(108, 118, 128, "2");
 
 export const muted = chrome;
 
-// ── Box drawing ─────────────────────────────────────────────────────────
+// ── Layout helpers ──────────────────────────────────────────────────────
 
-const W = 40;
-
-function hline(left: string, fill: string, right: string, width = W): string {
-  return muted(`${left}${fill.repeat(width)}${right}`);
-}
-
-function row(content: string, width = W): string {
-  const stripped = content.replace(/\x1b\[[0-9;]*m/g, "");
-  const pad = Math.max(0, width - stripped.length - 1);
-  return `${muted("║")}  ${content}${" ".repeat(pad)}${muted("║")}`;
+function rule(width = 40): string {
+  return chrome("─".repeat(width));
 }
 
 // ── Spinner ──────────────────────────────────────────────────────────────
 
-const SCAN_FRAMES = [
-  "[■□□□]",
-  "[□■□□]",
-  "[□□■□]",
-  "[□□□■]",
-  "[□□■□]",
-  "[□■□□]",
-];
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 export class Spinner {
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -66,7 +51,7 @@ export class Spinner {
     this.interval = setInterval(() => {
       this.frameIdx++;
       this.render(text);
-    }, 120);
+    }, 80);
   }
 
   stop(): void {
@@ -78,7 +63,7 @@ export class Spinner {
   }
 
   private render(text: string): void {
-    const frame = SCAN_FRAMES[this.frameIdx % SCAN_FRAMES.length]!;
+    const frame = SPINNER_FRAMES[this.frameIdx % SPINNER_FRAMES.length]!;
     process.stdout.write(`\r\x1b[2K  ${accent(frame)} ${chrome(text)}`);
   }
 }
@@ -104,17 +89,17 @@ function formatDuration(ms: number): string {
 
 // ── Tool output ──────────────────────────────────────────────────────────
 
+function toolSummary(input: unknown): string {
+  if (typeof input !== "object" || input === null) return String(input);
+  const obj = input as Record<string, unknown>;
+  const path = obj.path ?? obj.file ?? obj.command ?? obj.query;
+  if (typeof path === "string") return path.length > 60 ? path.slice(0, 57) + "..." : path;
+  return JSON.stringify(input).slice(0, 60);
+}
+
 export function printToolStart(name: string, input: unknown): void {
-  const summary =
-    typeof input === "object" && input !== null
-      ? JSON.stringify(input).slice(0, 60)
-      : String(input);
-  const label = accent(name);
-  const rest = chrome(summary);
-  process.stdout.write(`  ${chrome("┌─[")} ${label} ${chrome("]")}${chrome("─".repeat(Math.max(1, 32 - name.length)))}\n`);
-  if (summary) {
-    process.stdout.write(`  ${chrome("│")}  ${rest}\n`);
-  }
+  const summary = toolSummary(input);
+  process.stdout.write(`  ${accent("▸")} ${accent(name)}  ${chrome(summary)}\n`);
 }
 
 export function printToolComplete(_name: string, output: string, durationMs: number): void {
@@ -126,34 +111,34 @@ export function printToolComplete(_name: string, output: string, durationMs: num
   } else {
     const maxShow = 5;
     for (const line of lines.slice(0, maxShow)) {
-      process.stdout.write(`  ${chrome("│")}  ${line}\n`);
+      process.stdout.write(`    ${chrome("│")} ${line}\n`);
     }
     if (lines.length > maxShow) {
       process.stdout.write(
-        `  ${chrome("│")}  ${chrome(`... ${String(lines.length - maxShow)} more lines`)}\n`,
+        `    ${chrome("│")} ${chrome(`… ${String(lines.length - maxShow)} more lines`)}\n`,
       );
     }
   }
 
-  process.stdout.write(`  ${chrome("└─")} ${data(formatDuration(durationMs))} ${chrome("─".repeat(30))}\n\n`);
+  process.stdout.write(`    ${chrome("╰")} ${data(formatDuration(durationMs))}\n\n`);
 }
 
 function printDiffLines(lines: string[]): void {
   for (const line of lines) {
     if (line.startsWith("+")) {
-      process.stdout.write(`  ${chrome("│")}  ${success(line)}\n`);
+      process.stdout.write(`    ${chrome("│")} ${success(line)}\n`);
     } else if (line.startsWith("-")) {
-      process.stdout.write(`  ${chrome("│")}  ${error(line)}\n`);
+      process.stdout.write(`    ${chrome("│")} ${error(line)}\n`);
     } else if (line.startsWith("@@")) {
-      process.stdout.write(`  ${chrome("│")}  ${chrome(line)}\n`);
+      process.stdout.write(`    ${chrome("│")} ${chrome(line)}\n`);
     } else {
-      process.stdout.write(`  ${chrome("│")}  ${line}\n`);
+      process.stdout.write(`    ${chrome("│")} ${line}\n`);
     }
   }
 }
 
 export function printToolError(_name: string, err: string): void {
-  process.stdout.write(`  ${chrome("└─")} ${error("[ERR]")} ${err}\n\n`);
+  process.stdout.write(`    ${chrome("╰")} ${error("error")} ${err}\n\n`);
 }
 
 // ── Cost / turn footer ──────────────────────────────────────────────────
@@ -165,19 +150,21 @@ export function printCost(cost: {
   costUsd: number;
   turnNumber: number;
 }): void {
-  const turnLabel = chrome(`TURN ${String(cost.turnNumber)}`);
-  const inp = `${data("IN")} ${humanTokens(cost.inputTokens)}`;
-  const out = `${data("OUT")} ${humanTokens(cost.outputTokens)}`;
-  const usd = `${accent("$" + cost.costUsd.toFixed(4))}`;
-  const model = chrome(cost.model);
-
-  process.stdout.write(`\n  ${chrome("[")} ${turnLabel} ${chrome("]")}  ${inp}  ${out}  ${usd}  ${model}\n`);
+  const sep = chrome("·");
+  const parts = [
+    chrome(`turn ${String(cost.turnNumber)}`),
+    `${humanTokens(cost.inputTokens)} in`,
+    `${humanTokens(cost.outputTokens)} out`,
+    `$${cost.costUsd.toFixed(4)}`,
+    chrome(cost.model),
+  ];
+  process.stdout.write(`\n  ${chrome(parts.join(` ${sep} `))}\n`);
 }
 
 // ── Turn separator ──────────────────────────────────────────────────────
 
 export function printTurnSeparator(): void {
-  process.stdout.write(`\n  ${chrome("░▒▓")} ${chrome("─".repeat(32))} ${chrome("▓▒░")}\n`);
+  process.stdout.write(`\n  ${rule(44)}\n`);
 }
 
 // ── Standard messages ────────────────────────────────────────────────────
@@ -215,16 +202,12 @@ export function printBanner(opts: {
     ? `${opts.model} ${chrome(`(${opts.provider})`)}`
     : opts.model;
 
+  const sep = chrome("·");
+
   process.stdout.write("\n");
-  process.stdout.write(`  ${hline("╔═", "═", "═╗")}\n`);
-  process.stdout.write(`  ${row(`${bold(accent("swe"))} ${chrome(`v${opts.version}`)}`)}\n`);
-  process.stdout.write(`  ${hline("╠─", "─", "─╣")}\n`);
-  process.stdout.write(`  ${row(`${chrome("session")}  ${accent(opts.session)}`)}\n`);
-  process.stdout.write(`  ${row(`${chrome("model")}    ${accent(modelDisplay)}`)}\n`);
-  process.stdout.write(`  ${row(`${chrome("repo")}     ${accent(repo)}`)}\n`);
-  process.stdout.write(`  ${hline("╠─", "─", "─╣")}\n`);
-  process.stdout.write(`  ${row(`${accent("/help")} ${chrome("commands")}  ${accent("/exit")} ${chrome("quit")}`)}\n`);
-  process.stdout.write(`  ${hline("╚═", "═", "═╝")}\n`);
+  process.stdout.write(`  ${bold(accent("swe"))} ${chrome(`v${opts.version}`)}\n`);
+  process.stdout.write(`  ${modelDisplay} ${sep} ${repo} ${sep} ${chrome(opts.session)}\n`);
+  process.stdout.write(`  ${chrome("/help for commands")} ${sep} ${chrome("/exit to quit")}\n`);
   process.stdout.write("\n");
 }
 
@@ -232,28 +215,25 @@ export function printBanner(opts: {
 
 export function printHelp(): void {
   const cmd = (name: string, args: string, desc: string): string => {
-    const left = `${accent(name)} ${chrome(args)}`;
-    const rawLen = name.length + 1 + args.length;
-    const padding = Math.max(1, 22 - rawLen);
-    return `  ${chrome("║")}  ${left}${" ".repeat(padding)}${chrome(desc)}`;
+    const left = `${accent(name)}${args ? " " + chrome(args) : ""}`;
+    const rawLen = name.length + (args ? 1 + args.length : 0);
+    const padding = Math.max(2, 20 - rawLen);
+    return `    ${left}${" ".repeat(padding)}${chrome(desc)}`;
   };
 
   process.stdout.write("\n");
-  process.stdout.write(`  ${hline("╔═", "═", "═╗")}\n`);
-  process.stdout.write(`  ${row(bold(accent("COMMANDS")))}\n`);
-  process.stdout.write(`  ${hline("╠─", "─", "─╣")}\n`);
+  process.stdout.write(`  ${bold("Commands")}\n\n`);
   process.stdout.write(cmd("/compact", "[msg]", "Compact conversation history") + "\n");
-  process.stdout.write(cmd("/fresh", "     ", "Start a fresh session") + "\n");
-  process.stdout.write(cmd("/sessions", "  ", "List sessions") + "\n");
-  process.stdout.write(cmd("/agents", "    ", "List agents in this repo") + "\n");
-  process.stdout.write(cmd("/search", " <q>", "Search the codebase") + "\n");
-  process.stdout.write(cmd("/index", "    ", "Rebuild the code index") + "\n");
-  process.stdout.write(cmd("/model", " [id]", "List or switch models") + "\n");
-  process.stdout.write(`  ${hline("╠─", "─", "─╣")}\n`);
-  process.stdout.write(cmd("/cost", "     ", "Session cost & tokens") + "\n");
-  process.stdout.write(cmd("/status", "   ", "Index and session status") + "\n");
-  process.stdout.write(cmd("/help", "     ", "Show this help") + "\n");
-  process.stdout.write(cmd("/exit", "     ", "End session") + "\n");
-  process.stdout.write(`  ${hline("╚═", "═", "═╝")}\n`);
+  process.stdout.write(cmd("/fresh", "", "Start a fresh session") + "\n");
+  process.stdout.write(cmd("/sessions", "", "List sessions") + "\n");
+  process.stdout.write(cmd("/agents", "", "List agents in this repo") + "\n");
+  process.stdout.write(cmd("/search", "<q>", "Search the codebase") + "\n");
+  process.stdout.write(cmd("/index", "", "Rebuild the code index") + "\n");
+  process.stdout.write(cmd("/model", "[id]", "List or switch models") + "\n");
+  process.stdout.write("\n");
+  process.stdout.write(cmd("/cost", "", "Session cost & tokens") + "\n");
+  process.stdout.write(cmd("/status", "", "Index and session status") + "\n");
+  process.stdout.write(cmd("/help", "", "Show this help") + "\n");
+  process.stdout.write(cmd("/exit", "", "End session") + "\n");
   process.stdout.write("\n");
 }

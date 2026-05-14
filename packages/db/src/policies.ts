@@ -6,6 +6,8 @@ export type PolicyEffect = "allow" | "deny" | "audit" | "confirm";
 
 const ACTOR_KEY = "__mp_actor";
 
+export type PolicySource = "cli" | "file";
+
 export interface Policy {
   id: string;
   name: string;
@@ -18,6 +20,9 @@ export interface Policy {
   actorPattern: string | null;
   message: string | null;
   enabled: number;
+  source: PolicySource;
+  filePath: string | null;
+  checksum: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -34,7 +39,8 @@ const selectFields = `id, name, effect, priority,
   cost_condition AS costCondition,
   args_pattern AS argsPattern,
   actor_pattern AS actorPattern,
-  message, enabled, created_at AS createdAt, updated_at AS updatedAt`;
+  message, enabled, source, file_path AS filePath, checksum,
+  created_at AS createdAt, updated_at AS updatedAt`;
 
 function rowToPolicy(r: Record<string, unknown>): Policy {
   return {
@@ -49,6 +55,9 @@ function rowToPolicy(r: Record<string, unknown>): Policy {
     actorPattern: (r.actorPattern as string | null) ?? null,
     message: (r.message as string | null) ?? null,
     enabled: Number(r.enabled),
+    source: (r.source as PolicySource) ?? "cli",
+    filePath: (r.filePath as string | null) ?? null,
+    checksum: (r.checksum as string | null) ?? null,
     createdAt: Number(r.createdAt),
     updatedAt: Number(r.updatedAt),
   };
@@ -75,11 +84,14 @@ export function getPolicy(db: AgentDB, id: string): Policy | null {
   }
 }
 
-export type CreatePolicyInput = Omit<Policy, "id" | "createdAt" | "updatedAt" | "enabled"> & {
+export type CreatePolicyInput = Omit<Policy, "id" | "createdAt" | "updatedAt" | "enabled" | "source" | "filePath" | "checksum"> & {
   id?: string;
   createdAt?: number;
   updatedAt?: number;
   enabled?: number;
+  source?: PolicySource;
+  filePath?: string | null;
+  checksum?: string | null;
 };
 
 export function createPolicy(db: AgentDB, input: CreatePolicyInput): Policy {
@@ -87,11 +99,12 @@ export function createPolicy(db: AgentDB, input: CreatePolicyInput): Policy {
   const createdAt = input.createdAt ?? now;
   const updatedAt = input.updatedAt ?? now;
   const id = input.id ?? generateUUIDv7();
+  const source = input.source ?? "cli";
   try {
     db.db
       .prepare(
-        `INSERT INTO policies (id, name, effect, priority, tool_pattern, path_pattern, cost_condition, args_pattern, actor_pattern, message, enabled, created_at, updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO policies (id, name, effect, priority, tool_pattern, path_pattern, cost_condition, args_pattern, actor_pattern, message, enabled, source, file_path, checksum, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         id,
@@ -105,6 +118,9 @@ export function createPolicy(db: AgentDB, input: CreatePolicyInput): Policy {
         input.actorPattern ?? null,
         input.message ?? null,
         input.enabled ?? 1,
+        source,
+        input.filePath ?? null,
+        input.checksum ?? null,
         createdAt,
         updatedAt,
       );
@@ -123,6 +139,9 @@ export function createPolicy(db: AgentDB, input: CreatePolicyInput): Policy {
     actorPattern: input.actorPattern ?? null,
     message: input.message ?? null,
     enabled: input.enabled ?? 1,
+    source,
+    filePath: input.filePath ?? null,
+    checksum: input.checksum ?? null,
     createdAt,
     updatedAt,
   };
@@ -139,7 +158,7 @@ export function updatePolicy(db: AgentDB, id: string, updates: Partial<Omit<Poli
   try {
     db.db
       .prepare(
-        `UPDATE policies SET name=?, effect=?, priority=?, tool_pattern=?, path_pattern=?, cost_condition=?, args_pattern=?, actor_pattern=?, message=?, enabled=?, updated_at=? WHERE id=?`,
+        `UPDATE policies SET name=?, effect=?, priority=?, tool_pattern=?, path_pattern=?, cost_condition=?, args_pattern=?, actor_pattern=?, message=?, enabled=?, source=?, file_path=?, checksum=?, updated_at=? WHERE id=?`,
       )
       .run(
         next.name,
@@ -152,6 +171,9 @@ export function updatePolicy(db: AgentDB, id: string, updates: Partial<Omit<Poli
         next.actorPattern,
         next.message,
         next.enabled,
+        next.source,
+        next.filePath,
+        next.checksum,
         next.updatedAt,
         id,
       );
@@ -159,6 +181,34 @@ export function updatePolicy(db: AgentDB, id: string, updates: Partial<Omit<Poli
     throw sqlError("updatePolicy", e);
   }
   return next;
+}
+
+/** List file-sourced policies, optionally filtering by file path. */
+export function listFilePolicies(db: AgentDB, filePath?: string): Policy[] {
+  try {
+    if (filePath) {
+      const rows = db.db
+        .prepare(`SELECT ${selectFields} FROM policies WHERE source = 'file' AND file_path = ? ORDER BY priority DESC`)
+        .all(filePath) as Record<string, unknown>[];
+      return rows.map(rowToPolicy);
+    }
+    const rows = db.db
+      .prepare(`SELECT ${selectFields} FROM policies WHERE source = 'file' ORDER BY priority DESC`)
+      .all() as Record<string, unknown>[];
+    return rows.map(rowToPolicy);
+  } catch (e) {
+    throw sqlError("listFilePolicies", e);
+  }
+}
+
+/** Remove all file-sourced policies from a specific file. */
+export function deleteFilePolicies(db: AgentDB, filePath: string): number {
+  try {
+    const info = db.db.prepare(`DELETE FROM policies WHERE source = 'file' AND file_path = ?`).run(filePath);
+    return info.changes;
+  } catch (e) {
+    throw sqlError("deleteFilePolicies", e);
+  }
 }
 
 export function deletePolicy(db: AgentDB, id: string): void {

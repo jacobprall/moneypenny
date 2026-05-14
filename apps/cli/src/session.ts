@@ -16,11 +16,15 @@ export function getSweDir(repoPath: string): string {
 }
 
 export function getDbPath(repoPath: string, agentName?: string): string {
-  const dir = getSweDir(repoPath);
+  const agentsDir = path.join(getSweDir(repoPath), "agents");
   if (!agentName || agentName === "default") {
-    return path.join(dir, "default.agent.db");
+    return path.join(agentsDir, "default.db");
   }
-  return path.join(dir, "agents", `${agentName}.agent.db`);
+  return path.join(agentsDir, `${agentName}.db`);
+}
+
+export function getBlueprintsDir(repoPath: string): string {
+  return path.join(getSweDir(repoPath), "blueprints");
 }
 
 /**
@@ -40,21 +44,14 @@ export interface AgentInfo {
 
 /** List agent DBs that exist on disk for this repo. */
 export function listAgents(repoPath: string): AgentInfo[] {
-  const baseDir = getSweDir(repoPath);
+  const agentsDir = path.join(getSweDir(repoPath), "agents");
   const results: AgentInfo[] = [];
 
-  const defaultPath = path.join(baseDir, "default.agent.db");
-  if (existsSync(defaultPath)) {
-    const info = readAgentInfo("default", defaultPath);
-    if (info) results.push(info);
-  }
-
-  const agentsDir = path.join(baseDir, "agents");
   if (existsSync(agentsDir)) {
     try {
-      const files = readdirSync(agentsDir).filter((f) => f.endsWith(".agent.db"));
+      const files = readdirSync(agentsDir).filter((f) => f.endsWith(".db"));
       for (const f of files) {
-        const name = f.replace(".agent.db", "");
+        const name = f.replace(".db", "");
         const info = readAgentInfo(name, path.join(agentsDir, f));
         if (info) results.push(info);
       }

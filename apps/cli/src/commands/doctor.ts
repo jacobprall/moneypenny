@@ -201,20 +201,20 @@ function checkDefaultSession(repoPath: string): Check {
 }
 
 function checkSessions(repoPath: string): Check {
-  const sessionsDir = path.join(getSweDir(repoPath), "sessions");
-  if (!existsSync(sessionsDir)) {
-    return { label: "Named sessions", status: "pass", detail: "None (only default)", group: "Repository" };
+  const agentsDir = path.join(getSweDir(repoPath), "agents");
+  if (!existsSync(agentsDir)) {
+    return { label: "Named agents", status: "pass", detail: "None (only default)", group: "Repository" };
   }
 
   try {
-    const files = readdirSync(sessionsDir).filter((f) => f.endsWith(".agent.db"));
+    const files = readdirSync(agentsDir).filter((f) => f.endsWith(".db") && f !== "default.db");
     if (files.length === 0) {
-      return { label: "Named sessions", status: "pass", detail: "None", group: "Repository" };
+      return { label: "Named agents", status: "pass", detail: "None", group: "Repository" };
     }
-    const names = files.map((f) => f.replace(".agent.db", ""));
-    return { label: "Named sessions", status: "pass", detail: `${String(files.length)}: ${names.join(", ")}`, group: "Repository" };
+    const names = files.map((f) => f.replace(".db", ""));
+    return { label: "Named agents", status: "pass", detail: `${String(files.length)}: ${names.join(", ")}`, group: "Repository" };
   } catch {
-    return { label: "Named sessions", status: "warn", detail: "Could not read sessions directory", group: "Repository" };
+    return { label: "Named agents", status: "warn", detail: "Could not read agents directory", group: "Repository" };
   }
 }
 
@@ -305,10 +305,8 @@ function checkTextGenModel(): Check {
   }
 }
 
-const W = 44;
-
-function hline(left: string, fill: string, right: string, width = W): string {
-  return chrome(`${left}${fill.repeat(width)}${right}`);
+function doctorRule(width = 44): string {
+  return chrome("─".repeat(width));
 }
 
 export const doctorCommand = new Command("doctor")
@@ -341,9 +339,8 @@ export const doctorCommand = new Command("doctor")
     const warns = checks.filter((c) => c.status === "warn").length;
 
     process.stdout.write("\n");
-    process.stdout.write(`  ${hline("╔═", "═", "═╗")}\n`);
-    process.stdout.write(`  ${chrome("║")}  ${bold(accent("swe doctor"))}${" ".repeat(W - 11)}${chrome("║")}\n`);
-    process.stdout.write(`  ${hline("╚═", "═", "═╝")}\n`);
+    process.stdout.write(`  ${bold(accent("swe doctor"))}\n`);
+    process.stdout.write(`  ${doctorRule()}\n`);
 
     const groups = ["Runtime", "Auth", "Repository"];
     for (const group of groups) {
@@ -351,20 +348,16 @@ export const doctorCommand = new Command("doctor")
       if (groupChecks.length === 0) continue;
 
       process.stdout.write("\n");
-      process.stdout.write(`  ${hline("╔═", "═", "═╗")}\n`);
-      process.stdout.write(`  ${chrome("║")}  ${accent(group)}${" ".repeat(Math.max(0, W - group.length - 1))}${chrome("║")}\n`);
-      process.stdout.write(`  ${hline("╠─", "─", "─╣")}\n`);
+      process.stdout.write(`  ${bold(group)}\n`);
 
       for (const check of groupChecks) {
         const statusIcon = icon(check.status);
         const label = check.label;
-        process.stdout.write(`  ${chrome("║")}  ${statusIcon} ${label}\n`);
+        process.stdout.write(`    ${statusIcon} ${label}\n`);
         if (check.detail) {
-          process.stdout.write(`  ${chrome("║")}       ${chrome(check.detail)}\n`);
+          process.stdout.write(`         ${chrome(check.detail)}\n`);
         }
       }
-
-      process.stdout.write(`  ${hline("╚═", "═", "═╝")}\n`);
     }
 
     process.stdout.write("\n");

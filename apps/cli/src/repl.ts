@@ -172,7 +172,7 @@ export async function runRepl(cfg: ReplConfig): Promise<void> {
     }
 
     for (;;) {
-      const input = await question(rl, `\n  ${accent(">_")} `);
+      const input = await question(rl, `\n  ${accent(">")} `);
       if (input === null) break;
       const trimmed = input.trim();
       if (!trimmed) continue;

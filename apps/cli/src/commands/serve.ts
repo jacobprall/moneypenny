@@ -1,10 +1,10 @@
 import { Command } from "commander";
 import * as path from "node:path";
-import { createAgentDB, closeAgentDB, closeWorkspaceDB, DEFAULT_BLUEPRINT } from "@swe/db";
+import { createAgentDB, closeAgentDB, closeWorkspaceDB, DEFAULT_BLUEPRINT, syncPolicyFiles } from "@swe/db";
 import { createHttpApp } from "@swe/http";
 import { scan, startScheduler } from "@swe/agents";
 import { startBackgroundSync, initSyncTables } from "@swe/cloud";
-import { getDbPath, getSweDir, openWorkspace } from "../session";
+import { getBlueprintsDir, getDbPath, openWorkspace } from "../session";
 
 export const serveCommand = new Command("serve")
   .description("Run HTTP API + scheduler + background sync")
@@ -20,8 +20,9 @@ export const serveCommand = new Command("serve")
       workspace,
       blueprint: DEFAULT_BLUEPRINT,
     });
-    const agentsDir = path.join(getSweDir(repoPath), "agents");
-    scan({ db: agentDb.db, agentsDir });
+    const blueprintsDir = getBlueprintsDir(repoPath);
+    scan({ db: agentDb.db, blueprintsDir });
+    syncPolicyFiles(agentDb, path.join(repoPath, ".swe", "policies"));
     try {
       initSyncTables(agentDb.db);
     } catch (e) {
@@ -32,10 +33,12 @@ export const serveCommand = new Command("serve")
     const stopSync = startBackgroundSync(agentDb.db);
 
     const port = parseInt(opts.port, 10) || 3123;
+    const policiesDir = path.join(repoPath, ".swe", "policies");
     const app = createHttpApp({
       getDb: () => agentDb,
       getApiKey: () => process.env.ANTHROPIC_API_KEY,
-      agentsDir,
+      blueprintsDir,
+      policiesDir,
       uiDistPath: path.join(repoPath, "ui", "dist"),
     });
 

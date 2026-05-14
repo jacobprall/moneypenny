@@ -4,4 +4,4 @@ dist/
 .env*
 .swe/
 models/
-*.agent.db
+*.db

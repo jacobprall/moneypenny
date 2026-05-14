@@ -1,4 +1,4 @@
-import { accent, bold, italic, muted, chrome, COLORS_ENABLED } from "./display";
+import { accent, bold, italic, muted, chrome, data, COLORS_ENABLED } from "./display";
 
 /**
  * Streaming markdown-to-ANSI renderer.
@@ -20,7 +20,7 @@ export class MarkdownRenderer {
   flush(): void {
     this.drainLines(true);
     if (this.inCodeBlock) {
-      process.stdout.write(`  ${chrome("└" + "─".repeat(38))}\n`);
+      process.stdout.write(`    ${chrome("╰" + "─".repeat(36))}\n`);
       this.inCodeBlock = false;
       this.codeLang = "";
     }
@@ -45,19 +45,18 @@ export class MarkdownRenderer {
       if (!this.inCodeBlock) {
         this.inCodeBlock = true;
         this.codeLang = raw.slice(3).trim();
-        const label = this.codeLang ? ` ${accent(this.codeLang)} ` : "";
-        const labelLen = this.codeLang ? this.codeLang.length + 2 : 0;
-        process.stdout.write(`  ${chrome("┌─")}${label}${chrome("─".repeat(Math.max(1, 36 - labelLen)))}\n`);
+        const label = this.codeLang ? ` ${data(this.codeLang)}` : "";
+        process.stdout.write(`\n    ${chrome("╭──")}${label}\n`);
       } else {
         this.inCodeBlock = false;
         this.codeLang = "";
-        process.stdout.write(`  ${chrome("└" + "─".repeat(38))}\n`);
+        process.stdout.write(`    ${chrome("╰" + "─".repeat(36))}\n\n`);
       }
       return;
     }
 
     if (this.inCodeBlock) {
-      process.stdout.write(`  ${chrome("│")}  ${raw}\n`);
+      process.stdout.write(`    ${chrome("│")} ${raw}\n`);
       return;
     }
 
