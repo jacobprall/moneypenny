@@ -1,24 +1,21 @@
 /**
  * Session knowledge extractor.
  *
- * At the end of a session, reads the conversation history and calls a cheap
- * model to distill durable project knowledge into per-topic "learned" skills.
- * Existing learned skills are provided as context so the model can merge
- * rather than duplicate.
+ * At the end of a session, reads the conversation history and calls a model
+ * to distill durable project knowledge into per-topic "learned" skills.
+ * Prefers local gen (zero-cost) with cloud Anthropic as fallback.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
-import type { AgentDB, Skill } from "@swe/db/types";
+import type { AgentDB, Skill, LocalGen } from "@swe/db";
 import { upsertSkill, listSkills } from "./skills.js";
 
 const MIN_TURNS_FOR_EXTRACTION = 3;
-const DEFAULT_EXTRACT_MODEL = "claude-haiku-4-5-20251001";
 
 export interface ExtractorConfig {
-  apiKey: string;
+  apiKey?: string;
   model?: string;
-  /** Minimum conversation turns before extraction runs. */
   minTurns?: number;
+  localGen?: LocalGen;
 }
 
 export interface ExtractionResult {
@@ -122,6 +119,16 @@ Respond with ONLY a JSON array of skill objects. No markdown fencing, no explana
 If nothing is worth extracting, respond with: []`;
 }
 
+function buildLocalExtractionPrompt(conversationText: string, existingSkills: Skill[]): string {
+  const base = buildExtractionPrompt(conversationText, existingSkills);
+  return `<|im_start|>system
+You are a knowledge extraction system. Respond with ONLY a JSON array.<|im_end|>
+<|im_start|>user
+${base}<|im_end|>
+<|im_start|>assistant
+`;
+}
+
 function parseExtractedSkills(raw: string): ExtractedSkill[] {
   const trimmed = raw.trim();
 
@@ -145,40 +152,55 @@ function parseExtractedSkills(raw: string): ExtractedSkill[] {
   }
 }
 
+async function generateViaCloud(prompt: string, apiKey: string, model: string): Promise<string> {
+  const Anthropic = (await import("@anthropic-ai/sdk")).default;
+  const client = new Anthropic({ apiKey });
+  const response = await client.messages.create({
+    model,
+    max_tokens: 4096,
+    messages: [{ role: "user", content: prompt }],
+  });
+  return response.content
+    .filter((b) => b.type === "text")
+    .map((b) => (b as { type: "text"; text: string }).text)
+    .join("");
+}
+
 /**
  * Run end-of-session knowledge extraction.
  *
- * Reads the conversation, calls a cheap model, and upserts any extracted
- * knowledge as learned skills in the DB.
+ * Prefers local gen (zero-cost, no network). Falls back to cloud Anthropic
+ * if local gen is unavailable and an API key is provided.
  */
 export async function extractSessionKnowledge(
   db: AgentDB,
   config: ExtractorConfig,
 ): Promise<ExtractionResult | null> {
   const minTurns = config.minTurns ?? MIN_TURNS_FOR_EXTRACTION;
-  const model = config.model ?? DEFAULT_EXTRACT_MODEL;
 
   const { text, turns } = loadConversationText(db);
   if (turns < minTurns || text.length === 0) return null;
 
   const existingLearned = listSkills(db).filter((s) => s.source === "learned");
-  const prompt = buildExtractionPrompt(text, existingLearned);
 
-  const client = new Anthropic({ apiKey: config.apiKey });
+  let textContent: string;
+  let modelUsed: string;
 
-  const response = await client.messages.create({
-    model,
-    max_tokens: 4096,
-    messages: [{ role: "user", content: prompt }],
-  });
-
-  const textContent = response.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("");
+  if (config.localGen?.isAvailable()) {
+    const prompt = buildLocalExtractionPrompt(text, existingLearned);
+    textContent = config.localGen.generate(prompt, { maxTokens: 256 });
+    modelUsed = "local";
+  } else if (config.apiKey) {
+    const model = config.model ?? "claude-haiku-4-5-20251001";
+    const prompt = buildExtractionPrompt(text, existingLearned);
+    textContent = await generateViaCloud(prompt, config.apiKey, model);
+    modelUsed = model;
+  } else {
+    return null;
+  }
 
   const skills = parseExtractedSkills(textContent);
-  if (skills.length === 0) return { skillsUpserted: 0, skillNames: [], model };
+  if (skills.length === 0) return { skillsUpserted: 0, skillNames: [], model: modelUsed };
 
   const tx = db.db.transaction(() => {
     for (const skill of skills) {
@@ -196,6 +218,6 @@ export async function extractSessionKnowledge(
   return {
     skillsUpserted: skills.length,
     skillNames: skills.map((s) => s.name),
-    model,
+    model: modelUsed,
   };
 }

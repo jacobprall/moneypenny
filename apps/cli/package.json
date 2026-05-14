@@ -8,8 +8,9 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {
-    "build": "bun build src/index.ts --outfile dist/swe --target bun",
+    "build": "bun build src/index.ts --compile --outfile dist/swe --target bun",
     "dev": "bun run src/index.ts",
+    "install:global": "bun run build && ln -sf \"$(pwd)/dist/swe\" /usr/local/bin/swe",
     "test": "bun test",
     "typecheck": "echo 'skipped: hono+bun-types conflict — runtime-verified'"
   },

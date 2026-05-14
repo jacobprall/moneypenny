@@ -6,11 +6,13 @@ import {
   listSessions,
   labelSession,
   type AgentDB,
+  type LocalGen,
 } from "@swe/db";
 import { summariseSession, type SummariseConfig } from "./summarise.js";
 
 export interface AutoLabelConfig extends SummariseConfig {
   repoPath: string;
+  localGen?: LocalGen;
 }
 
 function discoverAgentDbPaths(repoPath: string): string[] {
@@ -89,7 +91,7 @@ export async function runAutoLabel(config: AutoLabelConfig): Promise<void> {
 
             const label = await summariseSession(
               { userText, assistantText },
-              config,
+              { ...config, localGen: config.localGen },
             );
             if (label) {
               labelSession(db, session.id, label);

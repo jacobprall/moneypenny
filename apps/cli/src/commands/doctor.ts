@@ -282,6 +282,29 @@ function checkEmbeddingModel(): Check {
   }
 }
 
+function checkTextGenModel(): Check {
+  const modelsDir = path.join(process.env.HOME ?? "~", ".swe", "models");
+  const modelFile = "qwen2.5-0.5b-instruct-q4_k_m.gguf";
+  const modelPath = path.join(modelsDir, modelFile);
+
+  if (!existsSync(modelPath)) {
+    return {
+      label: "Text gen model",
+      status: "warn",
+      detail: `${modelFile} not found. Session naming/extraction will use cloud API. Run: swe setup models`,
+      group: "Runtime",
+    };
+  }
+
+  try {
+    const st = statSync(modelPath);
+    const sizeMb = (st.size / (1024 * 1024)).toFixed(0);
+    return { label: "Text gen model", status: "pass", detail: `${modelFile} (${sizeMb} MB)`, group: "Runtime" };
+  } catch {
+    return { label: "Text gen model", status: "warn", detail: "Could not stat model file", group: "Runtime" };
+  }
+}
+
 const W = 44;
 
 function hline(left: string, fill: string, right: string, width = W): string {
@@ -300,6 +323,7 @@ export const doctorCommand = new Command("doctor")
       await checkGit(),
       checkSqliteExtensions(repoPath),
       checkEmbeddingModel(),
+      checkTextGenModel(),
       ...checkApiKeys(),
       checkGlobalConfig(),
       checkConfigPermissions(),

@@ -1,6 +1,6 @@
 import * as readline from "node:readline";
 import { createAgentLoop, createChildLoopFactory, runAutoLabel, type AgentLoop, type ProviderName } from "@swe/loop";
-import { createSession, getConfig, setActiveSession, type AgentDB } from "@swe/db";
+import { createSession, getConfig, setActiveSession, createLocalGen, type AgentDB, type LocalGen } from "@swe/db";
 import type { ToolRegistry } from "@swe/tools";
 import { confirmationGate, createHookPipeline, type Hook, type Prompt } from "@swe/ctx";
 import { extractSessionKnowledge } from "@swe/skills";
@@ -113,7 +113,7 @@ async function runTurn(
   }
 }
 
-async function maybeExtractKnowledge(cfg: ReplConfig): Promise<void> {
+async function maybeExtractKnowledge(cfg: ReplConfig, localGen?: LocalGen): Promise<void> {
   const enabled = getConfig(cfg.db, "extract_on_session_end");
   if (enabled === "false" || enabled === "0") return;
 
@@ -123,6 +123,7 @@ async function maybeExtractKnowledge(cfg: ReplConfig): Promise<void> {
     const result = await extractSessionKnowledge(cfg.db, {
       apiKey: cfg.apiKey,
       model: extractModel ?? undefined,
+      localGen,
     });
     if (result && result.skillsUpserted > 0) {
       printInfo(
@@ -145,6 +146,8 @@ export async function runRepl(cfg: ReplConfig): Promise<void> {
   const pipeline = buildHookPipeline(cfg.hooks, rl, cfg.confirmDestructive);
   let loop = await buildLoop(cfg, pipeline);
 
+  const localGen = createLocalGen();
+
   let { model: activeModel, provider: activeProvider, apiKey: activeApiKey } = cfg;
 
   const slashCtx: SlashContext = { db: cfg.db, repoPath: cfg.repoPath };
@@ -160,6 +163,7 @@ export async function runRepl(cfg: ReplConfig): Promise<void> {
     model: activeModel,
     provider: activeProvider,
     apiKey: activeApiKey,
+    localGen,
   });
 
   try {
@@ -211,7 +215,8 @@ export async function runRepl(cfg: ReplConfig): Promise<void> {
   } finally {
     renderer.stop();
     rl.close();
-    await maybeExtractKnowledge(cfg);
+    await maybeExtractKnowledge(cfg, localGen);
+    localGen.close();
   }
 }
 
