@@ -1,0 +1,25 @@
+{
+  "name": "@mp/loop",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@mp/db": "workspace:*",
+    "@mp/ctx": "workspace:*",
+    "@mp/tools": "workspace:*",
+    "@anthropic-ai/sdk": "^0.39.0",
+    "openai": "^4.77.0",
+    "@google/genai": "^0.7.0"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --external bun:sqlite",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "bun-types": "latest",
+    "tsup": "^8.0.0",
+    "typescript": "^5.7.0"
+  }
+}
