@@ -97,7 +97,16 @@ export function getActiveSession(db: AgentDB): Session | null {
 export function setActiveSession(db: AgentDB, sessionId: string): void {
   db.activeSessionId = sessionId;
   try {
-    db.db.prepare(`UPDATE sessions SET last_active_at = ? WHERE id = ?`).run(Date.now(), sessionId);
+    const now = Date.now();
+    db.db.exec("BEGIN IMMEDIATE");
+    try {
+      db.db.prepare(`UPDATE sessions SET is_active = 0 WHERE is_active = 1 AND id != ?`).run(sessionId);
+      db.db.prepare(`UPDATE sessions SET is_active = 1, last_active_at = ? WHERE id = ?`).run(now, sessionId);
+      db.db.exec("COMMIT");
+    } catch (inner) {
+      try { db.db.exec("ROLLBACK"); } catch { /* best effort */ }
+      throw inner;
+    }
   } catch (e) {
     throw sqlError("setActiveSession", e);
   }

@@ -1,7 +1,7 @@
-import { sqlError } from "@mp/db/errors";
-import { globMatch } from "@mp/db/glob";
-import type { AgentDB, SearchOptions, SearchResult } from "@mp/db/types";
-import { getWorkspaceHandle } from "@mp/db/workspace";
+import { sqlError } from "@swe/db/errors";
+import { globMatch } from "@swe/db/glob";
+import type { AgentDB, SearchOptions, SearchResult } from "@swe/db/types";
+import { getWorkspaceHandle } from "@swe/db/workspace";
 import {
   RRF_K,
   DEFAULT_SEARCH_LIMIT,
@@ -191,7 +191,7 @@ export function hybridSearch(db: AgentDB, query: string, opts?: SearchOptions): 
       try {
         vectorList = vectorSearch(wsHandle, emb, fetchLimit);
       } catch (e) {
-        console.warn(`[moneypenny] vector search failed, falling back to BM25-only: ${e instanceof Error ? e.message : String(e)}`);
+        console.warn(`[swe] vector search failed, falling back to BM25-only: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
   }

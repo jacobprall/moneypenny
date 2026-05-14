@@ -1,5 +1,5 @@
 {
-  "name": "@mp/agents",
+  "name": "@swe/agents",
   "version": "0.1.0",
   "type": "module",
   "main": "src/index.ts",
@@ -10,10 +10,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mp/db": "workspace:*",
-    "@mp/loop": "workspace:*",
-    "@mp/ctx": "workspace:*",
-    "@mp/tools": "workspace:*",
+    "@swe/db": "workspace:*",
+    "@swe/loop": "workspace:*",
+    "@swe/ctx": "workspace:*",
+    "@swe/tools": "workspace:*",
     "gray-matter": "^4.0.3",
     "chokidar": "^4.0.3",
     "cron-parser": "^5.0.0",

@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import type { Content, FunctionDeclaration, Part, Tool } from "@google/genai";
-import type { ContentBlock } from "@mp/ctx";
+import type { ContentBlock } from "@swe/ctx";
 import { DEFAULT_MAX_TOKENS } from "./types.js";
 import type { AssistantMessage, TokenUsage } from "./types.js";
 import type { CompletionParams, LLMProvider, StreamEvent } from "./provider.js";

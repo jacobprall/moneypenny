@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join as pathJoin } from "node:path";
-import { inferProvider, type ProviderName } from "@mp/loop";
+import { inferProvider, type ProviderName } from "@swe/loop";
 
 export interface ResolvedConfig {
   provider: ProviderName;
@@ -15,7 +15,7 @@ export interface ResolvedConfig {
 let _globalcache: Record<string, unknown> | null | undefined;
 
 export function globalConfigPath(): string {
-  return pathJoin(homedir(), ".moneypenny", "config.json");
+  return pathJoin(homedir(), ".swe", "config.json");
 }
 
 function loadGlobalRaw(): Record<string, unknown> {
@@ -80,7 +80,7 @@ export function availableProviders(): ProviderName[] {
 export function resolveConfig(flags: Partial<ResolvedConfig>): ResolvedConfig {
   const model =
     flags.model ??
-    process.env.MP_MODEL ??
+    process.env.SWE_MODEL ??
     readGlobalConfig("model") ??
     "claude-sonnet-4-6";
 
@@ -95,7 +95,7 @@ export function resolveConfig(flags: Partial<ResolvedConfig>): ResolvedConfig {
   if (!apiKey) {
     const spec = PROVIDER_KEY_MAP[provider];
     throw new Error(
-      `No ${spec.label} API key found. Set ${spec.envVar} or run \`mp config set ${spec.configKey} <key>\``,
+      `No ${spec.label} API key found. Set ${spec.envVar} or run \`swe config set ${spec.configKey} <key>\``,
     );
   }
 

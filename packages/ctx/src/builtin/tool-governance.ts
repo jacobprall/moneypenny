@@ -1,15 +1,17 @@
-import { globMatch } from "@mp/db/glob";
+import { globMatch } from "@swe/db/glob";
 import { BoundedMap } from "../bounded-map.js";
 import type { GovernanceConfig, Hook, HookContext, PreHookResult } from "./types.js";
 
 const PATH_KEYS = [
   "path",
+  "file_path",
   "filePath",
   "filepath",
   "file",
   "filename",
   "target",
   "directory",
+  "dir",
   "dest",
   "src",
   "destination",

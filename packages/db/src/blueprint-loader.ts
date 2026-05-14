@@ -5,12 +5,12 @@ import { DEFAULT_BLUEPRINT, DEFAULT_EXCLUDE_PATTERNS } from "./blueprint";
 
 /**
  * Discover available blueprints from built-in defaults and user-defined JSON
- * files in `.moneypenny/blueprints/`.
+ * files in `.swe/blueprints/`.
  */
 export function discoverBlueprints(repoPath: string): AgentBlueprint[] {
   const results: AgentBlueprint[] = [DEFAULT_BLUEPRINT];
 
-  const blueprintsDir = join(repoPath, ".moneypenny", "blueprints");
+  const blueprintsDir = join(repoPath, ".swe", "blueprints");
   if (!existsSync(blueprintsDir)) return results;
 
   let files: string[];

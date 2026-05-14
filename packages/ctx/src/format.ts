@@ -3,7 +3,7 @@ import type { AnthropicContentBlock, AnthropicMessage, ContentBlock } from "./ty
 const LOG_PREFIX = "[@mp/ctx]";
 
 function debugWarn(msg: string, cause?: unknown): void {
-  if (process.env["DEBUG"] || process.env["MP_DEBUG"]) {
+  if (process.env["DEBUG"] || process.env["SWE_DEBUG"]) {
     console.debug(LOG_PREFIX, msg, cause ?? "");
   }
 }

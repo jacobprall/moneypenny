@@ -1,5 +1,5 @@
-import type { AgentDB } from "@mp/db";
-import type { AnthropicToolDef } from "@mp/ctx";
+import type { AgentDB } from "@swe/db";
+import type { AnthropicToolDef } from "@swe/ctx";
 import { z } from "zod";
 import type { ChildLoopFactory } from "./tools/delegate.js";
 

@@ -81,16 +81,21 @@ function tryLoadSqliteExtensions(database: Database, modelPath: string): boolean
 }
 
 function getCurrentSchemaVersion(database: Database): number {
+  let hasTable: boolean;
   try {
     const row = database
       .prepare(`SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = 'schema_version' LIMIT 1`)
       .get() as { ok: number } | undefined;
-    if (!row) return 0;
-    const ver = database.prepare(`SELECT MAX(version) AS v FROM schema_version`).get() as { v: number | null } | undefined;
-    return ver?.v ?? 0;
+    hasTable = !!row;
   } catch {
     return 0;
   }
+  if (!hasTable) return 0;
+  const ver = database.prepare(`SELECT MAX(version) AS v FROM schema_version`).get() as { v: number | null } | undefined;
+  if (ver?.v == null) {
+    throw new Error("schema_version table exists but contains no rows — database may be corrupted");
+  }
+  return ver.v;
 }
 
 function applySchema(database: Database): void {

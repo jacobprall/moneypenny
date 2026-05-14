@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { reindexFiles } from "@mp/db";
+import { reindexFiles } from "@swe/db";
 import type { ToolDefinition } from "../types.js";
 import type { SpawnResult } from "../utils.js";
 import { truncate, spawnWithTimeout, resolveSafePath } from "../utils.js";

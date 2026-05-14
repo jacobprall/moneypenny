@@ -1,4 +1,4 @@
-import { inferProvider, type ProviderName } from "@mp/loop";
+import { inferProvider, type ProviderName } from "@swe/loop";
 import {
   compactConversation,
   createSession,
@@ -7,8 +7,8 @@ import {
   listSessions,
   setActiveSession,
   type AgentDB,
-} from "@mp/db";
-import { getIndexStatus, hybridSearch, indexCodebase } from "@mp/search";
+} from "@swe/db";
+import { getIndexStatus, hybridSearch, indexCodebase } from "@swe/search";
 import {
   accent,
   muted,
@@ -179,7 +179,7 @@ function handleModelCommand(
     const exact = MODEL_CATALOG.find((m) => m.id === argRest || m.label.toLowerCase() === argRest.toLowerCase());
     if (exact) {
       if (!available.includes(exact.provider)) {
-        printError(`No API key configured for ${exact.provider}. Run \`mp config set ${exact.provider}_api_key <key>\``);
+        printError(`No API key configured for ${exact.provider}. Run \`swe config set ${exact.provider}_api_key <key>\``);
         return;
       }
       printInfo(`  Switching to ${accent(exact.label)} ${muted(`(${exact.id})`)}`);

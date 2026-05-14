@@ -1,4 +1,4 @@
-import { closeWorkspaceDB, getConversation, getEvents } from "@mp/db";
+import { closeAgentDB, closeWorkspaceDB, getConversation, getEvents } from "@swe/db";
 import { Command } from "commander";
 import * as path from "node:path";
 
@@ -110,6 +110,7 @@ export const inspectCommand = new Command("inspect")
 
         printInfo("Usage hints: pass one of --table, --events, --conversation, --stats, or --sql.");
       } finally {
+        try { closeAgentDB(db); } catch { /* best effort */ }
         try { closeWorkspaceDB(workspace); } catch { /* best effort */ }
       }
     },

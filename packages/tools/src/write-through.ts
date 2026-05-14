@@ -1,4 +1,4 @@
-import { reindexFile, type AgentDB } from "@mp/db";
+import { reindexFile, type AgentDB } from "@swe/db";
 
 /**
  * Best-effort write-through: re-index a single file in the workspace DB

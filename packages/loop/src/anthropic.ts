@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Message, MessageCreateParams, TextBlockParam } from "@anthropic-ai/sdk/resources/messages";
-import type { ContentBlock } from "@mp/ctx";
+import type { ContentBlock } from "@swe/ctx";
 import { DEFAULT_MAX_TOKENS } from "./types.js";
 import type { AssistantMessage, TokenUsage } from "./types.js";
 import type { CompletionParams, LLMProvider, StreamEvent } from "./provider.js";

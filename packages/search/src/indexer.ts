@@ -1,10 +1,10 @@
 import { readFileSync, readdirSync, lstatSync } from "node:fs";
 import { join, relative, normalize } from "node:path";
-import { sqlError } from "@mp/db/errors";
-import type { AgentDB, FileEntry, IndexOptions, IndexResult, IndexStatus, TreeDiff, WorkspaceDB } from "@mp/db/types";
+import { sqlError } from "@swe/db/errors";
+import type { AgentDB, FileEntry, IndexOptions, IndexResult, IndexStatus, TreeDiff, WorkspaceDB } from "@swe/db/types";
 import { getExcludePatterns, getExcludePatternsFromDb } from "./file-tree";
-import { getWorkspaceHandle } from "@mp/db/workspace";
-import { globMatch } from "@mp/db/glob";
+import { getWorkspaceHandle } from "@swe/db/workspace";
+import { globMatch } from "@swe/db/glob";
 import { languageFromExt, sha256Hex, chunkFileContent } from "./chunker";
 import { tryStat, mapFileRow, type FileRow } from "./fs-utils";
 import { loadGitRules, gitIgnored, type GitRule } from "./gitignore";
@@ -76,7 +76,7 @@ function listSourceFiles(opts: WalkOptions): string[] {
         if (visitedInodes.has(inodeKey)) continue;
         visitedInodes.add(inodeKey);
 
-        if (e.name === ".git" || e.name === ".moneypenny") continue;
+        if (e.name === ".git" || e.name === ".swe") continue;
         if (exclude.some((p) => globMatch(p, entryRel) || globMatch(p, `${entryRel}/`))) continue;
         if (gitIgnored(entryRel, true, localRules)) continue;
         walk(full, localRules, depth + 1);

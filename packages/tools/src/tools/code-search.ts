@@ -1,11 +1,12 @@
 import path from "node:path";
-import { readdir } from "node:fs/promises";
+import { readdir, lstat } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { z } from "zod";
-import { hybridSearch } from "@mp/search";
-import { validateAndRefreshResults } from "@mp/db/workspace";
-import type { SearchOptions, SearchResult } from "@mp/db/types";
+import { hybridSearch } from "@swe/search";
+import { validateAndRefreshResults } from "@swe/db/workspace";
+import type { SearchOptions, SearchResult } from "@swe/db/types";
 import type { ToolDefinition } from "../types.js";
-import { truncate } from "../utils.js";
+import { truncate, MAX_FILE_SIZE } from "../utils.js";
 
 const LANG_EXT: Record<string, string[]> = {
   typescript: [".ts", ".tsx"],
@@ -29,6 +30,7 @@ async function* walkFiles(
   dir: string,
   skipDirs: Set<string>,
   signal?: AbortSignal,
+  rootReal?: string,
 ): AsyncGenerator<string> {
   if (signal?.aborted) return;
   let entries;
@@ -37,13 +39,23 @@ async function* walkFiles(
   } catch {
     return;
   }
+  const root = rootReal ?? dir;
   for (const e of entries) {
     if (signal?.aborted) return;
     const full = path.join(dir, e.name);
+    if (e.isSymbolicLink()) continue;
     if (e.isDirectory()) {
       if (skipDirs.has(e.name)) continue;
-      yield* walkFiles(full, skipDirs, signal);
+      yield* walkFiles(full, skipDirs, signal, root);
     } else if (e.isFile()) {
+      try {
+        const st = await lstat(full);
+        if (st.size > MAX_FILE_SIZE) continue;
+        const real = realpathSync(full);
+        if (!real.startsWith(root + path.sep) && real !== root) continue;
+      } catch {
+        continue;
+      }
       yield full;
     }
   }

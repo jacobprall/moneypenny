@@ -4,8 +4,8 @@ import * as path from "node:path";
 
 import { bold, muted, success, error, warning } from "../display";
 import { globalConfigPath } from "../config";
-import { getDbPath, getMoneypennyDir } from "../session";
-import { probeExtensions } from "@mp/db";
+import { getDbPath, getSweDir } from "../session";
+import { probeExtensions } from "@swe/db";
 
 type Status = "pass" | "warn" | "fail";
 
@@ -98,7 +98,7 @@ function checkApiKeys(): Check[] {
     checks.push({
       label: `${spec.label} API key`,
       status: "warn",
-      detail: `Not found. Set ${spec.envVar} or run: mp config set ${spec.configKey} <key>`,
+      detail: `Not found. Set ${spec.envVar} or run: swe config set ${spec.configKey} <key>`,
       group: "Auth",
     });
   }
@@ -173,16 +173,16 @@ async function checkGit(): Promise<Check> {
 }
 
 function checkRepoMpDir(repoPath: string): Check {
-  const mpDir = getMoneypennyDir(repoPath);
-  if (!existsSync(mpDir)) {
+  const sweDir = getSweDir(repoPath);
+  if (!existsSync(sweDir)) {
     return {
-      label: ".moneypenny/ directory",
+      label: ".swe/ directory",
       status: "warn",
-      detail: `Not found at ${mpDir} — will be created on first mp chat`,
+      detail: `Not found at ${sweDir} — will be created on first swe chat`,
       group: "Repository",
     };
   }
-  return { label: ".moneypenny/ directory", status: "pass", detail: mpDir, group: "Repository" };
+  return { label: ".swe/ directory", status: "pass", detail: sweDir, group: "Repository" };
 }
 
 function checkDefaultSession(repoPath: string): Check {
@@ -201,7 +201,7 @@ function checkDefaultSession(repoPath: string): Check {
 }
 
 function checkSessions(repoPath: string): Check {
-  const sessionsDir = path.join(getMoneypennyDir(repoPath), "sessions");
+  const sessionsDir = path.join(getSweDir(repoPath), "sessions");
   if (!existsSync(sessionsDir)) {
     return { label: "Named sessions", status: "pass", detail: "None (only default)", group: "Repository" };
   }
@@ -260,7 +260,7 @@ function checkSqliteExtensions(_repoPath: string): Check {
 }
 
 function checkEmbeddingModel(): Check {
-  const modelsDir = path.join(process.env.HOME ?? "~", ".moneypenny", "models");
+  const modelsDir = path.join(process.env.HOME ?? "~", ".swe", "models");
   const modelFile = "nomic-embed-text-v1.5.Q8_0.gguf";
   const modelPath = path.join(modelsDir, modelFile);
 
@@ -310,7 +310,7 @@ export const doctorCommand = new Command("doctor")
     const fails = checks.filter((c) => c.status === "fail").length;
     const warns = checks.filter((c) => c.status === "warn").length;
 
-    process.stdout.write(`\n  ${bold("mp doctor")}\n`);
+    process.stdout.write(`\n  ${bold("swe doctor")}\n`);
 
     const groups = ["Runtime", "Auth", "Repository"];
     for (const group of groups) {

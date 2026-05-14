@@ -5,7 +5,7 @@ import {
   getAgentRow,
   runAgent,
   scan,
-} from "@mp/agents";
+} from "@swe/agents";
 import { createRequireDbMiddleware, zodErrorMessage, type HttpVars } from "../middleware.js";
 import type { CreateHttpAppOptions } from "../types.js";
 

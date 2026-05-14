@@ -1,12 +1,12 @@
 /**
- * Default agent scaffolded into `.moneypenny/agents/` on first init.
+ * Default agent scaffolded into `.swe/agents/` on first init.
  */
 
 export const HELLO_AGENT_MD = `---
 name: Hello World
 description: >
   A starter agent that proves the runtime is working. Run it with
-  \`mp agents run hello\` or uncomment the schedule to fire it on a cron.
+  \`swe agents run hello\` or uncomment the schedule to fire it on a cron.
 enabled: true
 
 # Uncomment the next two lines to run on a schedule:
@@ -30,14 +30,14 @@ runtime is working end-to-end: load, validate, run, and record output.
 ## Steps
 
 1. Print the current date and time in ISO-8601 format.
-2. Say "Hello from Moneypenny!" and briefly describe what you are.
+2. Say "Hello from swe!" and briefly describe what you are.
 
 ## Output
 
 Reply in a single short paragraph. Keep it under 50 words.
 
 <!--
-This file is an agent definition. Every folder inside \`.moneypenny/agents/\`
+This file is an agent definition. Every folder inside \`.swe/agents/\`
 becomes an agent whose id is the folder name (e.g. this one is "hello").
 
 Frontmatter reference (all fields except \`name\` are optional):
@@ -61,12 +61,12 @@ Everything below the frontmatter is the agent's system prompt.
 
 To create a new agent:
 
-  mkdir .moneypenny/agents/my-agent
-  cp .moneypenny/agents/hello/agent.md .moneypenny/agents/my-agent/agent.md
+  mkdir .swe/agents/my-agent
+  cp .swe/agents/hello/agent.md .swe/agents/my-agent/agent.md
   # edit the new agent.md, then:
-  mp agents reload   # or POST /api/agents/reload
-  mp agents list     # verify it loaded
-  mp agents run my-agent
+  swe agents reload   # or POST /api/agents/reload
+  swe agents list     # verify it loaded
+  swe agents run my-agent
 -->
 `;
 

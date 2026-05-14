@@ -1,4 +1,4 @@
-import type { Skill, SubagentDef } from "@mp/db/types";
+import type { Skill, SubagentDef } from "@swe/db/types";
 
 /**
  * Hardcoded default skills have been replaced by file-based bundled skills

@@ -1,15 +1,14 @@
-import type { ChildLoopFactory, ChildLoopParams, ChildLoopResult, ToolRegistry } from "@mp/tools";
-import { createToolRegistry } from "@mp/tools";
+import type { ChildLoopFactory, ChildLoopParams, ChildLoopResult, ToolRegistry } from "@swe/tools";
+import { createToolRegistry } from "@swe/tools";
 import {
   definePrompt,
   createHookPipeline,
   costGuard,
   credentialRedactor,
   toolGovernance,
-} from "@mp/ctx";
-import { getConversation } from "@mp/db";
+} from "@swe/ctx";
+import { getConversation } from "@swe/db";
 import { createAgentLoop } from "./loop.js";
-import type { LoopEvent } from "./types.js";
 import type { ProviderName, LLMProvider } from "./provider.js";
 
 export interface CreateChildLoopFactoryConfig {
@@ -52,7 +51,7 @@ export function createChildLoopFactory(config: CreateChildLoopFactoryConfig): Ch
             name: "subagent-context",
             placement: "static",
             resolve: () => [
-              "You are a focused subagent within the moneypenny system.",
+              "You are a focused subagent within the swe system.",
               "Complete the task you are given thoroughly, then provide a clear summary of your findings or actions.",
               "You operate against the same codebase as the parent agent.",
             ].join("\n"),
@@ -87,7 +86,6 @@ export function createChildLoopFactory(config: CreateChildLoopFactoryConfig): Ch
       let iterations = 0;
 
       for await (const event of childLoop.run(params.db, params.task)) {
-        trackChildEvent(event, (content) => { finalContent = content; });
         if (event.type === "turn.complete") {
           totalCost += event.cost.costUsd;
           iterations++;
@@ -109,6 +107,3 @@ export function createChildLoopFactory(config: CreateChildLoopFactoryConfig): Ch
   };
 }
 
-function trackChildEvent(event: LoopEvent, _onContent: (c: string) => void): void {
-  void event;
-}

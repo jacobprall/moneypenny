@@ -1,7 +1,7 @@
-import type { AgentDB } from "@mp/db";
-import { createAgentLoop, type LoopEvent } from "@mp/loop";
-import { definePrompt, createHookPipeline, costGuard, credentialRedactor, toolGovernance, dbPolicyHook } from "@mp/ctx";
-import { createToolRegistry, registerBuiltinTools } from "@mp/tools";
+import type { AgentDB } from "@swe/db";
+import { createAgentLoop, type LoopEvent } from "@swe/loop";
+import { definePrompt, createHookPipeline, costGuard, credentialRedactor, toolGovernance, dbPolicyHook } from "@swe/ctx";
+import { createToolRegistry, registerBuiltinTools } from "@swe/tools";
 import * as repo from "./repository.js";
 import { frontmatterSchema, type AgentFrontmatter } from "./schema.js";
 

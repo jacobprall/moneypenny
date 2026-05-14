@@ -1,10 +1,10 @@
 import { z } from "zod";
-import { compactConversation } from "@mp/db";
+import { compactConversation } from "@swe/db";
 import type { ToolDefinition } from "../types.js";
 
 const inputSchema = z.object({
-  up_to_turn: z.number(),
-  summary: z.string(),
+  up_to_turn: z.number().int().positive(),
+  summary: z.string().min(1),
 });
 
 export const compactConversationTool: ToolDefinition = {

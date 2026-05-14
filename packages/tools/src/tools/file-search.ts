@@ -25,8 +25,9 @@ export const fileSearchTool: ToolDefinition = {
       const root = path.resolve(context.repoPath);
       for await (const match of glob.scan({ cwd, onlyFiles: true })) {
         const abs = path.resolve(cwd, match);
-        const rel = path.relative(root, abs).split(path.sep).join("/");
-        found.push(rel);
+        const rel = path.relative(root, abs);
+        if (rel.startsWith("..") || path.isAbsolute(rel)) continue;
+        found.push(rel.split(path.sep).join("/"));
         if (found.length >= MAX_RESULTS) break;
       }
       if (found.length === 0) {

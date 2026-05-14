@@ -7,7 +7,7 @@ export const DEFAULT_EXCLUDE_PATTERNS: string[] = [
   "**/node_modules/**",
   "**/vendor/**",
   "**/.git/**",
-  "**/.moneypenny/**",
+  "**/.swe/**",
   "**/dist/**",
   "**/build/**",
   "**/out/**",
@@ -56,7 +56,7 @@ const defaultTool = (name: string, description: string, inputSchema: Record<stri
 });
 
 export const DEFAULT_BLUEPRINT: AgentBlueprint = {
-  name: "moneypenny-default",
+  name: "swe-default",
   description: "General-purpose coding assistant",
   tools: [
     defaultTool("read_file", "Read file contents at a path.", {

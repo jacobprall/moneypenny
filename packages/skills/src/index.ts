@@ -10,3 +10,5 @@ export {
 } from "./skills.js";
 export { getSubagentDef, listSubagentDefs, upsertSubagentDef } from "./subagents.js";
 export { DEFAULT_SKILLS, DEFAULT_SUBAGENT_DEFS } from "./defaults.js";
+export { extractSessionKnowledge } from "./extractor.js";
+export type { ExtractorConfig, ExtractionResult } from "./extractor.js";

@@ -45,13 +45,20 @@ function applyPatterns(
  * patterns. Returns true if any value was changed. The in-place mutation
  * is intentional: preTool hooks receive the input by reference before the
  * tool executes, so modifications propagate without a return channel.
+ *
+ * Uses a visited set for cycle detection to handle circular references.
  */
 function redactObject(
   obj: unknown,
   compiled: RegExp[],
   replacement: string,
+  visited?: WeakSet<object>,
 ): boolean {
   if (typeof obj !== "object" || obj === null) return false;
+  const seen = visited ?? new WeakSet<object>();
+  if (seen.has(obj as object)) return false;
+  seen.add(obj as object);
+
   const record = obj as Record<string, unknown>;
   let changed = false;
   for (const key of Object.keys(record)) {
@@ -63,7 +70,7 @@ function redactObject(
         changed = true;
       }
     } else if (typeof val === "object" && val !== null) {
-      if (redactObject(val, compiled, replacement)) changed = true;
+      if (redactObject(val, compiled, replacement, seen)) changed = true;
     }
   }
   return changed;

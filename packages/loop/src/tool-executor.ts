@@ -2,17 +2,53 @@ import {
   appendEvent,
   appendMessage,
   type AgentDB,
-} from "@mp/db";
-import type { HookContext, HookPipeline } from "@mp/ctx";
-import type { ToolContext, ToolRegistry } from "@mp/tools";
+} from "@swe/db";
+import type { HookContext, HookPipeline } from "@swe/ctx";
+import type { ToolContext, ToolRegistry } from "@swe/tools";
 import { LoopError, type LoopEvent, type ToolCallInfo } from "./types.js";
 
 export interface ToolExecutorConfig {
   hooks: HookPipeline;
   tools: ToolRegistry;
   maxToolOutputBytes: number;
+  toolTimeoutMs?: number;
   signal?: AbortSignal;
   onEvent: (e: LoopEvent) => LoopEvent;
+}
+
+const DEFAULT_TOOL_TIMEOUT_MS = 120_000; // 2 minutes
+
+async function executeWithTimeout(
+  tools: ToolRegistry,
+  name: string,
+  input: unknown,
+  context: ToolContext,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<string> {
+  const ac = new AbortController();
+  const combinedSignal = ac.signal;
+
+  const abortOnParent = signal
+    ? () => ac.abort()
+    : undefined;
+  if (abortOnParent) signal!.addEventListener("abort", abortOnParent, { once: true });
+
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+
+  const contextWithSignal: ToolContext = { ...context, signal: combinedSignal };
+
+  try {
+    return await tools.execute(name, input, contextWithSignal);
+  } catch (e) {
+    if (combinedSignal.aborted && !signal?.aborted) {
+      return `Error: tool "${name}" timed out after ${Math.round(timeoutMs / 1000)}s`;
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+    if (abortOnParent) signal!.removeEventListener("abort", abortOnParent);
+  }
 }
 
 function truncateOutput(output: string, maxBytes: number): string {
@@ -86,10 +122,11 @@ export async function* executeToolsParallel(
     appendEvent(db, { type: "tool.called", payload: { tool: tc.name, input: tc.input }, turn });
   }
 
+  const timeoutMs = cfg.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
   const results = await Promise.allSettled(
     executableCalls.map(async (toolCall) => {
       const startMs = Date.now();
-      const output = await cfg.tools.execute(toolCall.name, toolCall.input, toolContext);
+      const output = await executeWithTimeout(cfg.tools, toolCall.name, toolCall.input, toolContext, timeoutMs, cfg.signal);
       const durationMs = Date.now() - startMs;
       return { toolCall, output, durationMs };
     }),
@@ -156,8 +193,9 @@ async function* executeSingleTool(
   yield cfg.onEvent({ type: "tool.calling", name: toolCall.name, input: toolCall.input });
   appendEvent(db, { type: "tool.called", payload: { tool: toolCall.name, input: toolCall.input }, turn });
 
+  const timeoutMs = cfg.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
   const startMs = Date.now();
-  const output = await cfg.tools.execute(toolCall.name, toolCall.input, toolContext);
+  const output = await executeWithTimeout(cfg.tools, toolCall.name, toolCall.input, toolContext, timeoutMs, cfg.signal);
   const durationMs = Date.now() - startMs;
 
   let finalOutput = truncateOutput(output, cfg.maxToolOutputBytes);

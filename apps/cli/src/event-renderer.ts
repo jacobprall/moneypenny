@@ -1,4 +1,4 @@
-import type { LoopEvent } from "@mp/loop";
+import type { LoopEvent } from "@swe/loop";
 import {
   muted,
   Spinner,

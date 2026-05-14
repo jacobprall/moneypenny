@@ -1,29 +1,29 @@
 {
-  "name": "moneypenny-cli",
+  "name": "swe",
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "mp": "./src/index.ts"
+    "swe": "./src/index.ts"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {
-    "build": "bun build src/index.ts --outfile dist/mp --target bun",
+    "build": "bun build src/index.ts --outfile dist/swe --target bun",
     "dev": "bun run src/index.ts",
     "test": "bun test",
     "typecheck": "echo 'skipped: hono+bun-types conflict — runtime-verified'"
   },
   "dependencies": {
-    "@mp/db": "workspace:*",
-    "@mp/search": "workspace:*",
-    "@mp/ctx": "workspace:*",
-    "@mp/loop": "workspace:*",
-    "@mp/tools": "workspace:*",
-    "@mp/skills": "workspace:*",
-    "@mp/mcp": "workspace:*",
-    "@mp/http": "workspace:*",
-    "@mp/cloud": "workspace:*",
-    "@mp/agents": "workspace:*",
+    "@swe/db": "workspace:*",
+    "@swe/search": "workspace:*",
+    "@swe/ctx": "workspace:*",
+    "@swe/loop": "workspace:*",
+    "@swe/tools": "workspace:*",
+    "@swe/skills": "workspace:*",
+    "@swe/mcp": "workspace:*",
+    "@swe/http": "workspace:*",
+    "@swe/cloud": "workspace:*",
+    "@swe/agents": "workspace:*",
     "commander": "^13.0.0"
   },
   "devDependencies": {

@@ -1,5 +1,5 @@
 {
-  "name": "@mp/search",
+  "name": "@swe/search",
   "version": "0.1.0",
   "type": "module",
   "main": "src/index.ts",
@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mp/db": "workspace:*"
+    "@swe/db": "workspace:*"
   },
   "devDependencies": {
     "bun-types": "latest",

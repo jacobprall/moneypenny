@@ -1,4 +1,4 @@
-export const COLORS_ENABLED = !process.env.MP_NO_COLOR && !process.env.NO_COLOR;
+export const COLORS_ENABLED = !process.env.SWE_NO_COLOR && !process.env.NO_COLOR;
 
 const TRUECOLOR =
   COLORS_ENABLED &&
@@ -168,7 +168,7 @@ export function printWarn(msg: string): void {
 }
 
 export function printDebug(msg: string): void {
-  if (process.env.MP_VERBOSE === "1" || process.env.DEBUG) {
+  if (process.env.SWE_VERBOSE === "1" || process.env.DEBUG) {
     process.stderr.write(`${muted(`[debug] ${msg}`)}\n`);
   }
 }
@@ -189,7 +189,7 @@ export function printBanner(opts: {
     : opts.model;
 
   process.stdout.write("\n");
-  process.stdout.write(`  ${bold("moneypenny")} ${muted(`v${opts.version}`)}\n`);
+  process.stdout.write(`  ${bold("swe")} ${muted(`v${opts.version}`)}\n`);
   process.stdout.write("\n");
   process.stdout.write(`  ${muted("session")}  ${opts.session}\n`);
   process.stdout.write(`  ${muted("model")}    ${modelDisplay}\n`);

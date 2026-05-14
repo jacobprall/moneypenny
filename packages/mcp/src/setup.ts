@@ -30,8 +30,8 @@ export function writeCursorConfig(repoPath: string): void {
   const fp = join(dir, "mcp.json");
   const root = readJson(fp);
   mergeMcpServers(root, {
-    moneypenny: {
-      command: "mp",
+    swe: {
+      command: "swe",
       args: ["mcp", "--repo", repoPath],
     },
   });
@@ -54,18 +54,18 @@ function claudeDesktopConfigPath(): string | null {
   return join(home, ".config/Claude/claude_desktop_config.json");
 }
 
-/** Merges the Moneypenny MCP server entry into Claude Desktop config when the path exists or can be created. */
+/** Merges the swe MCP server entry into Claude Desktop config when the path exists or can be created. */
 export function writeClaudeConfig(repoPath: string): void {
   const fp = claudeDesktopConfigPath();
   if (!fp) {
-    console.error("[moneypenny] Could not resolve Claude Desktop config path for this platform.");
+    console.error("[swe] Could not resolve Claude Desktop config path for this platform.");
     return;
   }
   ensureDir(dirname(fp));
   const root = readJson(fp);
   mergeMcpServers(root, {
-    moneypenny: {
-      command: "mp",
+    swe: {
+      command: "swe",
       args: ["mcp", "--repo", repoPath],
     },
   });

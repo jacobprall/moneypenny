@@ -5,10 +5,10 @@ import {
   listSessions,
   type AgentBlueprint,
   type SessionSummary,
-} from "@mp/db";
+} from "@swe/db";
 import { bold, muted } from "./display.js";
 import { listAgents, openAgent, type AgentInfo } from "./session.js";
-import type { WorkspaceDB } from "@mp/db";
+import type { WorkspaceDB } from "@swe/db";
 
 export function ask(rl: readline.Interface, prompt: string): Promise<string> {
   return new Promise((resolve) => rl.question(prompt, resolve));
@@ -125,7 +125,7 @@ export async function resolveAgentInteractively(
 
     if (agents.length === 0) {
       blueprint = await pickBlueprint(rl, repoPath);
-      agentName = blueprint.name === "moneypenny-default" ? "default" : blueprint.name;
+      agentName = blueprint.name === "swe-default" ? "default" : blueprint.name;
       startFreshSession = true;
     } else if (agents.length === 1 && agents[0]!.name === "default") {
       agentName = "default";
@@ -133,7 +133,7 @@ export async function resolveAgentInteractively(
       const agentChoice = await pickAgent(rl, agents);
       if (agentChoice.action === "new") {
         blueprint = await pickBlueprint(rl, repoPath);
-        agentName = blueprint.name === "moneypenny-default" ? "default" : blueprint.name;
+        agentName = blueprint.name === "swe-default" ? "default" : blueprint.name;
         startFreshSession = true;
       } else {
         agentName = agentChoice.agent.name;

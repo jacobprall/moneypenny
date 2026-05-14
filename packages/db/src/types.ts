@@ -52,7 +52,7 @@ export interface Skill {
   name: string;
   description: string;
   instructions: string;
-  source?: "builtin" | "blueprint" | "user";
+  source?: "builtin" | "blueprint" | "user" | "learned";
 }
 
 export interface SubagentDef {
@@ -62,7 +62,7 @@ export interface SubagentDef {
   allowedTools: string[];
   maxIterations?: number;
   maxCostUsd?: number;
-  source?: "builtin" | "blueprint" | "user";
+  source?: "builtin" | "blueprint" | "user" | "learned";
 }
 
 export interface AgentBlueprint {

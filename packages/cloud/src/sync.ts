@@ -4,7 +4,7 @@
 
 import type { Database } from "bun:sqlite";
 
-export const SYNC_TABLES = ["policies", "sync_config", "agents"] as const;
+export const SYNC_TABLES = ["policies", "sync_config", "agents", "skills"] as const;
 
 export function hasCloudsync(db: Database): boolean {
   try {

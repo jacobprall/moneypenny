@@ -36,14 +36,14 @@ function wrapToolHandler(
 export function createSidecarServer(baseUrl: string): MCPServerHandle {
   const client = new SidecarClient(baseUrl);
   const server = new McpServer({
-    name: "moneypenny-sidecar",
+    name: "swe-sidecar",
     version: "0.1.0",
   });
 
   server.registerTool(
     "code_search",
     {
-      description: "Search the indexed repository via the Moneypenny HTTP API.",
+      description: "Search the indexed repository via the swe HTTP API.",
       inputSchema: {
         query: z.string(),
         limit: z.number().int().positive().max(100).optional(),
@@ -53,7 +53,7 @@ export function createSidecarServer(baseUrl: string): MCPServerHandle {
     },
     wrapToolHandler("code_search", async (args) => {
       if (!(await client.health())) {
-        return "Moneypenny server not reachable. Start with: mp serve";
+        return "swe server not reachable. Start with: swe serve";
       }
       const { text } = await runCodeSearch(client, args);
       return text;
@@ -74,7 +74,7 @@ export function createSidecarServer(baseUrl: string): MCPServerHandle {
     },
     wrapToolHandler("policy_evaluate", async (args) => {
       if (!(await client.health())) {
-        return JSON.stringify({ error: "Moneypenny server not reachable" });
+        return JSON.stringify({ error: "swe server not reachable" });
       }
       const r = await client.evaluatePolicy(args);
       return JSON.stringify(r ?? { error: "no response" }, null, 2);
@@ -84,7 +84,7 @@ export function createSidecarServer(baseUrl: string): MCPServerHandle {
   server.registerTool(
     "audit_query",
     {
-      description: "Read recent audit events from the Moneypenny event log.",
+      description: "Read recent audit events from the swe event log.",
       inputSchema: {
         limit: z.number().int().positive().max(500).optional(),
         type: z.string().optional(),

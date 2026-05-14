@@ -6,9 +6,9 @@ import {
   getSessionMetrics,
   recordTurnMetrics,
   type AgentDB,
-} from "@mp/db";
-import type { HookContext } from "@mp/ctx";
-import type { ToolContext } from "@mp/tools";
+} from "@swe/db";
+import type { HookContext } from "@swe/ctx";
+import type { ToolContext } from "@swe/tools";
 import { createProvider, type LLMProvider } from "./provider.js";
 import { calculateCost } from "./cost.js";
 import {
@@ -318,7 +318,7 @@ export async function createAgentLoop(config: LoopConfig): Promise<AgentLoop> {
     } catch (e) {
       yield notify({
         type: "error",
-        error: e instanceof LoopError ? e : new LoopError(e instanceof Error ? e.message : String(e), "llm_api_error"),
+        error: e instanceof LoopError ? e : new LoopError(e instanceof Error ? e.message : String(e), "internal_error"),
       });
     }
   }
@@ -334,7 +334,7 @@ export async function createAgentLoop(config: LoopConfig): Promise<AgentLoop> {
     } catch (e) {
       yield notify({
         type: "error",
-        error: e instanceof LoopError ? e : new LoopError(e instanceof Error ? e.message : String(e), "llm_api_error"),
+        error: e instanceof LoopError ? e : new LoopError(e instanceof Error ? e.message : String(e), "internal_error"),
       });
     }
   }
@@ -347,7 +347,7 @@ export async function createAgentLoop(config: LoopConfig): Promise<AgentLoop> {
     } catch (e) {
       yield notify({
         type: "error",
-        error: e instanceof LoopError ? e : new LoopError(e instanceof Error ? e.message : String(e), "llm_api_error"),
+        error: e instanceof LoopError ? e : new LoopError(e instanceof Error ? e.message : String(e), "internal_error"),
       });
     }
   }

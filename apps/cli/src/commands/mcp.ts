@@ -1,5 +1,5 @@
-import { closeWorkspaceDB } from "@mp/db";
-import { createMCPServer } from "@mp/mcp";
+import { closeAgentDB, closeWorkspaceDB } from "@swe/db";
+import { createMCPServer } from "@swe/mcp";
 import { Command } from "commander";
 import * as path from "node:path";
 
@@ -15,13 +15,14 @@ export const mcpCommand = new Command("mcp")
     const workspace = openWorkspace(repoPath);
     const db = openSession(repoPath, { session: opts.session, workspace });
     const server = createMCPServer(db, { repoPath });
-    process.stderr.write(`moneypenny MCP server starting (repo: ${repoPath})\n`);
+    process.stderr.write(`swe MCP server starting (repo: ${repoPath})\n`);
     try {
       await server.serveStdio();
     } catch (e) {
       printError(e instanceof Error ? e.message : String(e));
       process.exitCode = 1;
     } finally {
+      try { closeAgentDB(db); } catch { /* best effort */ }
       try { closeWorkspaceDB(workspace); } catch { /* best effort */ }
     }
   });

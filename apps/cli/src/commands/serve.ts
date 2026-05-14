@@ -1,10 +1,10 @@
 import { Command } from "commander";
 import * as path from "node:path";
-import { createAgentDB, closeWorkspaceDB, DEFAULT_BLUEPRINT } from "@mp/db";
-import { createHttpApp } from "@mp/http";
-import { scan, startScheduler } from "@mp/agents";
-import { startBackgroundSync, initSyncTables } from "@mp/cloud";
-import { getDbPath, getMoneypennyDir, openWorkspace } from "../session";
+import { createAgentDB, closeAgentDB, closeWorkspaceDB, DEFAULT_BLUEPRINT } from "@swe/db";
+import { createHttpApp } from "@swe/http";
+import { scan, startScheduler } from "@swe/agents";
+import { startBackgroundSync, initSyncTables } from "@swe/cloud";
+import { getDbPath, getSweDir, openWorkspace } from "../session";
 
 export const serveCommand = new Command("serve")
   .description("Run HTTP API + scheduler + background sync")
@@ -20,12 +20,12 @@ export const serveCommand = new Command("serve")
       workspace,
       blueprint: DEFAULT_BLUEPRINT,
     });
-    const agentsDir = path.join(getMoneypennyDir(repoPath), "agents");
+    const agentsDir = path.join(getSweDir(repoPath), "agents");
     scan({ db: agentDb.db, agentsDir });
     try {
       initSyncTables(agentDb.db);
-    } catch {
-      /* */
+    } catch (e) {
+      process.stderr.write(`[warn] initSyncTables failed: ${e instanceof Error ? e.message : String(e)}\n`);
     }
 
     const stopSched = startScheduler(agentDb, () => process.env.ANTHROPIC_API_KEY, 60_000);
@@ -45,16 +45,13 @@ export const serveCommand = new Command("serve")
       hostname: "127.0.0.1",
     });
 
-    process.stderr.write(`Moneypenny HTTP listening on http://localhost:${String(server.port)}\n`);
+    process.stderr.write(`swe HTTP listening on http://localhost:${String(server.port)}\n`);
 
     const onStop = (): void => {
       stopSched();
       stopSync();
-      try {
-        closeWorkspaceDB(workspace);
-      } catch {
-        /* */
-      }
+      try { closeAgentDB(agentDb); } catch { /* best effort */ }
+      try { closeWorkspaceDB(workspace); } catch { /* best effort */ }
       server.stop();
       process.exit(0);
     };

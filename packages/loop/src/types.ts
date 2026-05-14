@@ -1,6 +1,6 @@
-import type { AgentDB } from "@mp/db";
-import type { HookPipeline, Prompt } from "@mp/ctx";
-import type { ToolRegistry, ChildLoopFactory } from "@mp/tools";
+import type { AgentDB } from "@swe/db";
+import type { HookPipeline, Prompt } from "@swe/ctx";
+import type { ToolRegistry, ChildLoopFactory } from "@swe/tools";
 import type { ProviderName, LLMProvider } from "./provider.js";
 
 export const DEFAULT_MAX_ITERATIONS = 25;
@@ -101,7 +101,8 @@ export type LoopErrorCode =
   | "max_iterations"
   | "aborted"
   | "context_assembly_error"
-  | "no_conversation";
+  | "no_conversation"
+  | "internal_error";
 
 export class CostLimitError extends LoopError {
   constructor(

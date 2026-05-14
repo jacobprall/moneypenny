@@ -1,5 +1,5 @@
 import cronParser from "cron-parser";
-import type { AgentDB } from "@mp/db";
+import type { AgentDB } from "@swe/db";
 import * as jobsRepo from "./jobs-repo.js";
 import * as repo from "./repository.js";
 import { AGENT_RUN_OPERATION } from "./operations.js";

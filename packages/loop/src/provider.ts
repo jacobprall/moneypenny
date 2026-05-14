@@ -1,4 +1,4 @@
-import type { ContentBlock, AnthropicMessage, AnthropicToolDef } from "@mp/ctx";
+import type { ContentBlock, AnthropicMessage, AnthropicToolDef } from "@swe/ctx";
 import type { AssistantMessage, TokenUsage } from "./types.js";
 
 export type ProviderName = "anthropic" | "openai" | "google";

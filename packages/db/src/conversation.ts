@@ -40,12 +40,16 @@ export function appendMessage(db: AgentDB, msg: NewMessage): Message {
   const createdAt = Date.now();
   const sid = resolveSessionId(db);
   try {
-    db.db
-      .prepare(
-        `INSERT INTO messages (id, turn, role, content, tool_calls, tool_call_id, tokens_in, tokens_out, cost_usd, session_id, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-      )
-      .run(
+    const insertMsg = db.db.prepare(
+      `INSERT INTO messages (id, turn, role, content, tool_calls, tool_call_id, tokens_in, tokens_out, cost_usd, session_id, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    );
+    const updateSession = sid
+      ? db.db.prepare(`UPDATE sessions SET last_active_at = ? WHERE id = ?`)
+      : null;
+
+    const txn = db.db.transaction(() => {
+      insertMsg.run(
         id,
         msg.turn,
         msg.role,
@@ -58,13 +62,13 @@ export function appendMessage(db: AgentDB, msg: NewMessage): Message {
         sid,
         createdAt,
       );
+      if (updateSession && sid) {
+        updateSession.run(createdAt, sid);
+      }
+    });
+    txn();
   } catch (e) {
     throw sqlError("appendMessage", e);
-  }
-  if (sid) {
-    try {
-      db.db.prepare(`UPDATE sessions SET last_active_at = ? WHERE id = ?`).run(createdAt, sid);
-    } catch { /* best effort */ }
   }
   return { ...msg, id, createdAt };
 }
@@ -72,12 +76,12 @@ export function appendMessage(db: AgentDB, msg: NewMessage): Message {
 export function getCurrentTurn(db: AgentDB, sessionId?: string): number {
   const sid = resolveSessionId(db, sessionId);
   try {
+    let row: { m: number | null } | undefined;
     if (sid) {
-      const row = db.db.prepare(`SELECT MAX(turn) AS m FROM messages WHERE session_id = ?`).get(sid) as { m: number | null } | undefined;
-      if (row?.m == null || Number.isNaN(row.m)) return 0;
-      return row.m;
+      row = db.db.prepare(`SELECT MAX(turn) AS m FROM messages WHERE session_id = ?`).get(sid) as typeof row;
+    } else {
+      row = db.db.prepare(`SELECT MAX(turn) AS m FROM messages`).get() as typeof row;
     }
-    const row = db.db.prepare(`SELECT MAX(turn) AS m FROM messages`).get() as { m: number | null } | undefined;
     if (row?.m == null || Number.isNaN(row.m)) return 0;
     return row.m;
   } catch (e) {
@@ -86,6 +90,9 @@ export function getCurrentTurn(db: AgentDB, sessionId?: string): number {
 }
 
 export function compactConversation(db: AgentDB, upToTurn: number, summary: string, sessionId?: string): void {
+  if (!Number.isInteger(upToTurn) || upToTurn < 1) {
+    throw new Error(`compactConversation: up_to_turn must be a positive integer, got ${upToTurn}`);
+  }
   const id = generateUUIDv7();
   const createdAt = Date.now();
   const sid = resolveSessionId(db, sessionId);

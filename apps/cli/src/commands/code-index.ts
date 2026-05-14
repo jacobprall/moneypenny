@@ -1,5 +1,5 @@
-import { closeWorkspaceDB } from "@mp/db";
-import { getIndexStatus, indexCodebase } from "@mp/search";
+import { closeAgentDB, closeWorkspaceDB } from "@swe/db";
+import { getIndexStatus, indexCodebase } from "@swe/search";
 import { Command } from "commander";
 import * as path from "node:path";
 
@@ -17,8 +17,8 @@ export const indexCommand = new Command("index")
     const workspace = openWorkspace(repoPath);
     const db = openSession(repoPath, { session: opts.session, workspace });
 
+    const spinner = new Spinner();
     try {
-      const spinner = new Spinner();
       spinner.start("Indexing...");
       const result = indexCodebase(db, repoPath, { forceReindex: Boolean(opts.force) });
       spinner.stop();
@@ -34,9 +34,11 @@ export const indexCommand = new Command("index")
         process.stdout.write(`  ${muted("langs")}    ${langs.map(([l, c]) => `${l} (${String(c)})`).join(", ")}\n`);
       }
     } catch (e) {
+      spinner.stop();
       printError(e instanceof Error ? e.message : String(e));
       process.exitCode = 1;
     } finally {
+      try { closeAgentDB(db); } catch { /* best effort */ }
       try { closeWorkspaceDB(workspace); } catch { /* best effort */ }
     }
   });

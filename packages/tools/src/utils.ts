@@ -46,7 +46,8 @@ export function resolveSafePath(repoPath: string, userPath: string): string {
 
 /**
  * Throw if `abs` exceeds the size limit.  Silently no-ops when the file
- * doesn't exist (the caller will handle that separately).
+ * doesn't exist (ENOENT) — the caller will handle that separately.
+ * All other stat errors (permission denied, etc.) are re-thrown.
  */
 export function assertFileSizeLimit(abs: string, maxSize = MAX_FILE_SIZE): void {
   try {
@@ -56,8 +57,11 @@ export function assertFileSizeLimit(abs: string, maxSize = MAX_FILE_SIZE): void 
       const maxMb = (maxSize / 1024 / 1024).toFixed(0);
       throw new Error(`File too large (${mb}MB, max ${maxMb}MB)`);
     }
-  } catch (e) {
+  } catch (e: unknown) {
     if (e instanceof Error && e.message.includes("too large")) throw e;
+    const code = (e as NodeJS.ErrnoException)?.code;
+    if (code === "ENOENT") return;
+    throw e;
   }
 }
 

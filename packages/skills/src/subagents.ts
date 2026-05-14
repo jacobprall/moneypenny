@@ -1,5 +1,5 @@
-import { sqlError } from "@mp/db/errors";
-import type { AgentDB, SubagentDef } from "@mp/db/types";
+import { sqlError } from "@swe/db/errors";
+import type { AgentDB, SubagentDef } from "@swe/db/types";
 
 export function getSubagentDef(db: AgentDB, name: string): SubagentDef | undefined {
   try {

@@ -9,7 +9,12 @@ function readAll(): Record<string, unknown> {
   const p = globalConfigPath();
   if (!existsSync(p)) return {};
   const raw = readFileSync(p, "utf8");
-  const parsed = JSON.parse(raw) as unknown;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`Config file at ${p} contains invalid JSON: ${e instanceof Error ? e.message : String(e)}`);
+  }
   if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
     return parsed as Record<string, unknown>;
   }
@@ -28,14 +33,19 @@ function writeAll(data: Record<string, unknown>): void {
   invalidateGlobalConfigCache();
 }
 
-export const configCommand = new Command("config").description("Manage global ~/.moneypenny/config.json");
+export const configCommand = new Command("config").description("Manage global ~/.swe/config.json");
 
 configCommand
   .command("list")
   .description("Print all entries")
   .action(() => {
-    const cfg = readAll();
-    console.log(JSON.stringify(cfg, null, 2));
+    try {
+      const cfg = readAll();
+      console.log(JSON.stringify(cfg, null, 2));
+    } catch (e) {
+      printError(e instanceof Error ? e.message : String(e));
+      process.exitCode = 1;
+    }
   });
 
 configCommand
@@ -43,13 +53,18 @@ configCommand
   .description("Read one key")
   .argument("<key>", "Setting key")
   .action((key: string) => {
-    const cfg = readAll();
-    if (!(key in cfg)) {
-      printError(`Key not found: ${key}`);
+    try {
+      const cfg = readAll();
+      if (!(key in cfg)) {
+        printError(`Key not found: ${key}`);
+        process.exitCode = 1;
+        return;
+      }
+      console.log(JSON.stringify(cfg[key], null, 2));
+    } catch (e) {
+      printError(e instanceof Error ? e.message : String(e));
       process.exitCode = 1;
-      return;
     }
-    console.log(JSON.stringify(cfg[key], null, 2));
   });
 
 configCommand
@@ -69,7 +84,7 @@ configCommand
       cfg = readAll();
     } catch (e) {
       printError(`Cannot read existing config: ${e instanceof Error ? e.message : String(e)}`);
-      printError("Fix or remove ~/.moneypenny/config.json before setting values.");
+      printError("Fix or remove ~/.swe/config.json before setting values.");
       process.exitCode = 1;
       return;
     }
@@ -82,6 +97,11 @@ configCommand
   .description("Remove the global config file")
   .action(() => {
     const p = globalConfigPath();
-    if (existsSync(p)) unlinkSync(p);
-    invalidateGlobalConfigCache();
+    try {
+      if (existsSync(p)) unlinkSync(p);
+      invalidateGlobalConfigCache();
+    } catch (e) {
+      printError(`Failed to remove config: ${e instanceof Error ? e.message : String(e)}`);
+      process.exitCode = 1;
+    }
   });

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { getSkill, getSkillFile, listSkillFiles } from "@mp/db";
+import { getSkill, getSkillFile, listSkillFiles } from "@swe/db";
 import type { ToolDefinition } from "../types.js";
 import { truncate } from "../utils.js";
 

@@ -9,14 +9,14 @@ import {
   type AgentDB,
   type AgentBlueprint,
   type WorkspaceDB,
-} from "@mp/db";
+} from "@swe/db";
 
-export function getMoneypennyDir(repoPath: string): string {
-  return path.join(repoPath, ".moneypenny");
+export function getSweDir(repoPath: string): string {
+  return path.join(repoPath, ".swe");
 }
 
 export function getDbPath(repoPath: string, agentName?: string): string {
-  const dir = getMoneypennyDir(repoPath);
+  const dir = getSweDir(repoPath);
   if (!agentName || agentName === "default") {
     return path.join(dir, "default.agent.db");
   }
@@ -25,7 +25,7 @@ export function getDbPath(repoPath: string, agentName?: string): string {
 
 /**
  * Open the shared workspace index DB. Created once per workspace at
- * `.moneypenny/workspace.sqlite`; all sessions share the same index.
+ * `.swe/workspace.sqlite`; all sessions share the same index.
  */
 export function openWorkspace(repoPath: string): WorkspaceDB {
   return createWorkspaceDB(repoPath);
@@ -40,7 +40,7 @@ export interface AgentInfo {
 
 /** List agent DBs that exist on disk for this repo. */
 export function listAgents(repoPath: string): AgentInfo[] {
-  const baseDir = getMoneypennyDir(repoPath);
+  const baseDir = getSweDir(repoPath);
   const results: AgentInfo[] = [];
 
   const defaultPath = path.join(baseDir, "default.agent.db");
@@ -65,14 +65,16 @@ export function listAgents(repoPath: string): AgentInfo[] {
 }
 
 function readAgentInfo(name: string, dbPath: string): AgentInfo | null {
+  let db: AgentDB | undefined;
   try {
-    const db = createAgentDB(dbPath);
+    db = createAgentDB(dbPath);
     const blueprintName = getConfig(db, "blueprint_name") ?? null;
     const blueprintDescription = getConfig(db, "blueprint_description") ?? null;
-    closeAgentDB(db);
     return { name, dbPath, blueprintName, blueprintDescription };
   } catch {
     return { name, dbPath, blueprintName: null, blueprintDescription: null };
+  } finally {
+    if (db) try { closeAgentDB(db); } catch { /* best effort */ }
   }
 }
 

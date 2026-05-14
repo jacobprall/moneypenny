@@ -2,6 +2,6 @@ node_modules/
 dist/
 *.tsbuildinfo
 .env*
-.moneypenny/
+.swe/
 models/
 *.agent.db

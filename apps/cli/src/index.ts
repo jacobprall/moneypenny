@@ -18,13 +18,13 @@ import {
 } from "./commands/index.js";
 
 const program = new Command()
-  .name("mp")
-  .description("Moneypenny — local-first AI coding agent")
+  .name("swe")
+  .description("swe — local-first AI coding agent")
   .version("0.1.0")
   .option("-v, --verbose", "Enable debug output")
   .hook("preAction", (thisCommand) => {
     if (thisCommand.opts().verbose) {
-      process.env.MP_VERBOSE = "1";
+      process.env.SWE_VERBOSE = "1";
     }
   });
 

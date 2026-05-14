@@ -1,6 +1,6 @@
-import { sqlError } from "@mp/db/errors";
-import type { AgentDB, FileEntry } from "@mp/db/types";
-import { getWorkspaceHandle } from "@mp/db/workspace";
+import { sqlError } from "@swe/db/errors";
+import type { AgentDB, FileEntry } from "@swe/db/types";
+import { getWorkspaceHandle } from "@swe/db/workspace";
 import { mapFileRow, type FileRow } from "./fs-utils";
 
 export function getFileTree(db: AgentDB): FileEntry[] {

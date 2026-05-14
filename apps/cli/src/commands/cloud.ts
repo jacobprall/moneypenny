@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import * as path from "node:path";
-import { closeAgentDB, createAgentDB, closeWorkspaceDB, DEFAULT_BLUEPRINT } from "@mp/db";
-import { getSyncConfig, runCloudSync, setSyncConfig, initSyncTables, hasCloudsync } from "@mp/cloud";
+import { closeAgentDB, createAgentDB, closeWorkspaceDB, DEFAULT_BLUEPRINT } from "@swe/db";
+import { getSyncConfig, runCloudSync, setSyncConfig, initSyncTables, hasCloudsync } from "@swe/cloud";
 import { getDbPath, openWorkspace } from "../session";
 import { printError } from "../display";
 
@@ -39,7 +39,7 @@ cloudCommand
   .command("login")
   .description("Placeholder for future auth flow")
   .action(() => {
-    process.stdout.write("mp cloud login is not yet implemented for this MVP.\n");
+    process.stdout.write("swe cloud login is not yet implemented for this MVP.\n");
   });
 
 cloudCommand
@@ -60,7 +60,7 @@ cloudCommand
       }
       const cfg = getSyncConfig(agentDb.db);
       if (!cfg.cloudUrl) {
-        printError("No cloud_url configured. Run: mp cloud init --url <url>");
+        printError("No cloud_url configured. Run: swe cloud init --url <url>");
         process.exitCode = 1;
         return;
       }

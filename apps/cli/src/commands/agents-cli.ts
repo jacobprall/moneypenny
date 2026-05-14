@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import * as path from "node:path";
-import { closeWorkspaceDB } from "@mp/db";
-import { listAgentRows, runAgent } from "@mp/agents";
+import { closeAgentDB, closeWorkspaceDB } from "@swe/db";
+import { listAgentRows, runAgent } from "@swe/agents";
 import { openSession, openWorkspace } from "../session";
 import { printError } from "../display";
 
@@ -20,11 +20,8 @@ agentsCliCommand
       const rows = listAgentRows(db.db).filter((r) => r.status !== "deleted");
       console.log(JSON.stringify(rows, null, 2));
     } finally {
-      try {
-        closeWorkspaceDB(workspace);
-      } catch {
-        /* */
-      }
+      try { closeAgentDB(db); } catch { /* best effort */ }
+      try { closeWorkspaceDB(workspace); } catch { /* best effort */ }
     }
   });
 
@@ -57,11 +54,8 @@ agentsCliCommand
       printError(e instanceof Error ? e.message : String(e));
       process.exitCode = 1;
     } finally {
-      try {
-        closeWorkspaceDB(workspace);
-      } catch {
-        /* */
-      }
+      try { closeAgentDB(db); } catch { /* best effort */ }
+      try { closeWorkspaceDB(workspace); } catch { /* best effort */ }
     }
   });
 
@@ -109,10 +103,7 @@ agentsCliCommand
 
       console.log(JSON.stringify(filtered, null, 2));
     } finally {
-      try {
-        closeWorkspaceDB(workspace);
-      } catch {
-        /* */
-      }
+      try { closeAgentDB(db); } catch { /* best effort */ }
+      try { closeWorkspaceDB(workspace); } catch { /* best effort */ }
     }
   });

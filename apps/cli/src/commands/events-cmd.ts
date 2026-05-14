@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import * as path from "node:path";
-import { closeWorkspaceDB, getEvents } from "@mp/db";
+import { closeAgentDB, closeWorkspaceDB, getEvents } from "@swe/db";
 import { openSession, openWorkspace } from "../session";
 import { printError } from "../display";
 
@@ -26,10 +26,7 @@ eventsCommand
       printError(e instanceof Error ? e.message : String(e));
       process.exitCode = 1;
     } finally {
-      try {
-        closeWorkspaceDB(workspace);
-      } catch {
-        /* */
-      }
+      try { closeAgentDB(db); } catch { /* best effort */ }
+      try { closeWorkspaceDB(workspace); } catch { /* best effort */ }
     }
   });

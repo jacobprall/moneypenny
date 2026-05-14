@@ -1,4 +1,4 @@
-import type { ProviderName } from "@mp/loop";
+import type { ProviderName } from "@swe/loop";
 import {
   closeAgentDB,
   closeWorkspaceDB,
@@ -9,15 +9,15 @@ import {
   scanSkillDirs,
   setActiveSession,
   type Permission,
-} from "@mp/db";
-import { getIndexStatus, indexCodebase } from "@mp/search";
+} from "@swe/db";
+import { getIndexStatus, indexCodebase } from "@swe/search";
 import {
   credentialRedactor,
   dbPolicyHook,
   toolGovernance,
   type GovernanceConfig,
-} from "@mp/ctx";
-import { createToolRegistry, registerBuiltinTools } from "@mp/tools";
+} from "@swe/ctx";
+import { createToolRegistry, registerBuiltinTools } from "@swe/tools";
 import { Command } from "commander";
 import * as path from "node:path";
 
@@ -149,7 +149,7 @@ export const chatCommand = new Command("chat")
           toolGovernance(governanceConfig),
         ];
 
-        const userSkillsDir = path.join(repoPath, ".moneypenny", "skills");
+        const userSkillsDir = path.join(repoPath, ".swe", "skills");
         const bundledSkillsDir = path.resolve(import.meta.dir, "../../../packages/skills/bundled");
         scanSkillDirs(db, [
           { dir: bundledSkillsDir, source: "builtin" },

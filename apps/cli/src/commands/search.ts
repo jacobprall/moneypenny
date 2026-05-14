@@ -1,5 +1,5 @@
-import { closeWorkspaceDB } from "@mp/db";
-import { hybridSearch } from "@mp/search";
+import { closeAgentDB, closeWorkspaceDB } from "@swe/db";
+import { hybridSearch } from "@swe/search";
 import { Command } from "commander";
 import * as path from "node:path";
 
@@ -52,6 +52,7 @@ export const searchCommand = new Command("search")
         printError(e instanceof Error ? e.message : String(e));
         process.exitCode = 1;
       } finally {
+        try { closeAgentDB(db); } catch { /* best effort */ }
         try { closeWorkspaceDB(workspace); } catch { /* best effort */ }
       }
     },

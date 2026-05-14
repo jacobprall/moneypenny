@@ -1,8 +1,9 @@
 import * as readline from "node:readline";
-import { createAgentLoop, createChildLoopFactory, type AgentLoop, type ProviderName } from "@mp/loop";
-import { createSession, setActiveSession, type AgentDB } from "@mp/db";
-import type { ToolRegistry } from "@mp/tools";
-import { confirmationGate, createHookPipeline, type Hook, type Prompt } from "@mp/ctx";
+import { createAgentLoop, createChildLoopFactory, type AgentLoop, type ProviderName } from "@swe/loop";
+import { createSession, getConfig, setActiveSession, type AgentDB } from "@swe/db";
+import type { ToolRegistry } from "@swe/tools";
+import { confirmationGate, createHookPipeline, type Hook, type Prompt } from "@swe/ctx";
+import { extractSessionKnowledge } from "@swe/skills";
 import { accent, muted, printError, printInfo, printTurnSeparator } from "./display.js";
 import { handleSlashCommand, type SlashContext } from "./slash-commands.js";
 import { resolveConfig } from "./config.js";
@@ -112,6 +113,27 @@ async function runTurn(
   }
 }
 
+async function maybeExtractKnowledge(cfg: ReplConfig): Promise<void> {
+  const enabled = getConfig(cfg.db, "extract_on_session_end");
+  if (enabled === "false" || enabled === "0") return;
+
+  const extractModel = getConfig(cfg.db, "extract_model");
+
+  try {
+    const result = await extractSessionKnowledge(cfg.db, {
+      apiKey: cfg.apiKey,
+      model: extractModel ?? undefined,
+    });
+    if (result && result.skillsUpserted > 0) {
+      printInfo(
+        muted(`  Learned ${String(result.skillsUpserted)} skill${result.skillsUpserted === 1 ? "" : "s"} from this session: ${result.skillNames.join(", ")}`),
+      );
+    }
+  } catch (e) {
+    printError(`Knowledge extraction failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 /**
  * The interactive REPL. Uses a simple async for-loop instead of
  * recursive callbacks -- this eliminates readline conflicts, module-level
@@ -182,6 +204,7 @@ export async function runRepl(cfg: ReplConfig): Promise<void> {
   } finally {
     renderer.stop();
     rl.close();
+    await maybeExtractKnowledge(cfg);
   }
 }
 
@@ -212,5 +235,7 @@ export async function runPiped(cfg: ReplConfig): Promise<void> {
     renderer.stop();
     printError(e instanceof Error ? e.message : String(e));
     process.exitCode = 1;
+  } finally {
+    await maybeExtractKnowledge(cfg);
   }
 }

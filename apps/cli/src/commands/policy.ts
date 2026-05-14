@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import * as path from "node:path";
-import { closeWorkspaceDB, createPolicy, deletePolicy, listPolicies } from "@mp/db";
+import { closeAgentDB, closeWorkspaceDB, createPolicy, deletePolicy, listPolicies } from "@swe/db";
 import { openSession, openWorkspace } from "../session";
 import { printError } from "../display";
 
@@ -18,11 +18,8 @@ policyCommand
     try {
       console.log(JSON.stringify(listPolicies(db), null, 2));
     } finally {
-      try {
-        closeWorkspaceDB(workspace);
-      } catch {
-        /* */
-      }
+      try { closeAgentDB(db); } catch { /* best effort */ }
+      try { closeWorkspaceDB(workspace); } catch { /* best effort */ }
     }
   });
 
@@ -39,7 +36,7 @@ policyCommand
   .option("--repo <path>", "Repository path", process.cwd())
   .option("--session <id>", "Session / agent DB", "default")
   .action(
-    async (opts: {
+    (opts: {
       name: string;
       effect: string;
       priority: string;
@@ -77,11 +74,8 @@ policyCommand
         printError(e instanceof Error ? e.message : String(e));
         process.exitCode = 1;
       } finally {
-        try {
-          closeWorkspaceDB(workspace);
-        } catch {
-          /* */
-        }
+        try { closeAgentDB(db); } catch { /* best effort */ }
+        try { closeWorkspaceDB(workspace); } catch { /* best effort */ }
       }
     },
   );
@@ -103,10 +97,7 @@ policyCommand
       printError(e instanceof Error ? e.message : String(e));
       process.exitCode = 1;
     } finally {
-      try {
-        closeWorkspaceDB(workspace);
-      } catch {
-        /* */
-      }
+      try { closeAgentDB(db); } catch { /* best effort */ }
+      try { closeWorkspaceDB(workspace); } catch { /* best effort */ }
     }
   });

@@ -1,5 +1,5 @@
 {
-  "name": "@mp/mcp",
+  "name": "@swe/mcp",
   "version": "0.1.0",
   "type": "module",
   "main": "src/index.ts",
@@ -10,9 +10,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mp/db": "workspace:*",
-    "@mp/search": "workspace:*",
-    "@mp/tools": "workspace:*",
+    "@swe/db": "workspace:*",
+    "@swe/search": "workspace:*",
+    "@swe/tools": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "zod": "^3.23.0"
   },

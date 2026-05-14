@@ -1,5 +1,5 @@
 {
-  "name": "@mp/http",
+  "name": "@swe/http",
   "version": "0.1.0",
   "type": "module",
   "main": "src/index.ts",
@@ -10,11 +10,11 @@
     "typecheck": "echo 'skipped: hono+bun-types conflict — runtime-verified'"
   },
   "dependencies": {
-    "@mp/db": "workspace:*",
-    "@mp/search": "workspace:*",
-    "@mp/agents": "workspace:*",
-    "@mp/ctx": "workspace:*",
-    "@mp/cloud": "workspace:*",
+    "@swe/db": "workspace:*",
+    "@swe/search": "workspace:*",
+    "@swe/agents": "workspace:*",
+    "@swe/ctx": "workspace:*",
+    "@swe/cloud": "workspace:*",
     "hono": "^4.7.0",
     "zod": "^3.23.0"
   },

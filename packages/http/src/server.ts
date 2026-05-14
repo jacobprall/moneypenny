@@ -4,10 +4,10 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { z } from "zod";
-import { createPolicy, listPolicies } from "@mp/db";
-import { getIndexStatus, hybridSearch } from "@mp/search";
-import { evaluatePolicy } from "@mp/ctx";
-import { getSyncStatus, initSyncTables } from "@mp/cloud";
+import { createPolicy, listPolicies } from "@swe/db";
+import { getIndexStatus, hybridSearch } from "@swe/search";
+import { evaluatePolicy } from "@swe/ctx";
+import { getSyncStatus, initSyncTables } from "@swe/cloud";
 import { createRequireDbMiddleware, createTokenAuthMiddleware, zodErrorMessage, type HttpVars } from "./middleware.js";
 import type { CreateHttpAppOptions } from "./types.js";
 import { createAgentsRouter } from "./routes/agents.js";
@@ -46,12 +46,12 @@ export function createHttpApp(opts: CreateHttpAppOptions): Hono<any, any, any> {
   const app = new Hono<any, any, any>();
 
   app.get("/health", (c) => {
-    return c.json({ status: "ok", service: "moneypenny", version: "0.1.0" });
+    return c.json({ status: "ok", service: "swe", version: "0.1.0" });
   });
 
   app.get("/", (c) => {
     return c.json({
-      name: "moneypenny",
+      name: "swe",
       service: "http",
       endpoints: ["/health", "/api/events", "/api/sessions", "/api/agents", "/api/policies", "/api/status", "/api/search", "/api/policy/evaluate"],
     });

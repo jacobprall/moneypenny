@@ -31,7 +31,10 @@ export function createToolRegistry(): ToolRegistry {
         let input_schema: Record<string, unknown>;
         try {
           input_schema = zodToJsonSchema(t.inputSchema as z.ZodTypeAny);
-        } catch {
+        } catch (e) {
+          console.warn(
+            `[tool-registry] Failed to convert schema for tool "${t.name}": ${e instanceof Error ? e.message : String(e)}. Using empty schema.`,
+          );
           input_schema = { type: "object", properties: {} };
         }
         defs.push({ name: t.name, description: t.description, input_schema });
