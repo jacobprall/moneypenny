@@ -78,7 +78,7 @@ export function createAgentsRouter(opts: CreateHttpAppOptions): Hono<{ Variables
     if (!dir) {
       return c.json({ error: "agents directory not configured" }, 501);
     }
-    const out = scan({ db: c.var.db.db, blueprintsDir: dir });
+    const out = scan({ agentDb: c.var.db, blueprintsDir: dir });
     return c.json(out);
   });
 

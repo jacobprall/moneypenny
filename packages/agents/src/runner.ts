@@ -24,7 +24,7 @@ export interface RunAgentOptions {
 
 export async function runAgent(options: RunAgentOptions): Promise<{ events: LoopEvent[] }> {
   const { agentDb, agentId, apiKey } = options;
-  const row = repo.getById(agentDb.db, agentId);
+  const row = agentDb.reads.read((raw) => repo.getById(raw, agentId));
   if (!row || row.status === "deleted") {
     throw new Error(`Agent not found: ${agentId}`);
   }

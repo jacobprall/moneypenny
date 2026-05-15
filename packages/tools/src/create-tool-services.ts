@@ -1,7 +1,6 @@
 import type { AgentDB } from "@moneypenny/db";
 import {
   compactConversation,
-  ensureAgentQueryReadDb,
   getSkill,
   getSkillFile,
   getSubagentDef,
@@ -87,9 +86,10 @@ export function createToolServices(db: AgentDB): ToolServices {
           throw new Error("only SELECT statements are permitted");
         }
         const bounded = ensureQueryLimit(query);
-        const readDb = ensureAgentQueryReadDb(db);
-        const stmt = readDb.prepare(bounded);
-        return stmt.all(...(params ?? [])) as Record<string, unknown>[];
+        return db.reads.read((readDb) => {
+          const stmt = readDb.prepare(bounded);
+          return stmt.all(...(params ?? [])) as Record<string, unknown>[];
+        });
       },
     },
   };

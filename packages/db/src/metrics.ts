@@ -4,30 +4,26 @@ import type { AgentDB, SessionMetrics, TurnMetrics } from "./types";
 export function recordTurnMetrics(db: AgentDB, metrics: TurnMetrics): void {
   const createdAt = Date.now();
   const sid = db.activeSessionId ?? null;
-  try {
-    db.db
+  const turn = metrics.turn;
+  const model = metrics.model ?? null;
+  const inputTokens = metrics.inputTokens;
+  const outputTokens = metrics.outputTokens;
+  const cachedInputTokens = metrics.cachedInputTokens ?? 0;
+  const costUsd = metrics.costUsd;
+  const toolCalls = metrics.toolCalls ?? 0;
+  const elapsedMs = metrics.elapsedMs ?? null;
+  db.writer.defer((raw) => {
+    raw
       .prepare(
         `INSERT OR REPLACE INTO metrics (turn, model, input_tokens, output_tokens, cached_input_tokens, cost_usd, tool_calls, elapsed_ms, session_id, created_at)
          VALUES (?,?,?,?,?,?,?,?,?,?)`,
       )
-      .run(
-        metrics.turn,
-        metrics.model ?? null,
-        metrics.inputTokens,
-        metrics.outputTokens,
-        metrics.cachedInputTokens ?? 0,
-        metrics.costUsd,
-        metrics.toolCalls ?? 0,
-        metrics.elapsedMs ?? null,
-        sid,
-        createdAt,
-      );
-  } catch (e) {
-    throw sqlError("recordTurnMetrics", e);
-  }
+      .run(turn, model, inputTokens, outputTokens, cachedInputTokens, costUsd, toolCalls, elapsedMs, sid, createdAt);
+  });
 }
 
 export function getSessionMetrics(db: AgentDB, sessionId?: string): SessionMetrics {
+  db.writer.flushDeferredSync();
   const sid = sessionId ?? db.activeSessionId ?? null;
   try {
     let row: {

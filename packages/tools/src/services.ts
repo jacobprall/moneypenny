@@ -28,8 +28,8 @@ export interface ConversationService {
 }
 
 /**
- * Read-only SELECT: validates SELECT/WITH, appends LIMIT when missing; runs on a dedicated
- * read-only SQLite connection (`ensureAgentQueryReadDb` in `@moneypenny/db`).
+ * Read-only SELECT: validates SELECT/WITH, appends LIMIT when missing; runs on the agent
+ * read pool (`AgentDB.reads` in `@moneypenny/db`).
  * Throws on disallowed SQL or execution errors.
  */
 export interface QueryService {

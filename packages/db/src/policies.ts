@@ -101,29 +101,31 @@ export function createPolicy(db: AgentDB, input: CreatePolicyInput): Policy {
   const id = input.id ?? generateUUIDv7();
   const source = input.source ?? "cli";
   try {
-    db.db
-      .prepare(
-        `INSERT INTO policies (id, name, effect, priority, tool_pattern, path_pattern, cost_condition, args_pattern, actor_pattern, message, enabled, source, file_path, checksum, created_at, updated_at)
+    db.writer.exclusive((raw) => {
+      raw
+        .prepare(
+          `INSERT INTO policies (id, name, effect, priority, tool_pattern, path_pattern, cost_condition, args_pattern, actor_pattern, message, enabled, source, file_path, checksum, created_at, updated_at)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      )
-      .run(
-        id,
-        input.name,
-        input.effect,
-        input.priority ?? 0,
-        input.toolPattern ?? null,
-        input.pathPattern ?? null,
-        input.costCondition ?? null,
-        input.argsPattern ?? null,
-        input.actorPattern ?? null,
-        input.message ?? null,
-        input.enabled ?? 1,
-        source,
-        input.filePath ?? null,
-        input.checksum ?? null,
-        createdAt,
-        updatedAt,
-      );
+        )
+        .run(
+          id,
+          input.name,
+          input.effect,
+          input.priority ?? 0,
+          input.toolPattern ?? null,
+          input.pathPattern ?? null,
+          input.costCondition ?? null,
+          input.argsPattern ?? null,
+          input.actorPattern ?? null,
+          input.message ?? null,
+          input.enabled ?? 1,
+          source,
+          input.filePath ?? null,
+          input.checksum ?? null,
+          createdAt,
+          updatedAt,
+        );
+    });
   } catch (e) {
     throw sqlError("createPolicy", e);
   }
@@ -156,27 +158,29 @@ export function updatePolicy(db: AgentDB, id: string, updates: Partial<Omit<Poli
     updatedAt: Date.now(),
   };
   try {
-    db.db
-      .prepare(
-        `UPDATE policies SET name=?, effect=?, priority=?, tool_pattern=?, path_pattern=?, cost_condition=?, args_pattern=?, actor_pattern=?, message=?, enabled=?, source=?, file_path=?, checksum=?, updated_at=? WHERE id=?`,
-      )
-      .run(
-        next.name,
-        next.effect,
-        next.priority,
-        next.toolPattern,
-        next.pathPattern,
-        next.costCondition,
-        next.argsPattern,
-        next.actorPattern,
-        next.message,
-        next.enabled,
-        next.source,
-        next.filePath,
-        next.checksum,
-        next.updatedAt,
-        id,
-      );
+    db.writer.exclusive((raw) => {
+      raw
+        .prepare(
+          `UPDATE policies SET name=?, effect=?, priority=?, tool_pattern=?, path_pattern=?, cost_condition=?, args_pattern=?, actor_pattern=?, message=?, enabled=?, source=?, file_path=?, checksum=?, updated_at=? WHERE id=?`,
+        )
+        .run(
+          next.name,
+          next.effect,
+          next.priority,
+          next.toolPattern,
+          next.pathPattern,
+          next.costCondition,
+          next.argsPattern,
+          next.actorPattern,
+          next.message,
+          next.enabled,
+          next.source,
+          next.filePath,
+          next.checksum,
+          next.updatedAt,
+          id,
+        );
+    });
   } catch (e) {
     throw sqlError("updatePolicy", e);
   }
@@ -204,8 +208,10 @@ export function listFilePolicies(db: AgentDB, filePath?: string): Policy[] {
 /** Remove all file-sourced policies from a specific file. */
 export function deleteFilePolicies(db: AgentDB, filePath: string): number {
   try {
-    const info = db.db.prepare(`DELETE FROM policies WHERE source = 'file' AND file_path = ?`).run(filePath);
-    return info.changes;
+    return db.writer.exclusive((raw) => {
+      const info = raw.prepare(`DELETE FROM policies WHERE source = 'file' AND file_path = ?`).run(filePath);
+      return info.changes;
+    });
   } catch (e) {
     throw sqlError("deleteFilePolicies", e);
   }
@@ -213,7 +219,9 @@ export function deleteFilePolicies(db: AgentDB, filePath: string): number {
 
 export function deletePolicy(db: AgentDB, id: string): void {
   try {
-    db.db.prepare(`DELETE FROM policies WHERE id = ?`).run(id);
+    db.writer.exclusive((raw) => {
+      raw.prepare(`DELETE FROM policies WHERE id = ?`).run(id);
+    });
   } catch (e) {
     throw sqlError("deletePolicy", e);
   }

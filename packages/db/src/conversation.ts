@@ -40,37 +40,37 @@ export function appendMessage(db: AgentDB, msg: NewMessage): Message {
   const createdAt = Date.now();
   const sid = resolveSessionId(db);
   try {
-    const insertMsg = db.db.prepare(
-      `INSERT INTO messages (id, turn, role, content, tool_calls, tool_call_id, tokens_in, tokens_out, cost_usd, session_id, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-    );
-    const updateSession = sid
-      ? db.db.prepare(`UPDATE sessions SET last_active_at = ? WHERE id = ?`)
-      : null;
-
-    const txn = db.db.transaction(() => {
-      insertMsg.run(
-        id,
-        msg.turn,
-        msg.role,
-        msg.content ?? null,
-        msg.toolCalls ?? null,
-        msg.toolCallId ?? null,
-        msg.tokensIn ?? null,
-        msg.tokensOut ?? null,
-        msg.costUsd ?? null,
-        sid,
-        createdAt,
+    return db.writer.exclusive((raw) => {
+      const insertMsg = raw.prepare(
+        `INSERT INTO messages (id, turn, role, content, tool_calls, tool_call_id, tokens_in, tokens_out, cost_usd, session_id, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       );
-      if (updateSession && sid) {
-        updateSession.run(createdAt, sid);
-      }
+      const updateSession = sid ? raw.prepare(`UPDATE sessions SET last_active_at = ? WHERE id = ?`) : null;
+
+      const txn = raw.transaction(() => {
+        insertMsg.run(
+          id,
+          msg.turn,
+          msg.role,
+          msg.content ?? null,
+          msg.toolCalls ?? null,
+          msg.toolCallId ?? null,
+          msg.tokensIn ?? null,
+          msg.tokensOut ?? null,
+          msg.costUsd ?? null,
+          sid,
+          createdAt,
+        );
+        if (updateSession && sid) {
+          updateSession.run(createdAt, sid);
+        }
+      });
+      txn();
+      return { ...msg, id, createdAt };
     });
-    txn();
   } catch (e) {
     throw sqlError("appendMessage", e);
   }
-  return { ...msg, id, createdAt };
 }
 
 export function getCurrentTurn(db: AgentDB, sessionId?: string): number {
@@ -97,9 +97,11 @@ export function compactConversation(db: AgentDB, upToTurn: number, summary: stri
   const createdAt = Date.now();
   const sid = resolveSessionId(db, sessionId);
   try {
-    db.db
-      .prepare(`INSERT INTO compaction_markers (id, up_to_turn, summary, token_count, session_id, created_at) VALUES (?,?,?,?,?,?)`)
-      .run(id, upToTurn, summary, null, sid, createdAt);
+    db.writer.exclusive((raw) => {
+      raw
+        .prepare(`INSERT INTO compaction_markers (id, up_to_turn, summary, token_count, session_id, created_at) VALUES (?,?,?,?,?,?)`)
+        .run(id, upToTurn, summary, null, sid, createdAt);
+    });
   } catch (e) {
     throw sqlError("compactConversation", e);
   }

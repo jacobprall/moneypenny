@@ -2,19 +2,15 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
-import { closeAgentDB, createAgentDB, ensureAgentQueryReadDb } from "../database.js";
+import { closeAgentDB, createAgentDB } from "../database.js";
 
-describe("ensureAgentQueryReadDb", () => {
-  test("memoizes read-only handle and runs SELECT", () => {
+describe("AgentDB.reads (DbReadPool)", () => {
+  test("runs SELECT on read pool", () => {
     const dir = mkdtempSync(join(tmpdir(), "mp-agent-"));
     const dbPath = join(dir, "agent.sqlite");
     const agent = createAgentDB(dbPath);
     try {
-      const read = ensureAgentQueryReadDb(agent);
-      expect(agent.queryReadDb).toBeDefined();
-      expect(read).toBe(agent.queryReadDb!);
-      expect(ensureAgentQueryReadDb(agent)).toBe(read);
-      const rows = read.prepare("SELECT 1 AS n").all() as { n: number }[];
+      const rows = agent.reads.read((readDb) => readDb.prepare("SELECT 1 AS n").all() as { n: number }[]);
       expect(rows).toEqual([{ n: 1 }]);
     } finally {
       closeAgentDB(agent);
@@ -22,20 +18,19 @@ describe("ensureAgentQueryReadDb", () => {
     }
   });
 
-  test("closeAgentDB clears read handle", () => {
+  test("closeAgentDB closes read pool", () => {
     const dir = mkdtempSync(join(tmpdir(), "mp-agent-"));
     const dbPath = join(dir, "agent.sqlite");
     const agent = createAgentDB(dbPath);
     try {
-      ensureAgentQueryReadDb(agent);
-      expect(agent.queryReadDb).toBeDefined();
+      expect(() => agent.reads.read((r) => r.prepare("SELECT 1").get())).not.toThrow();
       closeAgentDB(agent);
-      expect(agent.queryReadDb).toBeUndefined();
+      expect(() => agent.reads.read((r) => r.prepare("SELECT 1").get())).toThrow();
     } finally {
       try {
         rmSync(dir, { recursive: true, force: true });
       } catch {
-        /* dir may be gone if close removed lock */
+        /* dir may be gone */
       }
     }
   });

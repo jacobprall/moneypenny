@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import * as path from "node:path";
+import type { Database } from "bun:sqlite";
 import { sqlError } from "./errors";
 import type { AgentDB, Skill } from "./types";
 
@@ -7,16 +8,18 @@ import type { AgentDB, Skill } from "./types";
 
 export function getSkill(db: AgentDB, name: string): Skill | undefined {
   try {
-    const row = db.db
-      .prepare(`SELECT name, description, instructions, source FROM skills WHERE name = ?`)
-      .get(name) as { name: string; description: string; instructions: string; source: string } | null;
-    if (!row) return undefined;
-    return {
-      name: row.name,
-      description: row.description,
-      instructions: row.instructions,
-      source: row.source as Skill["source"],
-    };
+    return db.reads.read((raw) => {
+      const row = raw
+        .prepare(`SELECT name, description, instructions, source FROM skills WHERE name = ?`)
+        .get(name) as { name: string; description: string; instructions: string; source: string } | null;
+      if (!row) return undefined;
+      return {
+        name: row.name,
+        description: row.description,
+        instructions: row.instructions,
+        source: row.source as Skill["source"],
+      };
+    });
   } catch (e) {
     throw sqlError("getSkill", e);
   }
@@ -24,15 +27,17 @@ export function getSkill(db: AgentDB, name: string): Skill | undefined {
 
 export function listSkills(db: AgentDB): Skill[] {
   try {
-    const rows = db.db
-      .prepare(`SELECT name, description, instructions, source FROM skills ORDER BY name`)
-      .all() as { name: string; description: string; instructions: string; source: string }[];
-    return rows.map((r) => ({
-      name: r.name,
-      description: r.description,
-      instructions: r.instructions,
-      source: r.source as Skill["source"],
-    }));
+    return db.reads.read((raw) => {
+      const rows = raw
+        .prepare(`SELECT name, description, instructions, source FROM skills ORDER BY name`)
+        .all() as { name: string; description: string; instructions: string; source: string }[];
+      return rows.map((r) => ({
+        name: r.name,
+        description: r.description,
+        instructions: r.instructions,
+        source: r.source as Skill["source"],
+      }));
+    });
   } catch (e) {
     throw sqlError("listSkills", e);
   }
@@ -47,9 +52,9 @@ export interface SkillCatalogEntry {
 /** Returns name + description for every skill (lightweight, no instructions). */
 export function listSkillCatalog(db: AgentDB): SkillCatalogEntry[] {
   try {
-    return db.db
-      .prepare(`SELECT name, description, source FROM skills ORDER BY name`)
-      .all() as SkillCatalogEntry[];
+    return db.reads.read((raw) =>
+      raw.prepare(`SELECT name, description, source FROM skills ORDER BY name`).all() as SkillCatalogEntry[],
+    );
   } catch (e) {
     throw sqlError("listSkillCatalog", e);
   }
@@ -58,10 +63,12 @@ export function listSkillCatalog(db: AgentDB): SkillCatalogEntry[] {
 /** Fetch a supporting file for a skill by relative path. */
 export function getSkillFile(db: AgentDB, skillName: string, filePath: string): string | undefined {
   try {
-    const row = db.db
-      .prepare(`SELECT content FROM skill_files WHERE skill_name = ? AND path = ?`)
-      .get(skillName, filePath) as { content: string } | null;
-    return row?.content;
+    return db.reads.read((raw) => {
+      const row = raw
+        .prepare(`SELECT content FROM skill_files WHERE skill_name = ? AND path = ?`)
+        .get(skillName, filePath) as { content: string } | null;
+      return row?.content;
+    });
   } catch (e) {
     throw sqlError("getSkillFile", e);
   }
@@ -70,39 +77,56 @@ export function getSkillFile(db: AgentDB, skillName: string, filePath: string): 
 /** List all supporting file paths for a skill. */
 export function listSkillFiles(db: AgentDB, skillName: string): string[] {
   try {
-    const rows = db.db
-      .prepare(`SELECT path FROM skill_files WHERE skill_name = ? ORDER BY path`)
-      .all(skillName) as { path: string }[];
-    return rows.map((r) => r.path);
+    return db.reads.read((raw) => {
+      const rows = raw
+        .prepare(`SELECT path FROM skill_files WHERE skill_name = ? ORDER BY path`)
+        .all(skillName) as { path: string }[];
+      return rows.map((r) => r.path);
+    });
   } catch (e) {
     throw sqlError("listSkillFiles", e);
   }
 }
 
+function upsertSkillSql(raw: Database, skill: Skill): void {
+  raw
+    .prepare(
+      `INSERT OR REPLACE INTO skills (name, description, instructions, source, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run(skill.name, skill.description, skill.instructions, skill.source ?? "user", Date.now());
+}
+
+function upsertSkillFileSql(raw: Database, skillName: string, filePath: string, content: string): void {
+  raw
+    .prepare(`INSERT OR REPLACE INTO skill_files (skill_name, path, content, created_at) VALUES (?, ?, ?, ?)`)
+    .run(skillName, filePath, content, Date.now());
+}
+
+function deleteSkillFilesSql(raw: Database, skillName: string): void {
+  raw.prepare(`DELETE FROM skill_files WHERE skill_name = ?`).run(skillName);
+}
+
 export function upsertSkill(db: AgentDB, skill: Skill): void {
   try {
-    db.db
-      .prepare(
-        `INSERT OR REPLACE INTO skills (name, description, instructions, source, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-      )
-      .run(skill.name, skill.description, skill.instructions, skill.source ?? "user", Date.now());
+    db.writer.exclusive((raw) => {
+      upsertSkillSql(raw, skill);
+    });
   } catch (e) {
     throw sqlError("upsertSkill", e);
   }
 }
 
 function upsertSkillFile(db: AgentDB, skillName: string, filePath: string, content: string): void {
-  db.db
-    .prepare(
-      `INSERT OR REPLACE INTO skill_files (skill_name, path, content, created_at)
-       VALUES (?, ?, ?, ?)`,
-    )
-    .run(skillName, filePath, content, Date.now());
+  db.writer.exclusive((raw) => {
+    upsertSkillFileSql(raw, skillName, filePath, content);
+  });
 }
 
 function deleteSkillFiles(db: AgentDB, skillName: string): void {
-  db.db.prepare(`DELETE FROM skill_files WHERE skill_name = ?`).run(skillName);
+  db.writer.exclusive((raw) => {
+    deleteSkillFilesSql(raw, skillName);
+  });
 }
 
 // --- Frontmatter parsing ---
@@ -202,9 +226,9 @@ function walkMdFiles(baseDir: string): string[] {
 
 /**
  * Scan a single skill directory (a directory containing SKILL.md + supporting files).
- * Upserts the skill and all its supporting files into the DB.
+ * Upserts the skill and all its supporting files into the DB using `raw` (inside a txn).
  */
-function scanSingleSkill(db: AgentDB, skillDir: string, source: "builtin" | "user"): void {
+function scanSingleSkillSql(raw: Database, skillDir: string, source: "builtin" | "user"): void {
   const skillMdPath = path.join(skillDir, "SKILL.md");
   if (!existsSync(skillMdPath)) return;
 
@@ -214,21 +238,21 @@ function scanSingleSkill(db: AgentDB, skillDir: string, source: "builtin" | "use
   const name = frontmatter.name ?? dirName;
   const description = frontmatter.description ?? "";
 
-  upsertSkill(db, {
+  upsertSkillSql(raw, {
     name,
     description,
     instructions: body.trim(),
     source,
   });
 
-  deleteSkillFiles(db, name);
+  deleteSkillFilesSql(raw, name);
 
   const allMdFiles = walkMdFiles(skillDir);
   for (const relPath of allMdFiles) {
     if (relPath === "SKILL.md") continue;
     const filePath = path.join(skillDir, relPath);
     const fileContents = readFileSync(filePath, "utf-8");
-    upsertSkillFile(db, name, relPath, fileContents);
+    upsertSkillFileSql(raw, name, relPath, fileContents);
   }
 }
 
@@ -238,27 +262,28 @@ function scanSingleSkill(db: AgentDB, skillDir: string, source: "builtin" | "use
  * so pass builtins first and user skills second.
  */
 export function scanSkillDirs(db: AgentDB, dirs: SkillDirConfig[]): void {
-  const tx = db.db.transaction(() => {
-    for (const { dir, source } of dirs) {
-      if (!existsSync(dir)) continue;
-
-      const entries = readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        const skillDir = path.join(dir, entry.name);
-        try {
-          const st = statSync(path.join(skillDir, "SKILL.md"));
-          if (!st.isFile()) continue;
-        } catch {
-          continue;
-        }
-        scanSingleSkill(db, skillDir, source);
-      }
-    }
-  });
-
   try {
-    tx();
+    db.writer.exclusive((raw) => {
+      const tx = raw.transaction(() => {
+        for (const { dir, source } of dirs) {
+          if (!existsSync(dir)) continue;
+
+          const entries = readdirSync(dir, { withFileTypes: true });
+          for (const entry of entries) {
+            if (!entry.isDirectory()) continue;
+            const skillDir = path.join(dir, entry.name);
+            try {
+              const st = statSync(path.join(skillDir, "SKILL.md"));
+              if (!st.isFile()) continue;
+            } catch {
+              continue;
+            }
+            scanSingleSkillSql(raw, skillDir, source);
+          }
+        }
+      });
+      tx();
+    });
   } catch (e) {
     throw sqlError("scanSkillDirs", e);
   }

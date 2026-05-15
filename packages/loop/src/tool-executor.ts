@@ -1,6 +1,7 @@
 import {
   appendEvent,
   appendMessage,
+  flushAgentWrites,
   type AgentDB,
 } from "@moneypenny/db";
 import type { HookContext, HookPipeline } from "@moneypenny/ctx";
@@ -121,6 +122,8 @@ export async function* executeToolsParallel(
     yield cfg.onEvent({ type: "tool.calling", name: tc.name, input: tc.input });
     appendEvent(db, { type: "tool.called", payload: { tool: tc.name, input: tc.input }, turn });
   }
+
+  flushAgentWrites(db);
 
   const timeoutMs = cfg.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
   const results = await Promise.allSettled(

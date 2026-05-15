@@ -7,6 +7,7 @@
 import cronParser from "cron-parser";
 import matter from "gray-matter";
 import { createHash } from "crypto";
+import type { AgentDB } from "@moneypenny/db";
 import {
   existsSync,
   mkdirSync,
@@ -30,7 +31,7 @@ import {
 import { DEFAULT_AGENTS } from "./defaults.js";
 
 export interface LoaderOptions {
-  db: Database;
+  agentDb: AgentDB;
   blueprintsDir: string;
   onChange?: (id: string, reason: "added" | "updated" | "removed" | "error") => void;
 }
@@ -261,7 +262,8 @@ function scaffoldDefaults(blueprintsDir: string): void {
 }
 
 export function scan(options: LoaderOptions): ScanResult {
-  const { db, blueprintsDir, onChange } = options;
+  const { agentDb, blueprintsDir, onChange } = options;
+  return agentDb.writer.exclusive((db) => {
   const isNew = !existsSync(blueprintsDir);
   ensureDir(blueprintsDir);
   if (isNew) scaffoldDefaults(blueprintsDir);
@@ -331,49 +333,53 @@ export function scan(options: LoaderOptions): ScanResult {
   }
 
   return { loaded, removed };
+  });
 }
 
 export function rescanOne(options: LoaderOptions, dirPath: string): LoadedAgent {
-  const parsed = parseAgentDir(dirPath);
-  const existing = repo.getById(options.db, parsed.id);
-  const isNew = !existing;
-  const isChanged = existing && existing.checksum !== parsed.checksum;
+  const { agentDb } = options;
+  return agentDb.writer.exclusive((db) => {
+    const parsed = parseAgentDir(dirPath);
+    const existing = repo.getById(db, parsed.id);
+    const isNew = !existing;
+    const isChanged = existing && existing.checksum !== parsed.checksum;
 
-  const enabledForWrite: 0 | 1 = existing
-    ? ((existing.enabled as 0 | 1) ?? 0)
-    : parsed.config?.enabled === false
-      ? 0
-      : 1;
+    const enabledForWrite: 0 | 1 = existing
+      ? ((existing.enabled as 0 | 1) ?? 0)
+      : parsed.config?.enabled === false
+        ? 0
+        : 1;
 
-  const jobId = syncJobForAgent(options.db, parsed.id, parsed, existing?.jobId ?? null, enabledForWrite);
+    const jobId = syncJobForAgent(db, parsed.id, parsed, existing?.jobId ?? null, enabledForWrite);
 
-  repo.upsert(options.db, {
-    id: parsed.id,
-    dirPath: parsed.dirPath,
-    agentMdPath: parsed.agentMdPath,
-    checksum: parsed.checksum,
-    name: parsed.config?.name ?? parsed.id,
-    description: parsed.config?.description ?? null,
-    schedule: parsed.config?.schedule ?? null,
-    timezone: parsed.config?.timezone ?? null,
-    enabled: enabledForWrite,
-    status: parsed.status,
-    validationErrors: parsed.errors.length > 0 ? JSON.stringify(parsed.errors) : null,
-    configJson: JSON.stringify(parsed.config ?? parsed.rawFrontmatter ?? {}),
-    prompt: parsed.prompt,
-    jobId,
+    repo.upsert(db, {
+      id: parsed.id,
+      dirPath: parsed.dirPath,
+      agentMdPath: parsed.agentMdPath,
+      checksum: parsed.checksum,
+      name: parsed.config?.name ?? parsed.id,
+      description: parsed.config?.description ?? null,
+      schedule: parsed.config?.schedule ?? null,
+      timezone: parsed.config?.timezone ?? null,
+      enabled: enabledForWrite,
+      status: parsed.status,
+      validationErrors: parsed.errors.length > 0 ? JSON.stringify(parsed.errors) : null,
+      configJson: JSON.stringify(parsed.config ?? parsed.rawFrontmatter ?? {}),
+      prompt: parsed.prompt,
+      jobId,
+    });
+
+    const reason: "added" | "updated" | "error" =
+      parsed.status === "error" ? "error" : isNew ? "added" : isChanged ? "updated" : "updated";
+    options.onChange?.(parsed.id, reason);
+
+    return {
+      id: parsed.id,
+      status: parsed.status,
+      errors: parsed.errors.length ? parsed.errors : undefined,
+      config: parsed.config ?? undefined,
+    };
   });
-
-  const reason: "added" | "updated" | "error" =
-    parsed.status === "error" ? "error" : isNew ? "added" : isChanged ? "updated" : "updated";
-  options.onChange?.(parsed.id, reason);
-
-  return {
-    id: parsed.id,
-    status: parsed.status,
-    errors: parsed.errors.length ? parsed.errors : undefined,
-    config: parsed.config ?? undefined,
-  };
 }
 
 export async function startWatcher(options: LoaderOptions): Promise<() => void> {

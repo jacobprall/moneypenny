@@ -14,22 +14,24 @@ export function startScheduler(
 ): () => void {
   const tick = async () => {
     const now = Date.now();
-    const due = jobsRepo.findDue(agent.db, now);
+    const due = agent.reads.read((raw) => jobsRepo.findDue(raw, now));
     for (const job of due) {
       let runId = "";
       try {
         runId = crypto.randomUUID();
         const startedAt = Date.now();
-        jobsRepo.insertRun(agent.db, {
-          id: runId,
-          jobId: job.id,
-          startedAt,
-          endedAt: null,
-          status: "running",
-          result: null,
-          error: null,
-          retryCount: 0,
-          createdAt: startedAt,
+        agent.writer.exclusive((db) => {
+          jobsRepo.insertRun(db, {
+            id: runId,
+            jobId: job.id,
+            startedAt,
+            endedAt: null,
+            status: "running",
+            result: null,
+            error: null,
+            retryCount: 0,
+            createdAt: startedAt,
+          });
         });
 
         if (job.operation === AGENT_RUN_OPERATION) {
@@ -48,14 +50,16 @@ export function startScheduler(
           ]);
 
           const endedAt = Date.now();
-          jobsRepo.updateRun(agent.db, runId, {
-            endedAt,
-            status: "completed",
-            result: JSON.stringify(result),
+          agent.writer.exclusive((db) => {
+            jobsRepo.updateRun(db, runId, {
+              endedAt,
+              status: "completed",
+              result: JSON.stringify(result),
+            });
+            jobsRepo.updateLastRun(db, job.id, endedAt);
+            const next = cronParser.parse(job.schedule, { tz: undefined }).next().toDate().getTime();
+            jobsRepo.updateNextRun(db, job.id, next);
           });
-          jobsRepo.updateLastRun(agent.db, job.id, endedAt);
-          const next = cronParser.parse(job.schedule, { tz: undefined }).next().toDate().getTime();
-          jobsRepo.updateNextRun(agent.db, job.id, next);
         } else {
           throw new Error(`Unsupported job operation: ${job.operation}`);
         }
@@ -63,19 +67,23 @@ export function startScheduler(
         const endedAt = Date.now();
         const errorMsg = err instanceof Error ? err.message : String(err);
         if (runId) {
-          jobsRepo.updateRun(agent.db, runId, {
-            endedAt,
-            status: "failed",
-            error: errorMsg,
+          agent.writer.exclusive((db) => {
+            jobsRepo.updateRun(db, runId, {
+              endedAt,
+              status: "failed",
+              error: errorMsg,
+            });
           });
         }
-        jobsRepo.updateLastRun(agent.db, job.id, endedAt);
-        try {
-          const next = cronParser.parse(job.schedule, { tz: undefined }).next().toDate().getTime();
-          jobsRepo.updateNextRun(agent.db, job.id, next);
-        } catch {
-          /* */
-        }
+        agent.writer.exclusive((db) => {
+          jobsRepo.updateLastRun(db, job.id, endedAt);
+          try {
+            const next = cronParser.parse(job.schedule, { tz: undefined }).next().toDate().getTime();
+            jobsRepo.updateNextRun(db, job.id, next);
+          } catch {
+            /* */
+          }
+        });
       }
     }
   };

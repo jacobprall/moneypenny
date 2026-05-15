@@ -12,7 +12,9 @@ export function getConfig(db: AgentDB, key: string): string | undefined {
 
 export function setConfig(db: AgentDB, key: string, value: string): void {
   try {
-    db.db.prepare(`INSERT OR REPLACE INTO config (key, value) VALUES (?,?)`).run(key, value);
+    db.writer.exclusive((raw) => {
+      raw.prepare(`INSERT OR REPLACE INTO config (key, value) VALUES (?,?)`).run(key, value);
+    });
   } catch (e) {
     throw sqlError("setConfig", e);
   }

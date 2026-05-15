@@ -6,6 +6,8 @@ import { sqlError } from "./errors";
 import type { AgentBlueprint, AgentDB, CreateDBOptions } from "./types";
 import { MIGRATIONS, SCHEMA_SQL, SCHEMA_VERSION } from "./schema";
 import { ensureCustomSQLite } from "./sqlite-init";
+import { DbReadPool } from "./read-pool.js";
+import { DbWriter } from "./writer.js";
 
 ensureCustomSQLite();
 
@@ -180,14 +182,6 @@ export function createAgentDB(dbPath: string, opts?: CreateDBOptions): AgentDB {
 
   const repoPath = opts?.repoPath ?? "";
 
-  if (opts?.blueprint != null && isNew) {
-    try {
-      applyBlueprint({ db: database, repoPath, dbPath, modelLoaded }, opts.blueprint);
-    } catch (e) {
-      throw sqlError("applyBlueprint (options.blueprint)", e);
-    }
-  }
-
   let siteId: string | undefined;
   if (syncLoaded) {
     try {
@@ -198,8 +192,13 @@ export function createAgentDB(dbPath: string, opts?: CreateDBOptions): AgentDB {
     } catch { /* extension loaded but siteid unavailable */ }
   }
 
-  return {
+  const writer = new DbWriter(database);
+  const reads = new DbReadPool(dbPath, 2);
+
+  const agent: AgentDB = {
     db: database,
+    writer,
+    reads,
     dbPath,
     repoPath,
     modelLoaded,
@@ -207,6 +206,16 @@ export function createAgentDB(dbPath: string, opts?: CreateDBOptions): AgentDB {
     siteId,
     workspace: opts?.workspace,
   };
+
+  if (opts?.blueprint != null && isNew) {
+    try {
+      applyBlueprint(agent, opts.blueprint);
+    } catch (e) {
+      throw sqlError("applyBlueprint (options.blueprint)", e);
+    }
+  }
+
+  return agent;
 }
 
 /**
@@ -222,41 +231,22 @@ export function createAgentDBFromBlueprint(
 }
 
 /**
- * Lazily open a read-only SQLite connection to `agent.dbPath` for validated SELECT queries.
- * Memoized on `agent.queryReadDb`. Safe to call while the primary `agent.db` is writing (WAL).
+ * Flush deferred writes (events, metrics, …) before reads that must see them (e.g. `getLastEvent`).
  */
-export function ensureAgentQueryReadDb(agent: AgentDB): Database {
-  if (agent.queryReadDb) {
-    return agent.queryReadDb;
-  }
-  let database: Database;
-  try {
-    database = new Database(agent.dbPath, { readonly: true, create: false });
-  } catch (e) {
-    throw sqlError("open read-only query database", e);
-  }
-  try {
-    database.exec(`PRAGMA foreign_keys=ON;`);
-  } catch (e) {
-    try {
-      database.close();
-    } catch {
-      /* ignore */
-    }
-    throw sqlError("configure read-only query PRAGMAs", e);
-  }
-  agent.queryReadDb = database;
-  return database;
+export function flushAgentWrites(agent: AgentDB): void {
+  agent.writer.flushDeferredSync();
 }
 
 export function closeAgentDB(agent: AgentDB): void {
-  if (agent.queryReadDb) {
-    try {
-      agent.queryReadDb.close();
-    } catch {
-      /* best effort */
-    }
-    agent.queryReadDb = undefined;
+  try {
+    agent.writer.close();
+  } catch {
+    /* best effort */
+  }
+  try {
+    agent.reads.close();
+  } catch {
+    /* best effort */
   }
   try {
     agent.db.close();

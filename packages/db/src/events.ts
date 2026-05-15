@@ -36,18 +36,19 @@ export function appendEvent(db: AgentDB, event: NewEvent): Event {
   } catch (e) {
     throw sqlError("appendEvent (serialize payload)", e);
   }
-  try {
-    db.db
+  const type = event.type;
+  const turn = event.turn;
+  const payload = event.payload;
+  db.writer.defer((raw) => {
+    raw
       .prepare(`INSERT INTO events (id, type, payload, turn, session_id, created_at) VALUES (?,?,?,?,?,?)`)
-      .run(id, event.type, payloadJson, event.turn ?? null, sid, createdAt);
-  } catch (e) {
-    throw sqlError("appendEvent", e);
-  }
+      .run(id, type, payloadJson, turn ?? null, sid, createdAt);
+  });
   return {
     id,
-    type: event.type,
-    payload: event.payload,
-    turn: event.turn,
+    type,
+    payload,
+    turn,
     createdAt,
   };
 }
@@ -93,6 +94,7 @@ export function getEvents(
 }
 
 export function getLastEvent(db: AgentDB): Event | undefined {
+  db.writer.flushDeferredSync();
   const sid = db.activeSessionId ?? null;
   try {
     let row: EventRow | undefined;

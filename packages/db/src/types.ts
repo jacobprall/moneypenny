@@ -1,4 +1,6 @@
 import type { Database } from "bun:sqlite";
+import type { DbReadPool } from "./read-pool.js";
+import type { DbWriter } from "./writer.js";
 
 /**
  * Shared workspace-level index DB. One per workspace, used by all agent
@@ -19,11 +21,10 @@ export interface WorkspaceDB {
 
 export interface AgentDB {
   readonly db: Database;
-  /**
-   * Lazily opened read-only handle to the same file as `db`, for `query_db` and other
-   * parallel-safe reads. Closed by `closeAgentDB`. Do not use for writes or migrations.
-   */
-  queryReadDb?: Database;
+  /** Serialized writes + deferred batching. Always set after `createAgentDB`. */
+  writer: DbWriter;
+  /** Read-only pool for parallel-safe reads (`query_db`, tool-time reads). */
+  reads: DbReadPool;
   readonly repoPath: string;
   readonly dbPath: string;
   readonly modelLoaded: boolean;

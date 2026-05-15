@@ -21,7 +21,7 @@ export const serveCommand = new Command("serve")
       blueprint: DEFAULT_BLUEPRINT,
     });
     const blueprintsDir = getBlueprintsDir(repoPath);
-    scan({ db: agentDb.db, blueprintsDir });
+    scan({ agentDb, blueprintsDir });
     syncPolicyFiles(agentDb, path.join(repoPath, ".mp", "policies"));
     try {
       initSyncTables(agentDb.db);

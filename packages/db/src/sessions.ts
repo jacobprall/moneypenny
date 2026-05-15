@@ -18,9 +18,11 @@ export function createSession(db: AgentDB, label?: string, agentName?: string): 
   const now = Date.now();
   const agent = agentName ?? "default";
   try {
-    db.db
-      .prepare(`INSERT INTO sessions (id, label, agent_name, created_at, last_active_at, is_active) VALUES (?,?,?,?,?,1)`)
-      .run(id, label ?? null, agent, now, now);
+    db.writer.exclusive((raw) => {
+      raw
+        .prepare(`INSERT INTO sessions (id, label, agent_name, created_at, last_active_at, is_active) VALUES (?,?,?,?,?,1)`)
+        .run(id, label ?? null, agent, now, now);
+    });
   } catch (e) {
     throw sqlError("createSession", e);
   }
@@ -113,9 +115,9 @@ export function getActiveSession(db: AgentDB): Session | null {
 
 export function labelSession(db: AgentDB, sessionId: string, label: string): void {
   try {
-    db.db
-      .prepare(`UPDATE sessions SET label = ? WHERE id = ? AND label IS NULL`)
-      .run(label, sessionId);
+    db.writer.exclusive((raw) => {
+      raw.prepare(`UPDATE sessions SET label = ? WHERE id = ? AND label IS NULL`).run(label, sessionId);
+    });
   } catch (e) {
     throw sqlError("labelSession", e);
   }
@@ -125,15 +127,21 @@ export function setActiveSession(db: AgentDB, sessionId: string): void {
   db.activeSessionId = sessionId;
   try {
     const now = Date.now();
-    db.db.exec("BEGIN IMMEDIATE");
-    try {
-      db.db.prepare(`UPDATE sessions SET is_active = 0 WHERE is_active = 1 AND id != ?`).run(sessionId);
-      db.db.prepare(`UPDATE sessions SET is_active = 1, last_active_at = ? WHERE id = ?`).run(now, sessionId);
-      db.db.exec("COMMIT");
-    } catch (inner) {
-      try { db.db.exec("ROLLBACK"); } catch { /* best effort */ }
-      throw inner;
-    }
+    db.writer.exclusive((raw) => {
+      raw.exec("BEGIN IMMEDIATE");
+      try {
+        raw.prepare(`UPDATE sessions SET is_active = 0 WHERE is_active = 1 AND id != ?`).run(sessionId);
+        raw.prepare(`UPDATE sessions SET is_active = 1, last_active_at = ? WHERE id = ?`).run(now, sessionId);
+        raw.exec("COMMIT");
+      } catch (inner) {
+        try {
+          raw.exec("ROLLBACK");
+        } catch {
+          /* best effort */
+        }
+        throw inner;
+      }
+    });
   } catch (e) {
     throw sqlError("setActiveSession", e);
   }
