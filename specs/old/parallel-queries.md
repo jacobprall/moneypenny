@@ -74,17 +74,15 @@ Any other code paths that close only `agent.db` must be audited (grep for `.db.c
 
 ---
 
-## 4. Implementation checklist
+## 4. Implementation checklist (completed)
 
-1. **Types** — Add optional readonly handle to `AgentDB`; export any new helper from `@moneypenny/db` `index` if required by consumers.
-2. **Open + memoize** — Implement `ensureAgentQueryReadDb(agent)`; handle open failures (permissions, missing file) with a clear error surfaced through `query_db` JSON error shape.
-3. **Wire `QueryService`** — Switch `executeReadOnlyQuery` to readonly handle; delete savepoint block; keep validation + limit.
-4. **Lifecycle** — Extend `closeAgentDB`; grep for ad-hoc closes and align.
-5. **MCP / CLI** — Any long-lived process that opens `AgentDB` and later exits should call `closeAgentDB` (already true where applicable); no new requirement beyond closing both handles.
-6. **Docs** — Update `specs/refactors/ioc.md` “Open issue (deferred)” paragraph to point here and mark resolved once shipped.
-7. **Tests** (recommended):
-   - Unit: mock or temp file DB — two interleaved `executeReadOnlyQuery` calls against the same `AgentDB` do not touch `agent.db` (spy / stub readonly path), or integration with readonly file open.
-   - Optional: one test that `closeAgentDB` does not leak handles (hard in JS; at least assert both `close` invoked if spied).
+1. **Types** — `AgentDB.queryReadDb?: Database` in `packages/db/src/types.ts`.
+2. **Open + memoize** — `ensureAgentQueryReadDb` in `packages/db/src/database.ts` (`readonly: true`, `create: false`, `PRAGMA foreign_keys=ON`).
+3. **Wire `QueryService`** — `packages/tools/src/create-tool-services.ts` uses `ensureAgentQueryReadDb`; savepoint block removed.
+4. **Lifecycle** — `closeAgentDB` closes `queryReadDb` first, then `agent.db`; no ad-hoc `agent.db.close` on `AgentDB` outside `closeAgentDB`.
+5. **MCP / CLI** — unchanged; existing `closeAgentDB` callers get both handles closed.
+6. **Docs** — `ioc.md` + this file updated.
+7. **Tests** — `packages/db/src/__tests__/ensure-agent-query-read-db.test.ts` (memoization + `closeAgentDB` clears read handle).
 
 ---
 

@@ -33,7 +33,7 @@ optional vector extensions, workspace schema migrations, and exclude-pattern see
 
 ### 1.2 Boundary Enforcement
 `query_db` uses `context.services.query.executeReadOnlyQuery(...)`, which enforces SELECT/WITH,
-injects a default `LIMIT`, and applies SAVEPOINT fencing around execution.
+injects a default `LIMIT`, and runs on a dedicated read-only connection (`ensureAgentQueryReadDb`).
 
 ### 1.3 Portability
 Tools are bound to `bun:sqlite` and native C extensions (`sqlite-vector`, `sqlite-ai`,
@@ -56,7 +56,7 @@ concrete provider implementation changes.
 | `compact_conversation` | `compactConversation(context.db, upToTurn, summary)` | Conversation service |
 | `delegate` | `getSubagentDef(context.db, name)`, `getSkill(context.db, skillName)`, passes `context.db` to child loop via `ChildLoopParams.db` | Subagent + skill lookups; DB pass-through to child |
 | `read_skill` | `getSkill(context.db, ...)`, `listSkillFiles(context.db, ...)`, `getSkillFile(context.db, ...)` | Skill service |
-| `query_db` | **Raw SQL** via `context.db.db` (SAVEPOINT, prepare, all) | Raw query service (intentionally unrestricted reads) |
+| `query_db` | **Raw SQL** on `context.db.db` (historical) | `QueryService` + read-only handle (see `parallel-queries.md`) |
 | `file_search` | None | — |
 | `file_read` | None | — |
 | `bash` | None | — |
@@ -65,8 +65,9 @@ concrete provider implementation changes.
 | `web_fetch` | None (ignores `context` entirely) | — |
 | `web_search` | None (ignores `context` entirely) | — |
 
-**Summary:** 8 of 15 tools use `context.db`. Of those, 7 use well-defined service functions.
-Only `query_db` requires raw DB access by design.
+**Summary:** 8 of 15 tools used `context.db` in this audit. Of those, 7 mapped cleanly to service
+functions. `query_db` needed SQL execution (today: `QueryService` on a read-only handle; see
+[`parallel-queries.md`](./parallel-queries.md)).
 
 ### 2.2 Orchestration Layer Usage
 
@@ -134,7 +135,7 @@ export interface ConversationService {
 }
 
 /**
- * Read-only SELECT: validates SELECT/WITH, appends LIMIT when missing, runs under SAVEPOINT fencing.
+ * Read-only SELECT: validates SELECT/WITH, appends LIMIT when missing; read-only SQLite handle.
  */
 export interface QueryService {
   executeReadOnlyQuery(sql: string, params?: (string | number)[]): Record<string, unknown>[];
