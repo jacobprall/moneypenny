@@ -9,16 +9,22 @@
 > ecosystem with Bun as the runtime.
 
 **Prerequisites:** Sprint 1 complete (AgentBridge, job system, blueprints).
-Sprint 2 optional but beneficial (read/write separation for parallel trials).
+Sprint 2 beneficial (parallel tools, embeddings). Sprints 3 is independent.
+
+---
+
+## Existing foundations
+
+| Component | Location | Status |
+|-----------|----------|--------|
+| `AgentBridge` | `@moneypenny/bridge` (sprint 1) | Production. `mp-agent` runner wraps it. |
+| Agent loop + tool execution | `@moneypenny/loop` | Production. |
+| Cost tracking | `@moneypenny/loop/cost.ts` | Production. `calculateCost` function. |
+| Nothing in `@moneypenny/eval` | — | Sprint 4 creates this package from scratch. |
 
 ---
 
 ## Overview
-
-The eval harness ships as a new package `@moneypenny/eval` and a CLI
-entry point `mp eval`. It is designed to answer one question: **does
-changing my agent configuration, prompt, toolset, model, or context
-pipeline make outcomes better or worse?**
 
 | # | Workstream | Packages touched |
 |---|-----------|-----------------|
@@ -29,11 +35,12 @@ pipeline make outcomes better or worse?**
 | 5 | Results database | `@moneypenny/eval` |
 | 6 | SWE-bench importer | `@moneypenny/eval` |
 | 7 | Statistical analysis | `@moneypenny/eval` |
-| 8 | Reporting (table, comparison, leaderboard, HTML) | `@moneypenny/eval` |
+| 8 | Reporting | `@moneypenny/eval` |
 | 9 | Docker isolation | `@moneypenny/eval` |
 | 10 | Parallel execution | `@moneypenny/eval` |
 | 11 | CI regression gate | `@moneypenny/eval` |
-| 12 | CLI integration (`mp eval`) | `@moneypenny/cli` |
+| 12 | Sample task suite | `eval/tasks/moneypenny/` |
+| 13 | CLI integration | `@moneypenny/cli` |
 
 ---
 
@@ -41,39 +48,41 @@ pipeline make outcomes better or worse?**
 
 ### Task definition
 
-Tasks are YAML/JSON files that describe a problem, a repo context, and
-how to verify the solution:
-
 ```typescript
 export interface Task {
   id: string;
   repo: string;
   ref: string;                    // git ref to reset to (default: "HEAD")
-  prompt: string;                 // the problem statement given to the agent
-  verify?: VerifySpec;            // how to check if the agent succeeded
-  contextGroundTruth?: RelevantDoc[];  // for context-quality (IR) evals
+  prompt: string;
+  verify?: VerifySpec;
+  contextGroundTruth?: RelevantDoc[];
   description?: string;
   tags?: string[];
   difficulty?: "easy" | "medium" | "hard";
   language?: string;
-  timeoutMs?: number;             // per-task timeout override
+  timeoutMs?: number;
+  environmentSetup?: EnvironmentSetup;  // NEW: per-task environment requirements
 }
 
 export interface TaskSequence {
   repo: string;
   ref: string;
-  tasks: Task[];                  // ordered sequence of tasks
+  tasks: Task[];
+}
+
+export interface EnvironmentSetup {
+  pythonVersion?: string;         // e.g., "3.10"
+  nodeVersion?: string;           // e.g., "22"
+  installCommand?: string;        // e.g., "pip install -e .[dev]"
+  envVars?: Record<string, string>;
+  dockerImage?: string;           // override default Docker image
 }
 ```
 
 ### Task file formats
 
-A task file can contain:
-- A single task object
-- An array of tasks
-- A `{ tasks: [...] }` wrapper
-
-All three are auto-detected during loading.
+A task file can contain a single task, an array of tasks, or a
+`{ tasks: [...] }` wrapper. All three are auto-detected during loading.
 
 ### Loading
 
@@ -105,69 +114,24 @@ tags:
   - null-safety
 ```
 
-### Example multi-session sequence
-
-```yaml
-repo: my-app
-ref: main
-tasks:
-  - id: session-1-scaffold
-    prompt: "Create a new REST endpoint for user preferences at /api/preferences"
-    verify:
-      type: command
-      command: "curl -s http://localhost:3000/api/preferences | jq .status"
-
-  - id: session-2-validation
-    prompt: "Add input validation to the preferences endpoint. Reject invalid theme values."
-    verify:
-      type: command
-      command: "npx jest src/api/preferences.test.ts"
-
-  - id: session-3-persistence
-    prompt: "Persist preferences to the database. Add a migration and update the endpoint."
-    verify:
-      type: composite
-      checks:
-        - type: command
-          command: "npx jest src/api/preferences.test.ts"
-        - type: grep-absent
-          pattern: "TODO|FIXME|HACK"
-          glob: "src/api/preferences.ts"
-```
-
 ### Implementation
 
 | Phase | Scope | Effort |
 |-------|-------|--------|
-| 1.1 | `Task`, `TaskSequence` types, YAML/JSON parser | 1 day |
+| 1.1 | `Task`, `TaskSequence`, `EnvironmentSetup` types, YAML/JSON parser | 1 day |
 | 1.2 | Recursive directory walker, normalization, filtering | 0.5 days |
 
 ---
 
 ## 2. Runner Interface
 
-### Core trait
-
-Every evaluable agent system implements the `Runner` interface:
+### Core interface
 
 ```typescript
 export interface Runner {
   readonly name: string;
-
   run(task: Task, opts: RunOptions): Promise<RunMetrics>;
-
-  /**
-   * Whether this runner supports session persistence across multi-session
-   * sequences. When true, the harness:
-   * 1. Calls sessionStart() before the sequence
-   * 2. Does NOT git reset between tasks (preserving the working tree)
-   * 3. Calls sessionEnd() after the last task
-   *
-   * This lets runners with memory (mp-agent, claude-mp) leverage
-   * accumulated context, demonstrating the value of persistent intelligence.
-   */
   supportsSessionPersistence?: boolean;
-
   sessionStart?(workdir: string, model: string): Promise<void>;
   sessionEnd?(): Promise<void>;
 }
@@ -176,6 +140,7 @@ export interface RunOptions {
   workdir: string;
   model: string;
   timeoutMs: number;
+  tools?: string[];               // NEW: tool allowlist for mp-agent runner
 }
 
 export interface RunMetrics {
@@ -188,30 +153,109 @@ export interface RunMetrics {
   toolCalls: number;
   model: string;
   error?: string;
-  recall?: number;               // IR metrics (context runner only)
+  recall?: number;
   mrr?: number;
   ndcg?: number;
   hitRate?: number;
 }
 ```
 
+### `execWithTimeout` — shared utility
+
+Multiple runners and the verification module need subprocess execution
+with timeout. A single shared utility:
+
+```typescript
+export interface ExecResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  timedOut: boolean;
+}
+
+export async function execWithTimeout(
+  command: string,
+  args: string[],
+  opts: {
+    cwd: string;
+    timeoutMs: number;
+    env?: Record<string, string>;
+  },
+): Promise<ExecResult> {
+  const proc = Bun.spawn([command, ...args], {
+    cwd: opts.cwd,
+    env: { ...process.env, ...opts.env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const timer = setTimeout(() => proc.kill(), opts.timeoutMs);
+
+  try {
+    const [stdout, stderr] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    const exitCode = await proc.exited;
+
+    return {
+      stdout,
+      stderr,
+      exitCode,
+      timedOut: proc.killed,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+```
+
 ### Built-in runners
 
-| Runner name | Description | Session persistence |
-|------------|-------------|:---:|
-| `mp-agent` | Moneypenny's own agent loop via `AgentBridge` | Yes |
-| `claude` | Claude Code CLI (vanilla, no MCP) | No |
-| `claude-mp` | Claude Code CLI with moneypenny MCP server | Yes |
-| `cursor` | Cursor CLI agent via `cursor-agent` | No |
-| `aider` | Aider CLI | No |
-| `codex` | OpenAI Codex CLI | No |
-| `shell` | Arbitrary shell command (for custom agents) | No |
-| `http` | HTTP endpoint (for remote agents) | No |
-| `context` | Context-quality only (no LLM, measures IR retrieval) | No |
+| Runner name | Description | Session persistence | Cost tracking |
+|------------|-------------|:---:|:---:|
+| `mp-agent` | Moneypenny's own agent loop via `AgentBridge` | Yes | Full (tokens, cost, cache) |
+| `claude` | Claude Code CLI (vanilla, no MCP) | No | Partial (no cached_tokens) |
+| `claude-mp` | Claude Code CLI with moneypenny MCP server | Yes | Partial (no cached_tokens) |
+| `cursor` | Cursor CLI agent | No | None |
+| `aider` | Aider CLI | No | None |
+| `codex` | OpenAI Codex CLI | No | Partial |
+| `shell` | Arbitrary shell command | No | None |
+| `http` | HTTP endpoint (for remote agents) | No | Depends on endpoint |
+| `context` | Context-quality only (no LLM, measures IR) | No | N/A |
 
-### `mp-agent` runner
+### Cost tracking limitations for external runners
 
-The most important runner — it evaluates moneypenny's own agent loop:
+External runners report metrics inconsistently:
+
+| Runner | Tokens | Cost | Cache | Source |
+|--------|:------:|:----:|:-----:|--------|
+| `mp-agent` | Yes | Yes | Yes | `AgentBridge` events |
+| `claude` | Yes | Yes | No | `--output-format json` (no `cached_tokens` field) |
+| `aider` | No | No | No | No machine-readable output |
+| `codex` | Partial | Partial | No | JSON output varies by version |
+| `cursor` | No | No | No | No machine-readable output |
+
+**Mitigation:** The efficiency report clearly labels which metrics are
+unavailable per runner. Missing values are shown as `—` not `0`.
+Cost-per-pass comparisons are only valid between runners with full cost
+tracking.
+
+```typescript
+// In EfficiencyMetrics:
+export interface EfficiencyMetrics {
+  runner: string;
+  // ...
+  costTracked: boolean;           // false for runners with no cost data
+  tokenTracked: boolean;          // false for runners with no token data
+  cacheTracked: boolean;          // false for runners with no cache data
+}
+```
+
+### `mp-agent` runner — tool availability
+
+The `mp-agent` runner must use the same tools as production `mp chat`
+sessions. The tool set is configured via `RunOptions.tools`:
 
 ```typescript
 export class MpAgentRunner implements Runner {
@@ -222,21 +266,24 @@ export class MpAgentRunner implements Runner {
   private sessionId: string | null = null;
 
   async run(task: Task, opts: RunOptions): Promise<RunMetrics> {
-    const startTime = Date.now();
     const bridge = this.bridge ?? await this.createBridge(opts);
 
-    let inputTokens = 0;
-    let outputTokens = 0;
-    let cachedTokens = 0;
-    let toolCalls = 0;
-    let costUsd = 0;
-    let turns = 0;
+    // Default tools match production: file_read, file_write, bash, code_search,
+    // memory_add, context_curate. Can be overridden via opts.tools.
+    const tools = opts.tools ?? [
+      "file_read", "file_write", "bash", "code_search",
+      "memory_add", "context_curate",
+    ];
+
+    let inputTokens = 0, outputTokens = 0, cachedTokens = 0;
+    let toolCalls = 0, costUsd = 0, turns = 0;
     let error: string | undefined;
 
     try {
       for await (const event of bridge.run(task.prompt, {
         sessionId: this.sessionId ?? undefined,
         blueprint: "default",
+        tools,
       })) {
         switch (event.type) {
           case "tool_call_result":
@@ -261,13 +308,8 @@ export class MpAgentRunner implements Runner {
     return {
       costUsd,
       wallTimeMs: Date.now() - startTime,
-      turns,
-      inputTokens,
-      outputTokens,
-      cachedTokens,
-      toolCalls,
-      model: opts.model,
-      error,
+      turns, inputTokens, outputTokens, cachedTokens,
+      toolCalls, model: opts.model, error,
     };
   }
 
@@ -281,11 +323,6 @@ export class MpAgentRunner implements Runner {
     this.bridge = null;
     this.sessionId = null;
   }
-
-  private async createBridge(opts: RunOptions): Promise<AgentBridge> {
-    // initialize AgentDB, create AgentLoop, wrap in AgentBridge
-    // ...
-  }
 }
 ```
 
@@ -295,12 +332,10 @@ export class MpAgentRunner implements Runner {
 export class ClaudeCodeRunner implements Runner {
   readonly name: string;
   private augmented: boolean;
-  private mpBinary: string;
 
-  constructor(opts?: { augmented?: boolean; mpBinary?: string }) {
+  constructor(opts?: { augmented?: boolean }) {
     this.augmented = opts?.augmented ?? false;
     this.name = this.augmented ? "claude-mp" : "claude";
-    this.mpBinary = opts?.mpBinary ?? "mp";
   }
 
   get supportsSessionPersistence(): boolean {
@@ -316,24 +351,44 @@ export class ClaudeCodeRunner implements Runner {
       "--max-turns", "50",
     ];
 
-    if (this.augmented) {
-      // start moneypenny MCP server before the run
-    }
-
     const result = await execWithTimeout("claude", args, {
       cwd: opts.workdir,
       timeoutMs: opts.timeoutMs,
     });
 
-    // parse JSON output for metrics
     return this.parseMetrics(result, opts.model, Date.now() - startTime);
+  }
+
+  private parseMetrics(result: ExecResult, model: string, wallTimeMs: number): RunMetrics {
+    if (result.timedOut) {
+      return { ...RunMetrics.empty(model), wallTimeMs, error: `timed out` };
+    }
+
+    try {
+      const json = JSON.parse(result.stdout);
+      return {
+        costUsd: json.cost_usd ?? 0,
+        wallTimeMs,
+        turns: json.num_turns ?? 0,
+        inputTokens: json.input_tokens ?? 0,
+        outputTokens: json.output_tokens ?? 0,
+        cachedTokens: 0,              // Claude Code JSON doesn't report cached tokens
+        toolCalls: json.tool_calls ?? 0,
+        model,
+        error: result.exitCode !== 0 ? result.stderr.slice(0, 500) : undefined,
+      };
+    } catch {
+      return {
+        ...RunMetrics.empty(model),
+        wallTimeMs,
+        error: result.exitCode !== 0 ? result.stderr.slice(0, 500) : "failed to parse output",
+      };
+    }
   }
 }
 ```
 
 ### `shell` runner
-
-Wraps any command-line tool:
 
 ```typescript
 export class ShellRunner implements Runner {
@@ -347,7 +402,7 @@ export class ShellRunner implements Runner {
   async run(task: Task, opts: RunOptions): Promise<RunMetrics> {
     const startTime = Date.now();
     const command = this.commandTemplate
-      .replace("{{prompt}}", task.prompt)
+      .replace("{{prompt}}", task.prompt.replace(/"/g, '\\"'))
       .replace("{{workdir}}", opts.workdir)
       .replace("{{model}}", opts.model);
 
@@ -357,15 +412,10 @@ export class ShellRunner implements Runner {
     });
 
     return {
-      costUsd: 0,
-      wallTimeMs: Date.now() - startTime,
-      turns: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      cachedTokens: 0,
-      toolCalls: 0,
-      model: opts.model,
-      error: result.exitCode !== 0 ? result.stderr : undefined,
+      costUsd: 0, wallTimeMs: Date.now() - startTime,
+      turns: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0,
+      toolCalls: 0, model: opts.model,
+      error: result.exitCode !== 0 ? result.stderr.slice(0, 500) : undefined,
     };
   }
 }
@@ -373,36 +423,22 @@ export class ShellRunner implements Runner {
 
 ### `context` runner (IR evaluation, no LLM)
 
-Measures context retrieval quality without running an agent. Uses the
-`contextGroundTruth` field from tasks to compute information retrieval
-metrics:
-
 ```typescript
 export class ContextRunner implements Runner {
   readonly name = "context";
 
   async run(task: Task, opts: RunOptions): Promise<RunMetrics> {
     if (!task.contextGroundTruth) {
-      return RunMetrics.empty(opts.model);
+      return RunMetrics.empty("none");
     }
-
-    // 1. Build index for the repo
-    // 2. Query with task.prompt
-    // 3. Compare retrieved chunks against ground truth
-    // 4. Compute recall, MRR, NDCG, hit rate
 
     const retrieved = await queryIndex(task.prompt, opts.workdir);
     const truth = task.contextGroundTruth;
 
     return {
-      costUsd: 0,
-      wallTimeMs: 0,
-      turns: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      cachedTokens: 0,
-      toolCalls: 0,
-      model: "none",
+      costUsd: 0, wallTimeMs: 0, turns: 0,
+      inputTokens: 0, outputTokens: 0, cachedTokens: 0,
+      toolCalls: 0, model: "none",
       recall: computeRecall(retrieved, truth),
       mrr: computeMRR(retrieved, truth),
       ndcg: computeNDCG(retrieved, truth),
@@ -419,7 +455,7 @@ export function getRunner(name: string, opts?: RunnerOptions): Runner {
   switch (name) {
     case "mp-agent": return new MpAgentRunner();
     case "claude": return new ClaudeCodeRunner();
-    case "claude-mp": return new ClaudeCodeRunner({ augmented: true, mpBinary: opts?.mpBinary });
+    case "claude-mp": return new ClaudeCodeRunner({ augmented: true });
     case "cursor": return new CursorRunner();
     case "aider": return new AiderRunner();
     case "codex": return new CodexRunner();
@@ -429,19 +465,25 @@ export function getRunner(name: string, opts?: RunnerOptions): Runner {
     default: throw new Error(`Unknown runner: ${name}. Available: ${listRunners().join(", ")}`);
   }
 }
-
-export function listRunners(): string[] {
-  return ["mp-agent", "claude", "claude-mp", "cursor", "aider", "codex", "shell", "http", "context"];
-}
 ```
+
+### Acceptance criteria
+
+- [ ] `mp-agent` runner uses same tools as production `mp chat`
+- [ ] Tool set is configurable via `RunOptions.tools`
+- [ ] `claude` runner parses JSON output, handles timeout and parse failures
+- [ ] `shell` runner executes arbitrary commands with proper escaping
+- [ ] All runners use shared `execWithTimeout` for subprocess management
+- [ ] `RunMetrics` clearly indicates which metrics are tracked per runner
+- [ ] Session persistence works for `mp-agent` and `claude-mp`
 
 ### Implementation
 
 | Phase | Scope | Effort |
 |-------|-------|--------|
-| 2.1 | `Runner` interface, `RunMetrics`, `RunOptions` types | 0.5 days |
-| 2.2 | `MpAgentRunner` (uses AgentBridge) | 2 days |
-| 2.3 | `ClaudeCodeRunner` (vanilla + augmented) | 1.5 days |
+| 2.1 | `Runner` interface, `RunMetrics`, `execWithTimeout` utility | 1 day |
+| 2.2 | `MpAgentRunner` (uses AgentBridge, configurable tools) | 2 days |
+| 2.3 | `ClaudeCodeRunner` (vanilla + augmented, JSON parsing) | 1.5 days |
 | 2.4 | `ShellRunner` + `HttpRunner` | 1 day |
 | 2.5 | `CursorRunner` + `AiderRunner` + `CodexRunner` | 1.5 days |
 | 2.6 | `ContextRunner` with IR metrics (recall, MRR, NDCG, hit rate) | 2 days |
@@ -453,18 +495,16 @@ export function listRunners(): string[] {
 
 ### Single-task evaluation
 
-The harness orchestrates: for each task × runner × trial, reset the repo,
-run the agent, verify the result, record the outcome.
-
 ```typescript
 export interface EvalConfig {
   tasks: Task[];
   runners: string[];
-  trials: number;                 // repetitions per task per runner (default 3)
+  trials: number;                 // default 3
   model: string;
   reposDir: string;
   resultsDb: string;
-  timeoutMs: number;              // default 300_000 (5 min)
+  timeoutMs: number;              // default 300_000
+  tools?: string[];               // tool allowlist for mp-agent
 }
 
 export interface HarnessCallbacks {
@@ -491,19 +531,70 @@ for each task:
     for trial = 1..N:
       callbacks.onTrialStart(task, runner, trial)
 
-      1. git reset --hard <task.ref> in repos/<task.repo>
-      2. runner.run(task, opts) → RunMetrics
-      3. run verification (task.verify) → passed: boolean
-      4. record RunResult to results DB
-      5. callbacks.onTrialEnd(result)
+      1. Prepare workdir (git reset or worktree, §3.1 below)
+      2. Run environment setup if task.environmentSetup exists
+      3. runner.run(task, opts) → RunMetrics
+      4. Run verification (task.verify) → passed
+      5. Record RunResult to results DB
+      6. callbacks.onTrialEnd(result)
 
   callbacks.onTaskEnd(task)
 ```
 
+### Workspace isolation (non-Docker)
+
+**Problem identified in gap analysis:** Shallow clones don't support
+`git reset --hard <arbitrary-commit>` — the commit might not be in the
+shallow history.
+
+**Solution:** Use **git worktrees** with a shared object store:
+
+```typescript
+export async function prepareWorkdir(
+  task: Task,
+  reposDir: string,
+  trialId: string,
+): Promise<string> {
+  const repoDir = path.join(reposDir, task.repo);
+  const worktreeDir = path.join(reposDir, ".worktrees", `${task.id}-${trialId}`);
+
+  // First trial for this repo: full clone (or verify existing)
+  if (!existsSync(repoDir)) {
+    await execWithTimeout("git", ["clone", task.repo, repoDir], {
+      cwd: reposDir,
+      timeoutMs: 120_000,
+    });
+  }
+
+  // Create a detached worktree at the task's ref
+  await execWithTimeout("git", [
+    "worktree", "add", "--detach", worktreeDir, task.ref,
+  ], {
+    cwd: repoDir,
+    timeoutMs: 30_000,
+  });
+
+  return worktreeDir;
+}
+
+export async function cleanupWorkdir(worktreeDir: string, repoDir: string): Promise<void> {
+  await execWithTimeout("git", ["worktree", "remove", "--force", worktreeDir], {
+    cwd: repoDir,
+    timeoutMs: 10_000,
+  });
+}
+```
+
+**Benefits over shallow clone:**
+- Full commit history available (any ref works)
+- Shared object store (no duplication of git objects)
+- Clean isolation per trial (each worktree is independent)
+- Proper cleanup via `git worktree remove`
+
 ### Multi-session evaluation
 
 Tests agent memory and context accumulation across a sequence of related
-tasks in the same repo:
+tasks:
 
 ```typescript
 export async function runMultiSession(
@@ -514,40 +605,108 @@ export async function runMultiSession(
 ): Promise<RunResult[]>;
 ```
 
-Key behavior differences from single-task:
+### Multi-session fairness
 
-1. **Persistent runners** (those with `supportsSessionPersistence = true`):
-   - `sessionStart()` called once before the sequence
-   - **No git reset** between tasks — the working tree accumulates changes
-   - `sessionEnd()` called after the last task
-   - This simulates a real multi-session workflow where the agent builds
-     on prior work
+**Problem identified in gap analysis:** Persistent runners don't get
+`git reset` between tasks, but non-persistent runners do. This confounds
+two variables: conversation history and working tree state.
 
-2. **Non-persistent runners** (the control group):
-   - `git reset --hard` before every task
-   - Starting from scratch each time
-   - This measures how much value persistence provides
+**Solution:** Separate the two dimensions:
 
-3. Each result includes a `sessionNumber` (1, 2, 3...) for analysis
+| Mode | Working tree | Conversation | Use case |
+|------|:------------:|:------------:|----------|
+| `persistent` | Accumulates changes | Maintained | Full moneypenny experience |
+| `fresh-tree-persistent-context` | Reset between tasks | Maintained | Isolates context value |
+| `non-persistent` | Reset between tasks | Fresh each time | Baseline/control |
 
-The multi-session mode directly measures the value proposition of
-moneypenny's intelligence file: does accumulated context help the agent
-solve later tasks better, faster, or cheaper?
-
-### Git operations
+The default comparison pairs `persistent` (mp-agent) against
+`non-persistent` (claude) — this is intentional because it measures the
+full value proposition. For scientific isolation of the context benefit,
+use `fresh-tree-persistent-context`:
 
 ```typescript
-export async function gitReset(workdir: string, ref: string): Promise<void>;
-export async function gitClone(repo: string, dest: string, depth?: number): Promise<void>;
+export interface MultiSessionConfig extends EvalConfig {
+  persistenceMode: "persistent" | "fresh-tree-persistent-context" | "non-persistent";
+}
 ```
+
+### SWE-bench environment setup
+
+**Problem identified in gap analysis:** SWE-bench tasks require specific
+Python versions, library versions, and per-repo environment setup.
+Without this, most tasks fail at verification, not at the agent step.
+
+**Solution:** The `EnvironmentSetup` field on tasks, combined with a
+setup step in the harness:
+
+```typescript
+async function setupEnvironment(
+  workdir: string,
+  setup: EnvironmentSetup | undefined,
+): Promise<void> {
+  if (!setup) return;
+
+  // Verify Python version if specified
+  if (setup.pythonVersion) {
+    const result = await execWithTimeout(
+      `python${setup.pythonVersion}`, ["--version"],
+      { cwd: workdir, timeoutMs: 5_000 },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `Task requires Python ${setup.pythonVersion} but it's not available. ` +
+        `Install it or use --docker with an appropriate image.`
+      );
+    }
+  }
+
+  // Run install command
+  if (setup.installCommand) {
+    const result = await execWithTimeout(
+      "bash", ["-c", setup.installCommand],
+      { cwd: workdir, timeoutMs: 300_000, env: setup.envVars },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `Environment setup failed: ${result.stderr.slice(0, 500)}`
+      );
+    }
+  }
+}
+```
+
+For Docker mode, the `EnvironmentSetup.dockerImage` field overrides the
+default image, allowing per-repo Docker images with pre-installed
+dependencies:
+
+```yaml
+# SWE-bench Django task
+id: django__django-16527
+repo: django/django
+ref: abc123def
+environmentSetup:
+  pythonVersion: "3.10"
+  installCommand: "pip install -e .[dev]"
+  dockerImage: "mp-eval-django:3.10"
+```
+
+### Acceptance criteria
+
+- [ ] Git worktrees provide isolated workdirs for parallel trials
+- [ ] Worktrees are cleaned up after trial completion (even on failure)
+- [ ] `EnvironmentSetup` runs before the agent, fails fast if Python version missing
+- [ ] Multi-session persistent mode accumulates working tree changes
+- [ ] Multi-session `fresh-tree-persistent-context` resets tree but keeps conversation
+- [ ] Harness callbacks fire at correct points (start/end of task, trial)
 
 ### Implementation
 
 | Phase | Scope | Effort |
 |-------|-------|--------|
-| 3.1 | `runEval` single-task harness with callbacks | 2 days |
-| 3.2 | `runMultiSession` harness with persistence support | 2 days |
-| 3.3 | Git operations (reset, clone) with error handling | 0.5 days |
+| 3.1 | `runEval` single-task harness with callbacks and worktree isolation | 2 days |
+| 3.2 | `runMultiSession` harness with persistence modes | 2 days |
+| 3.3 | Git worktree operations (create, cleanup) | 1 day |
+| 3.4 | Environment setup step | 0.5 days |
 
 ---
 
@@ -555,31 +714,103 @@ export async function gitClone(repo: string, dest: string, depth?: number): Prom
 
 ### VerifySpec
 
-Verification checks whether the agent's changes actually solve the problem:
-
 ```typescript
 export type VerifySpec =
   | { type: "command"; command: string; cwd?: string }
   | { type: "pytest"; testPath: string; args?: string[] }
   | { type: "grep-absent"; pattern: string; glob?: string }
-  | { type: "composite"; checks: VerifySpec[] };
+  | { type: "composite"; checks: VerifySpec[] }
+  | { type: "patch-then-test"; testPatch: string; testCommand: string };  // NEW
+```
 
-export interface VerifyResult {
-  passed: boolean;
-  output: string;
+### SWE-bench test patch application
+
+**Problem identified in gap analysis:** The `makeVerifySpec` function
+didn't actually apply the test patch. In real SWE-bench evaluation, the
+test patch contains **new tests** that verify the fix. These must be
+applied before running the test suite — otherwise you're running the
+old tests that already pass.
+
+The new `patch-then-test` verify type handles this:
+
+```typescript
+async function verifyPatchThenTest(
+  spec: { testPatch: string; testCommand: string },
+  workdir: string,
+  timeoutMs: number,
+): Promise<VerifyResult> {
+  // 1. Write the test patch to a temp file
+  const patchFile = path.join(workdir, ".mp-eval-test.patch");
+  await Bun.write(patchFile, spec.testPatch);
+
+  // 2. Apply the test patch
+  const applyResult = await execWithTimeout(
+    "git", ["apply", "--check", patchFile],
+    { cwd: workdir, timeoutMs: 10_000 },
+  );
+
+  if (applyResult.exitCode !== 0) {
+    // Patch might conflict with agent's changes — try with 3-way merge
+    const apply3way = await execWithTimeout(
+      "git", ["apply", "--3way", patchFile],
+      { cwd: workdir, timeoutMs: 10_000 },
+    );
+    if (apply3way.exitCode !== 0) {
+      return {
+        passed: false,
+        output: `Test patch failed to apply: ${apply3way.stderr}`,
+      };
+    }
+  } else {
+    await execWithTimeout(
+      "git", ["apply", patchFile],
+      { cwd: workdir, timeoutMs: 10_000 },
+    );
+  }
+
+  // 3. Run the test command
+  const testResult = await execWithTimeout(
+    "bash", ["-c", spec.testCommand],
+    { cwd: workdir, timeoutMs },
+  );
+
+  // 4. Clean up patch file
+  try { unlinkSync(patchFile); } catch {}
+
+  return {
+    passed: testResult.exitCode === 0,
+    output: testResult.stdout + "\n" + testResult.stderr,
+  };
 }
 ```
 
-### Verification types
+### Updated `makeVerifySpec` for SWE-bench
 
-| Type | Description | Pass condition |
-|------|-------------|---------------|
-| `command` | Run a shell command | Exit code 0 |
-| `pytest` | Run pytest on specific test files | All tests pass |
-| `grep-absent` | Search for a pattern that should NOT exist | Zero matches |
-| `composite` | Run multiple checks in order | All pass (short-circuit on failure) |
+```typescript
+function makeVerifySpec(instance: SweBenchInstance): VerifySpec {
+  const testFiles = extractTestFiles(instance.test_patch);
+  const failToPass = instance.FAIL_TO_PASS
+    ? JSON.parse(instance.FAIL_TO_PASS) as string[]
+    : [];
 
-### Execution
+  let testCommand: string;
+  if (failToPass.length > 0) {
+    testCommand = `python -m pytest ${failToPass.join(" ")} --tb=short -q`;
+  } else if (testFiles.length > 0) {
+    testCommand = `python -m pytest ${testFiles.join(" ")} --tb=short -q`;
+  } else {
+    testCommand = "python -m pytest --tb=short -q";
+  }
+
+  return {
+    type: "patch-then-test",
+    testPatch: instance.test_patch,
+    testCommand,
+  };
+}
+```
+
+### Standard verification execution
 
 ```typescript
 export async function runVerify(
@@ -589,25 +820,24 @@ export async function runVerify(
 ): Promise<VerifyResult> {
   switch (spec.type) {
     case "command":
-      return execCommand(spec.command, spec.cwd ? `${workdir}/${spec.cwd}` : workdir, timeoutMs);
+      return execCommand(spec.command, spec.cwd ? path.join(workdir, spec.cwd) : workdir, timeoutMs);
 
     case "pytest": {
       const extra = spec.args?.join(" ") ?? "";
-      const cmd = `python -m pytest ${spec.testPath} ${extra} --tb=short -q`;
-      return execCommand(cmd, workdir, timeoutMs);
+      return execCommand(`python -m pytest ${spec.testPath} ${extra} --tb=short -q`, workdir, timeoutMs);
     }
 
     case "grep-absent": {
       const glob = spec.glob ?? "**/*";
-      const result = await execCommand(
-        `rg --count "${spec.pattern}" --glob "${glob}" || true`,
-        workdir, timeoutMs,
+      const result = await execWithTimeout(
+        "rg", ["--count", spec.pattern, "--glob", glob],
+        { cwd: workdir, timeoutMs },
       );
-      const count = result.output
+      const count = result.stdout
         .split("\n")
         .filter(l => l.includes(":"))
         .reduce((sum, l) => sum + parseInt(l.split(":").pop() ?? "0", 10), 0);
-      return { passed: count === 0, output: result.output };
+      return { passed: count === 0, output: result.stdout };
     }
 
     case "composite": {
@@ -615,38 +845,43 @@ export async function runVerify(
       for (const check of spec.checks) {
         const sub = await runVerify(check, workdir, timeoutMs);
         outputs.push(sub.output);
-        if (!sub.passed) {
-          return { passed: false, output: outputs.join("\n---\n") };
-        }
+        if (!sub.passed) return { passed: false, output: outputs.join("\n---\n") };
       }
       return { passed: true, output: outputs.join("\n---\n") };
     }
+
+    case "patch-then-test":
+      return verifyPatchThenTest(spec, workdir, timeoutMs);
   }
 }
 ```
 
-### Timeout handling
+### Acceptance criteria
 
-All command executions use `Bun.spawn` with a timeout. If the process
-exceeds the timeout, it is killed and the trial is marked as failed with
-error `"timed out after Ns"`.
+- [ ] `command` verify type runs shell commands, passes on exit code 0
+- [ ] `pytest` verify type runs pytest on specified test files
+- [ ] `grep-absent` verify type correctly detects (or not) patterns in files
+- [ ] `composite` verify type runs checks in order, short-circuits on failure
+- [ ] `patch-then-test` applies the test patch before running tests
+- [ ] Test patch application falls back to 3-way merge on conflict
+- [ ] All verification uses `execWithTimeout` with proper cleanup
 
 ### Implementation
 
 | Phase | Scope | Effort |
 |-------|-------|--------|
-| 4.1 | `VerifySpec` types, `runVerify` dispatcher | 1 day |
-| 4.2 | Command execution with timeout (Bun.spawn) | 0.5 days |
+| 4.1 | `VerifySpec` types, `runVerify` dispatcher, `execCommand` | 1 day |
+| 4.2 | `patch-then-test` verify type with 3-way merge fallback | 1 day |
 | 4.3 | Composite verification, grep-absent logic | 0.5 days |
 
 ---
 
 ## 5. Results Database
 
-### Schema
-
 Results are stored in a separate SQLite database (not the intelligence
 file). This keeps eval data portable and shareable.
+
+### Schema
 
 ```sql
 CREATE TABLE IF NOT EXISTS results (
@@ -663,47 +898,31 @@ CREATE TABLE IF NOT EXISTS results (
   cached_tokens INTEGER NOT NULL DEFAULT 0,
   tool_calls INTEGER NOT NULL DEFAULT 0,
   model TEXT NOT NULL,
-  session_number INTEGER,          -- populated for multi-session sequences
+  session_number INTEGER,
   error TEXT,
-  recall REAL,                     -- IR metrics
+  recall REAL,
   mrr REAL,
   ndcg REAL,
   hit_rate REAL,
+  cost_tracked INTEGER NOT NULL DEFAULT 1,   -- NEW: was cost actually reported?
+  token_tracked INTEGER NOT NULL DEFAULT 1,  -- NEW: were tokens actually reported?
   timestamp INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_results_task ON results(task_id, runner);
 CREATE INDEX IF NOT EXISTS idx_results_runner ON results(runner);
-CREATE INDEX IF NOT EXISTS idx_results_session ON results(task_id, runner, session_number);
+
+CREATE TABLE IF NOT EXISTS eval_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  started_at INTEGER NOT NULL,
+  completed_at INTEGER,
+  config TEXT NOT NULL,               -- JSON of EvalConfig
+  git_sha TEXT,                       -- HEAD commit of moneypenny at eval time
+  notes TEXT
+);
 ```
 
-### RunResult type
-
-```typescript
-export interface RunResult {
-  taskId: string;
-  runner: string;
-  trial: number;
-  passed: boolean;
-  costUsd: number;
-  wallTimeMs: number;
-  turns: number;
-  inputTokens: number;
-  outputTokens: number;
-  cachedTokens: number;
-  toolCalls: number;
-  model: string;
-  sessionNumber?: number;
-  error?: string;
-  recall?: number;
-  mrr?: number;
-  ndcg?: number;
-  hitRate?: number;
-  timestamp: number;
-}
-```
-
-### ResultsDB class
+### `ResultsDB` class
 
 ```typescript
 export class ResultsDB {
@@ -712,36 +931,14 @@ export class ResultsDB {
   insert(result: RunResult): void;
   insertBatch(results: RunResult[]): void;
 
-  getResults(opts?: {
-    runner?: string;
-    taskId?: string;
-    model?: string;
-  }): RunResult[];
-
+  getResults(opts?: { runner?: string; taskId?: string; model?: string }): RunResult[];
   getReport(): ReportRow[];
   getMultiSessionReport(): SessionReportRow[];
-
   getRunners(): string[];
   getTasks(): string[];
-}
 
-export interface ReportRow {
-  taskId: string;
-  runner: string;
-  passRate: number;
-  avgCostUsd: number;
-  avgWallTimeMs: number;
-  avgTurns: number;
-  trials: number;
-}
-
-export interface SessionReportRow {
-  taskId: string;
-  runner: string;
-  sessionNumber: number;
-  passRate: number;
-  avgCostUsd: number;
-  avgWallTimeMs: number;
+  startEvalRun(config: EvalConfig): number;
+  completeEvalRun(runId: number): void;
 }
 ```
 
@@ -750,34 +947,51 @@ export interface SessionReportRow {
 | Phase | Scope | Effort |
 |-------|-------|--------|
 | 5.1 | Schema, `ResultsDB` class with insert/query | 1 day |
-| 5.2 | Report queries (aggregate, multi-session, by-runner) | 1 day |
+| 5.2 | Report queries, eval_runs tracking | 1 day |
 
 ---
 
 ## 6. SWE-bench Importer
 
-### Problem
+### Environment setup per repo
 
-SWE-bench is the standard benchmark for evaluating coding agents. It ships
-as a JSON dataset with problem statements, patches, and test commands.
-The importer converts SWE-bench instances into mp-eval task files.
-
-### SWE-bench instance format
+**Problem identified in gap analysis:** The previous spec preserved
+`environment_setup_commit` but didn't explain how to use it. The
+importer now generates `EnvironmentSetup` per task:
 
 ```typescript
-export interface SweBenchInstance {
-  instance_id: string;
-  repo: string;
-  base_commit: string;
-  problem_statement: string;
-  hints_text: string;
-  test_patch: string;
-  patch: string;                  // gold patch (not given to agent)
-  version: string;
-  FAIL_TO_PASS?: string;         // JSON array of test IDs
-  PASS_TO_PASS?: string;
-  created_at?: string;
-  environment_setup_commit?: string;
+const REPO_ENVIRONMENTS: Record<string, Partial<EnvironmentSetup>> = {
+  "django/django": {
+    pythonVersion: "3.10",
+    installCommand: "pip install -e .[dev]",
+    dockerImage: "mp-eval-django",
+  },
+  "scikit-learn/scikit-learn": {
+    pythonVersion: "3.10",
+    installCommand: "pip install -e .[dev] numpy scipy",
+    dockerImage: "mp-eval-sklearn",
+  },
+  "sympy/sympy": {
+    pythonVersion: "3.10",
+    installCommand: "pip install -e .",
+  },
+  "psf/requests": {
+    pythonVersion: "3.10",
+    installCommand: "pip install -e .[dev]",
+  },
+  // ... other common SWE-bench repos
+};
+
+function getEnvironmentSetup(instance: SweBenchInstance): EnvironmentSetup | undefined {
+  const repoSetup = REPO_ENVIRONMENTS[instance.repo];
+  if (!repoSetup) return undefined;
+
+  return {
+    ...repoSetup,
+    envVars: instance.environment_setup_commit
+      ? { SWE_BENCH_SETUP_COMMIT: instance.environment_setup_commit }
+      : undefined,
+  };
 }
 ```
 
@@ -785,85 +999,60 @@ export interface SweBenchInstance {
 
 ```typescript
 export interface ImportOptions {
-  includeHints: boolean;          // include hints_text in prompt
-  difficultyFromPatchSize: boolean;  // estimate difficulty from patch LOC
-  maxTasks?: number;              // cap number of imported tasks
+  includeHints: boolean;
+  difficultyFromPatchSize: boolean;
+  maxTasks?: number;
+  repos?: string[];               // filter to specific repos
 }
 
-export function importSweBench(jsonPath: string, opts: ImportOptions): Task[];
-export function writeTasksByRepo(tasks: Task[], outputDir: string): number;
-```
+export function importSweBench(jsonPath: string, opts: ImportOptions): Task[] {
+  const instances = JSON.parse(Bun.file(jsonPath).text()) as SweBenchInstance[];
 
-1. Parse SWE-bench JSON
-2. For each instance:
-   - Build prompt from `problem_statement` (+ optional `hints_text`)
-   - Extract repo name (e.g., `django/django` → `django`)
-   - Use `base_commit` as the git ref
-   - Build `VerifySpec` from `test_patch` and `FAIL_TO_PASS`
-   - Estimate difficulty from patch size (lines changed × files changed)
-   - Detect language from repo name
-   - Tag with `swe-bench`, difficulty, version
-3. Write tasks as YAML grouped by repo
-
-### Difficulty estimation
-
-```typescript
-function estimateDifficulty(patch: string): "easy" | "medium" | "hard" {
-  const linesChanged = patch
-    .split("\n")
-    .filter(l => (l.startsWith("+") || l.startsWith("-")) && !l.startsWith("+++") && !l.startsWith("---"))
-    .length;
-  const filesChanged = patch
-    .split("\n")
-    .filter(l => l.startsWith("diff --git"))
-    .length;
-
-  if (filesChanged <= 1 && linesChanged <= 20) return "easy";
-  if (filesChanged <= 3 && linesChanged <= 80) return "medium";
-  return "hard";
+  return instances
+    .filter(i => !opts.repos || opts.repos.includes(i.repo))
+    .slice(0, opts.maxTasks)
+    .map(instance => ({
+      id: instance.instance_id,
+      repo: instance.repo.split("/").pop()!,
+      ref: instance.base_commit,
+      prompt: opts.includeHints && instance.hints_text
+        ? `${instance.problem_statement}\n\nHints:\n${instance.hints_text}`
+        : instance.problem_statement,
+      verify: makeVerifySpec(instance),
+      difficulty: opts.difficultyFromPatchSize
+        ? estimateDifficulty(instance.patch)
+        : undefined,
+      language: "python",
+      tags: ["swe-bench", instance.version ?? "unknown"],
+      environmentSetup: getEnvironmentSetup(instance),
+    }));
 }
 ```
 
-### Verify spec generation
+### Acceptance criteria
 
-For SWE-bench tasks, verification applies the test patch and runs pytest
-on the failing tests:
-
-```typescript
-function makeVerifySpec(testPatch: string, testFiles: string[]): VerifySpec {
-  if (testFiles.length === 0) {
-    return { type: "command", command: "python -m pytest --tb=short -q" };
-  }
-  return {
-    type: "pytest",
-    testPath: testFiles[0],
-    args: testFiles.length > 1 ? testFiles.slice(1) : undefined,
-  };
-}
-```
+- [ ] Importer parses SWE-bench JSON and produces valid Task objects
+- [ ] `verify` spec uses `patch-then-test` with the actual test patch
+- [ ] `environmentSetup` is populated for known repos
+- [ ] Difficulty estimation works based on patch size
+- [ ] `--repos` filter limits import to specific repositories
+- [ ] Output YAML files are grouped by repo subdirectory
 
 ### Implementation
 
 | Phase | Scope | Effort |
 |-------|-------|--------|
-| 6.1 | SWE-bench JSON parser, instance → task converter | 1.5 days |
-| 6.2 | Difficulty estimation, language detection, test file extraction | 0.5 days |
-| 6.3 | Write YAML grouped by repo, verify spec generation | 0.5 days |
+| 6.1 | JSON parser, instance → task converter with env setup | 1.5 days |
+| 6.2 | Difficulty estimation, repo environment map | 0.5 days |
+| 6.3 | Write YAML grouped by repo, verify spec with patch-then-test | 0.5 days |
 
 ---
 
 ## 7. Statistical Analysis
 
-### Problem
-
-Eval results are noisy. An agent that passes 7/10 trials may or may not be
-better than one that passes 6/10. We need proper statistical methods to
-distinguish signal from noise.
-
 ### Wilson score confidence intervals
 
-For pass rates with small sample sizes (typical eval: 3–10 trials), the
-Wilson score interval is more accurate than the normal approximation:
+For pass rates with small sample sizes (3–10 trials):
 
 ```typescript
 export interface ConfidenceInterval {
@@ -873,41 +1062,36 @@ export interface ConfidenceInterval {
   n: number;
 }
 
-export function wilsonCI(successes: number, trials: number, confidence?: number): ConfidenceInterval;
+export function wilsonCI(
+  successes: number,
+  trials: number,
+  confidence?: number,
+): ConfidenceInterval;
 ```
 
 ### McNemar's test for paired comparisons
-
-When comparing two runners on the same tasks, McNemar's test determines
-if the difference in pass rates is statistically significant. It uses
-the 2×2 contingency table of discordant pairs:
-
-```
-                Runner B
-                Pass    Fail
-Runner A  Pass  [both]  [A wins]
-          Fail  [B wins] [both fail]
-```
 
 ```typescript
 export interface McNemarResult {
   runnerA: string;
   runnerB: string;
-  aWins: number;                  // A passed, B failed
-  bWins: number;                  // B passed, A failed
+  aWins: number;
+  bWins: number;
   bothPass: number;
   bothFail: number;
-  chiSquared: number;             // with continuity correction
+  chiSquared: number;
   pValue: number;
   significantAt05: boolean;
 }
 
-export function mcnemarTest(results: RunResult[], runnerA: string, runnerB: string): McNemarResult;
+export function mcnemarTest(
+  results: RunResult[],
+  runnerA: string,
+  runnerB: string,
+): McNemarResult;
 ```
 
 ### Efficiency metrics
-
-Per-runner aggregate statistics:
 
 ```typescript
 export interface EfficiencyMetrics {
@@ -916,38 +1100,21 @@ export interface EfficiencyMetrics {
   passed: number;
   passRate: ConfidenceInterval;
   avgCostUsd: number;
-  costPerPass: number | null;     // total cost / passed (null if 0 passes)
+  costPerPass: number | null;
   avgWallTimeMs: number;
   avgTurns: number;
   totalInputTokens: number;
   totalOutputTokens: number;
   totalCachedTokens: number;
-  cacheHitRate: number;           // cached / input
-  cacheSavingsPct: number;        // estimated % saved from caching
+  cacheHitRate: number;
+  cacheSavingsPct: number;
   avgToolCalls: number;
+  costTracked: boolean;           // false → cost metrics are unreliable
+  tokenTracked: boolean;          // false → token metrics are unreliable
+  cacheTracked: boolean;          // false → cache metrics are unreliable
 }
 
 export function computeEfficiency(runnerName: string, results: RunResult[]): EfficiencyMetrics;
-```
-
-### Runner comparison
-
-Full A/B comparison combining all statistical methods:
-
-```typescript
-export interface RunnerComparison {
-  runnerA: EfficiencyMetrics;
-  runnerB: EfficiencyMetrics;
-  mcnemar: McNemarResult;
-  costRatio: number | null;       // A's cost-per-pass / B's cost-per-pass
-  timeRatio: number | null;       // A's avg time / B's avg time
-}
-
-export function compareRunners(
-  results: RunResult[],
-  runnerA: string,
-  runnerB: string,
-): RunnerComparison;
 ```
 
 ### Implementation
@@ -955,10 +1122,10 @@ export function compareRunners(
 | Phase | Scope | Effort |
 |-------|-------|--------|
 | 7.1 | Wilson CI, z-score approximation | 0.5 days |
-| 7.2 | McNemar's test with continuity correction, chi-squared p-value | 1 day |
-| 7.3 | Efficiency metrics, cache analysis | 0.5 days |
+| 7.2 | McNemar's test with continuity correction | 1 day |
+| 7.3 | Efficiency metrics with tracking flags | 0.5 days |
 | 7.4 | `compareRunners` full A/B comparison | 0.5 days |
-| 7.5 | Unit tests (replicating moneypenny-rs test cases) | 0.5 days |
+| 7.5 | Unit tests | 0.5 days |
 
 ---
 
@@ -968,12 +1135,12 @@ export function compareRunners(
 
 | Format | Description | Use case |
 |--------|------------|----------|
-| `table` | ASCII table with pass rates, costs, timing | Terminal output |
-| `comparison` | Side-by-side runner comparison with stats | A/B analysis |
-| `leaderboard` | Ranked runners sorted by configurable metric | Ranking |
-| `json` | Machine-readable results | CI integration |
-| `html` | Rich HTML report with charts | Sharing |
-| `stats` | Statistical analysis (McNemar, CI) | Research |
+| `table` | ASCII table | Terminal |
+| `comparison` | Side-by-side with stats | A/B analysis |
+| `leaderboard` | Ranked runners | Ranking |
+| `json` | Machine-readable | CI |
+| `html` | Rich HTML report | Sharing |
+| `stats` | Statistical analysis | Research |
 
 ### Table format
 
@@ -983,9 +1150,9 @@ export function compareRunners(
 ├──────────────────┼─────────┼──────────┼──────────┼──────────┼────────┤
 │ fix-null-check   │ mp-agent│ 100%     │ $0.023   │ 12.3s    │ 3      │
 │ fix-null-check   │ claude  │ 67%      │ $0.031   │ 18.7s    │ 3      │
-│ add-validation   │ mp-agent│ 100%     │ $0.045   │ 22.1s    │ 3      │
-│ add-validation   │ claude  │ 33%      │ $0.052   │ 35.2s    │ 3      │
+│ fix-null-check   │ aider   │ 33%      │    —     │ 22.1s    │ 3      │
 └──────────────────┴─────────┴──────────┴──────────┴──────────┴────────┘
+                                         ^ "—" for untracked metrics
 ```
 
 ### Comparison format
@@ -1000,8 +1167,8 @@ Pass rate:         85.0%         62.5%
 Cost/pass:         $0.034        $0.058     (0.59x)
 Avg time:          17.2s         28.4s      (0.61x)
 Avg turns:         4.2           6.8
-Cache hit rate:    42.3%         0.0%
-Cache savings:     38.1%         0.0%
+Cache hit rate:    42.3%         — (not tracked)
+Cache savings:     38.1%         — (not tracked)
 ───────────────────────────────────────────────────────────────
 McNemar χ²:        4.17          p = 0.041  *significant*
   mp-agent wins:   8 tasks
@@ -1011,74 +1178,39 @@ McNemar χ²:        4.17          p = 0.041  *significant*
 ═══════════════════════════════════════════════════════════════
 ```
 
-### Leaderboard format
-
-```
-# Agent Leaderboard (sorted by pass rate)
-┌────┬──────────┬──────────┬──────────┬───────────┬────────────┐
-│ #  │ Runner   │ Pass Rate│ Cost/Pass│ Avg Time  │ Cache Svgs │
-├────┼──────────┼──────────┼──────────┼───────────┼────────────┤
-│ 1  │ mp-agent │ 85.0%    │ $0.034   │ 17.2s     │ 38.1%      │
-│ 2  │ claude-mp│ 77.5%    │ $0.041   │ 22.8s     │ 31.2%      │
-│ 3  │ claude   │ 62.5%    │ $0.058   │ 28.4s     │ 0.0%       │
-│ 4  │ aider    │ 55.0%    │ $0.072   │ 34.1s     │ 0.0%       │
-│ 5  │ codex    │ 47.5%    │ $0.089   │ 41.6s     │ 0.0%       │
-└────┴──────────┴──────────┴──────────┴───────────┴────────────┘
-```
-
 ### HTML report
 
 A self-contained HTML file with:
 - Summary table
 - Per-task pass/fail heatmap
-- Cost and timing charts
+- Cost and timing charts (using embedded Chart.js CDN or inline)
 - Statistical comparison results
 - Multi-session progression charts (if applicable)
 - Filterable by difficulty, language, tags
-
-### Report generation
-
-```typescript
-export function generateReport(
-  resultsDb: string,
-  format: "table" | "comparison" | "leaderboard" | "json" | "html" | "stats",
-  opts?: {
-    compare?: [string, string];   // for comparison/stats formats
-    multiSession?: boolean;
-    sortBy?: "pass_rate" | "cost" | "time" | "efficiency";
-  },
-): string;
-```
+- Clear labels for untracked metrics
 
 ### Implementation
 
 | Phase | Scope | Effort |
 |-------|-------|--------|
-| 8.1 | Table formatter (ASCII tables for terminal) | 1 day |
+| 8.1 | Table formatter (ASCII) | 1 day |
 | 8.2 | Comparison formatter (side-by-side with stats) | 1 day |
-| 8.3 | Leaderboard formatter (sortable ranking) | 0.5 days |
-| 8.4 | JSON output | 0.5 days |
-| 8.5 | HTML report (self-contained, with charts) | 2 days |
-| 8.6 | Multi-session specific reporting | 1 day |
+| 8.3 | Leaderboard + JSON output | 0.5 days |
+| 8.4 | HTML report (self-contained, with charts) | 2 days |
+| 8.5 | Multi-session reporting | 1 day |
 
 ---
 
 ## 9. Docker Isolation
-
-### Problem
-
-Eval trials can interfere with each other: residual files, modified git
-state, environment variable leaks. Docker provides clean isolation per
-trial, especially important for SWE-bench tasks that install dependencies.
 
 ### DockerConfig
 
 ```typescript
 export interface DockerConfig {
   image: string;                  // default: "mp-eval-sandbox"
-  timeoutMs: number;              // container timeout
-  mountRepos: boolean;            // mount repo as /workspace
-  networkAccess: boolean;         // default: false (--network=none)
+  timeoutMs: number;
+  mountRepos: boolean;
+  networkAccess: boolean;         // default: false
   memoryLimit: string;            // default: "4g"
   cpuLimit: string;               // default: "2"
 }
@@ -1091,40 +1223,24 @@ export async function runInContainer(
   config: DockerConfig,
   workdir: string,
   command: string,
-): Promise<{ stdout: string; stderr: string; exitCode: number }>;
+): Promise<ExecResult>;
 
 export async function checkDocker(config: DockerConfig): Promise<void>;
 ```
 
-Each trial runs in a fresh container:
-- `--rm` for automatic cleanup
-- `--network=none` by default (agents shouldn't need network in eval)
-- `--memory=4g --cpus=2` resource limits
-- Repo mounted as `/workspace:rw`
+### Per-repo Docker images for SWE-bench
 
-### Dockerfile
+The `EnvironmentSetup.dockerImage` field allows per-repo Docker images
+with pre-installed dependencies:
 
-Generated by `mp eval setup --dockerfile`:
+```bash
+# Generate per-repo Dockerfiles
+mp eval setup --dockerfile --repos django scikit-learn
 
-```dockerfile
-FROM python:3.12-slim
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl build-essential && \
-    rm -rf /var/lib/apt/lists/*
-
-RUN pip install --no-cache-dir pytest pytest-timeout
-
-# Node.js for TypeScript tasks
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
-    apt-get install -y nodejs && \
-    npm install -g jest typescript
-
-# Bun for moneypenny runner
-RUN curl -fsSL https://bun.sh/install | bash
-ENV PATH="/root/.bun/bin:${PATH}"
-
-WORKDIR /workspace
+# Produces:
+# eval/docker/Dockerfile.django    (Python 3.10 + Django dev deps)
+# eval/docker/Dockerfile.sklearn   (Python 3.10 + numpy + scipy)
+# eval/docker/Dockerfile.base      (generic Python + Node + Bun)
 ```
 
 ### Implementation
@@ -1132,19 +1248,14 @@ WORKDIR /workspace
 | Phase | Scope | Effort |
 |-------|-------|--------|
 | 9.1 | `DockerConfig`, `checkDocker`, `runInContainer` | 1 day |
-| 9.2 | Dockerfile generation, build command | 0.5 days |
+| 9.2 | Dockerfile generation (base + per-repo) | 1 day |
 | 9.3 | Integration with harness (--docker flag) | 0.5 days |
 
 ---
 
 ## 10. Parallel Execution
 
-### Problem
-
-Running 10 tasks × 3 runners × 3 trials = 90 trials sequentially at 5 min
-each = 7.5 hours. Parallelism brings this to under an hour.
-
-### Design
+### Bounded-concurrency executor
 
 ```typescript
 export async function runParallel<T>(
@@ -1153,58 +1264,55 @@ export async function runParallel<T>(
 ): Promise<T[]>;
 ```
 
-A simple bounded-concurrency executor using a semaphore pattern.
-Order of results is preserved (matches input order).
-
-### Harness integration
-
-```typescript
-// In runEval, when parallelism > 1:
-const trialTasks = allTrials.map(({ task, runner, trial }) =>
-  async () => {
-    const workdir = docker
-      ? await prepareDockerWorkdir(task, config)
-      : await prepareWorkdir(task, config);
-
-    const metrics = await runner.run(task, { workdir, model, timeoutMs });
-    const passed = task.verify ? await runVerify(task.verify, workdir, timeoutMs) : metrics.error == null;
-
-    return { task, runner: runner.name, trial, metrics, passed };
-  }
-);
-
-const results = await runParallel(trialTasks, parallelism);
-```
-
-When Docker is enabled, each parallel trial gets its own container, so
-there's no state leakage. Without Docker, each trial gets a copy of the
-repo (shallow clone) to avoid git state conflicts.
+When Docker is enabled, each parallel trial gets its own container.
+Without Docker, each trial gets its own git worktree (§3).
 
 ### Implementation
 
 | Phase | Scope | Effort |
 |-------|-------|--------|
-| 10.1 | `runParallel` bounded-concurrency executor | 0.5 days |
-| 10.2 | Workdir isolation for non-Docker parallel runs | 1 day |
+| 10.1 | `runParallel` executor | 0.5 days |
+| 10.2 | Worktree-per-trial isolation | 0.5 days |
 | 10.3 | Integration with harness and Docker | 0.5 days |
 
 ---
 
 ## 11. CI Regression Gate
 
-### Problem
+### Baseline management
 
-You want to ensure that agent changes don't cause regressions. The CI gate
-compares current eval results against a baseline and fails the build if
-pass rates drop beyond a threshold.
+**Problem identified in gap analysis:** Where does `baseline.sqlite` come
+from?
 
-### Design
+**Lifecycle:**
+
+1. **Create baseline:** Run eval on `main` branch, copy results to
+   `eval/baseline.sqlite`, commit to repo.
+2. **Update baseline:** After intentional improvements, re-run eval on
+   `main`, replace `eval/baseline.sqlite`.
+3. **CI comparison:** PR branch runs eval, compares against committed
+   baseline.
+
+```bash
+# Create/update baseline (run on main branch)
+mp eval run --tasks ./eval/tasks --runners mp-agent --trials 5 --results-db ./eval/baseline.sqlite
+git add eval/baseline.sqlite
+git commit -m "Update eval baseline"
+
+# CI compares PR results against committed baseline
+mp eval ci --baseline ./eval/baseline.sqlite --current ./results.sqlite --threshold 0.05
+```
+
+The baseline is a committed artifact — versioned, reviewable, and
+reproducible.
+
+### Gate logic
 
 ```typescript
 export interface CiGateConfig {
-  baselinePath: string;           // path to baseline results.sqlite
-  currentPath: string;            // path to current results.sqlite
-  threshold: number;              // regression threshold (default 0.05 = 5%)
+  baselinePath: string;
+  currentPath: string;
+  threshold: number;              // default 0.05 (5%)
 }
 
 export interface CiGateResult {
@@ -1214,91 +1322,7 @@ export interface CiGateResult {
   unchanged: string[];
 }
 
-export interface Regression {
-  taskId: string;
-  runner: string;
-  baselinePassRate: number;
-  currentPassRate: number;
-  delta: number;
-}
-
-export interface Improvement {
-  taskId: string;
-  runner: string;
-  baselinePassRate: number;
-  currentPassRate: number;
-  delta: number;
-}
-```
-
-### Gate logic
-
-```typescript
-export function runCiGate(config: CiGateConfig): CiGateResult {
-  const baseline = new ResultsDB(config.baselinePath);
-  const current = new ResultsDB(config.currentPath);
-
-  const baselineReport = baseline.getReport();
-  const currentReport = current.getReport();
-
-  const regressions: Regression[] = [];
-  const improvements: Improvement[] = [];
-  const unchanged: string[] = [];
-
-  for (const br of baselineReport) {
-    const cr = currentReport.find(r => r.taskId === br.taskId && r.runner === br.runner);
-    if (!cr) continue;
-
-    const delta = cr.passRate - br.passRate;
-    if (delta < -config.threshold) {
-      regressions.push({
-        taskId: br.taskId,
-        runner: br.runner,
-        baselinePassRate: br.passRate,
-        currentPassRate: cr.passRate,
-        delta,
-      });
-    } else if (delta > config.threshold) {
-      improvements.push({
-        taskId: br.taskId,
-        runner: br.runner,
-        baselinePassRate: br.passRate,
-        currentPassRate: cr.passRate,
-        delta,
-      });
-    } else {
-      unchanged.push(`${br.taskId}/${br.runner}`);
-    }
-  }
-
-  return {
-    passed: regressions.length === 0,
-    regressions,
-    improvements,
-    unchanged,
-  };
-}
-```
-
-### CI output
-
-```
-mp eval ci --baseline baseline.sqlite --current results.sqlite --threshold 0.05
-
-CI Regression Gate
-══════════════════
-Threshold: 5%
-
-✗ REGRESSIONS (2):
-  fix-null-check / mp-agent: 100% → 67% (Δ -33%)
-  add-auth / mp-agent: 67% → 33% (Δ -33%)
-
-✓ IMPROVEMENTS (1):
-  parse-csv / mp-agent: 33% → 100% (Δ +67%)
-
-─ UNCHANGED (15 task/runner pairs)
-
-RESULT: FAIL (2 regressions exceed 5% threshold)
+export function runCiGate(config: CiGateConfig): CiGateResult;
 ```
 
 Exit code: 0 on pass, 1 on regression.
@@ -1306,7 +1330,6 @@ Exit code: 0 on pass, 1 on regression.
 ### GitHub Actions integration
 
 ```yaml
-# .github/workflows/eval.yml
 name: Agent Eval
 on:
   pull_request:
@@ -1314,20 +1337,17 @@ on:
       - "packages/loop/**"
       - "packages/ctx/**"
       - "packages/tools/**"
-      - "packages/agents/**"
 
 jobs:
   eval:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: oven-sh/setup-bun@v2
-
       - run: bun install
 
       - name: Setup eval repos
-        run: bun run mp eval setup --repos-dir ./repos --repos my-app
+        run: bun run mp eval setup --repos-dir ./repos
 
       - name: Run eval
         run: |
@@ -1353,6 +1373,14 @@ jobs:
           path: ./results.sqlite
 ```
 
+### Acceptance criteria
+
+- [ ] `baseline.sqlite` is a committed artifact in the repo
+- [ ] `mp eval ci` compares current results against baseline
+- [ ] Regressions exceeding threshold cause exit code 1
+- [ ] Improvements are reported but don't affect exit code
+- [ ] GitHub Actions workflow template is functional
+
 ### Implementation
 
 | Phase | Scope | Effort |
@@ -1363,11 +1391,50 @@ jobs:
 
 ---
 
-## 12. CLI Integration
+## 12. Sample Task Suite
+
+**Problem identified in gap analysis:** No sample tasks exist. A
+"batteries included" suite against moneypenny's own codebase makes the
+harness immediately useful.
+
+### Tasks
+
+Create 8 tasks against the moneypenny codebase covering different
+difficulty levels:
+
+```
+eval/tasks/moneypenny/
+├── easy/
+│   ├── fix-typo-in-help.yaml         # Fix a CLI help text typo
+│   ├── add-missing-export.yaml       # Add a missing export to index.ts
+│   └── update-cost-table.yaml        # Add a new model to cost.ts
+├── medium/
+│   ├── add-tool-param.yaml           # Add a parameter to an existing tool
+│   ├── fix-session-resume.yaml       # Fix a bug in session loading
+│   └── add-config-validation.yaml    # Add validation for a config field
+└── hard/
+    ├── add-new-tool.yaml             # Implement a new tool from scratch
+    └── refactor-search.yaml          # Refactor search to support new surface
+```
+
+Each task includes:
+- A clear prompt that a coding agent can act on
+- A `verify` spec (usually `command` type running existing tests)
+- `ref` pointing to a specific commit where the task makes sense
+- `difficulty` and `tags`
+
+### Implementation
+
+| Phase | Scope | Effort |
+|-------|-------|--------|
+| 12.1 | Write 8 sample task YAML files | 1 day |
+| 12.2 | Create baseline by running mp-agent against sample tasks | 0.5 days |
+
+---
+
+## 13. CLI Integration
 
 ### `mp eval` subcommands
-
-Mirror the moneypenny-rs CLI interface:
 
 ```
 mp eval run          Run end-to-end evaluation trials
@@ -1375,8 +1442,8 @@ mp eval sequence     Run a multi-session sequence evaluation
 mp eval context      Run context-quality evaluation (no LLM)
 mp eval report       Generate evaluation reports
 mp eval import       Import tasks from SWE-bench JSON dataset
-mp eval setup        Clone test repos and build Docker image
-mp eval list-runners List available runners
+mp eval setup        Clone repos, build Docker images, verify environment
+mp eval list-runners List available runners with capability info
 mp eval leaderboard  Generate a ranked leaderboard
 mp eval ci           CI regression gate
 ```
@@ -1391,49 +1458,45 @@ mp eval run
   --trials <n>           Number of trials per task per runner (default: 3)
   --repos-dir <dir>      Directory containing cloned repos (default: ./repos)
   --results-db <path>    Path to results SQLite database (default: ./results.sqlite)
-  --timeout <ms>         Timeout per trial in milliseconds (default: 300000)
+  --timeout <ms>         Timeout per trial in ms (default: 300000)
   --filter <regex>       Only run tasks matching this regex
   --difficulty <level>   Only run tasks with this difficulty
   --parallelism <n>      Number of parallel trials (default: 1)
   --docker               Run each trial in a Docker container
   --docker-image <name>  Docker image (default: mp-eval-sandbox)
-  --shell-command <cmd>  Command template for the shell runner
-  --mp-binary <path>     Path to mp binary for claude-mp runner
-  --http-endpoint <url>  HTTP endpoint for the http runner
+  --tools <names...>     Tool allowlist for mp-agent runner
 ```
 
-### Makefile targets
+### `mp eval list-runners`
 
-```makefile
-eval:
-	bun run mp eval run --tasks ./eval/tasks --runners mp-agent claude --trials 3
+Shows capability info per runner:
 
-eval-ab:
-	bun run mp eval run --tasks ./eval/tasks --runners mp-agent claude --trials 5
-	bun run mp eval report --format comparison --compare mp-agent claude
-
-eval-context:
-	bun run mp eval context --tasks ./eval/tasks --repo-path .
-
-eval-swe-bench:
-	bun run mp eval import --input ./eval/swe-bench-verified.json --output ./eval/tasks/swe-bench
-	bun run mp eval setup --repos-dir ./repos
-	bun run mp eval run --tasks ./eval/tasks/swe-bench --runners mp-agent claude --trials 3 --docker
-
-eval-report:
-	bun run mp eval report --format html > eval-report.html
-
-eval-ci:
-	bun run mp eval ci --baseline ./eval/baseline.sqlite --current ./results.sqlite --threshold 0.05
+```
+Available Runners
+┌────────────┬───────────────┬───────┬────────┬───────┐
+│ Runner     │ Persistence   │ Cost  │ Tokens │ Cache │
+├────────────┼───────────────┼───────┼────────┼───────┤
+│ mp-agent   │ Yes           │ ✓     │ ✓      │ ✓     │
+│ claude     │ No            │ ✓     │ ✓      │ ✗     │
+│ claude-mp  │ Yes           │ ✓     │ ✓      │ ✗     │
+│ cursor     │ No            │ ✗     │ ✗      │ ✗     │
+│ aider      │ No            │ ✗     │ ✗      │ ✗     │
+│ codex      │ No            │ ~     │ ~      │ ✗     │
+│ shell      │ No            │ ✗     │ ✗      │ ✗     │
+│ http       │ No            │ ?     │ ?      │ ?     │
+│ context    │ N/A           │ N/A   │ N/A    │ N/A   │
+└────────────┴───────────────┴───────┴────────┴───────┘
+✓ = fully tracked  ~ = partial  ✗ = not available  ? = depends on endpoint
 ```
 
 ### Implementation
 
 | Phase | Scope | Effort |
 |-------|-------|--------|
-| 12.1 | CLI arg parsing (all subcommands) | 1.5 days |
-| 12.2 | Wire subcommands to harness/reporter/importer | 1 day |
-| 12.3 | Makefile targets + documentation | 0.5 days |
+| 13.1 | CLI arg parsing (all subcommands) | 1.5 days |
+| 13.2 | Wire subcommands to harness/reporter/importer | 1 day |
+| 13.3 | `list-runners` with capability table | 0.5 days |
+| 13.4 | Makefile targets + documentation | 0.5 days |
 
 ---
 
@@ -1443,31 +1506,38 @@ eval-ci:
 packages/eval/
 ├── package.json
 ├── src/
-│   ├── index.ts                 Entry point (exports all public API)
-│   ├── task.ts                  Task, TaskSequence, loadTasks, loadSequence
+│   ├── index.ts                 Entry point
+│   ├── task.ts                  Task, TaskSequence, loadTasks
+│   ├── exec.ts                  execWithTimeout (shared utility)
 │   ├── runner/
 │   │   ├── index.ts             Runner interface, getRunner, listRunners
 │   │   ├── mp-agent.ts          MpAgentRunner
-│   │   ├── claude-code.ts       ClaudeCodeRunner (vanilla + augmented)
+│   │   ├── claude-code.ts       ClaudeCodeRunner
 │   │   ├── cursor.ts            CursorRunner
 │   │   ├── aider.ts             AiderRunner
 │   │   ├── codex.ts             CodexRunner
 │   │   ├── shell.ts             ShellRunner
 │   │   ├── http.ts              HttpRunner
-│   │   └── context.ts           ContextRunner (IR metrics)
-│   ├── harness.ts               runEval, runMultiSession, git operations
-│   ├── verify.ts                VerifySpec, runVerify
+│   │   └── context.ts           ContextRunner
+│   ├── harness.ts               runEval, runMultiSession
+│   ├── worktree.ts              prepareWorkdir, cleanupWorkdir
+│   ├── environment.ts           setupEnvironment
+│   ├── verify.ts                VerifySpec, runVerify, patch-then-test
 │   ├── db.ts                    ResultsDB
 │   ├── swe-bench.ts             SWE-bench importer
-│   ├── stats.ts                 Wilson CI, McNemar, efficiency, comparison
+│   ├── stats.ts                 Wilson CI, McNemar, efficiency
 │   ├── report.ts                All output formats
-│   ├── docker.ts                DockerConfig, runInContainer, Dockerfile
-│   └── parallel.ts              runParallel bounded concurrency
+│   ├── docker.ts                DockerConfig, Dockerfile generation
+│   └── parallel.ts              runParallel
+├── eval/
+│   ├── tasks/moneypenny/        Sample tasks (8 tasks, easy/medium/hard)
+│   └── baseline.sqlite          Baseline results (committed after first run)
 └── tests/
-    ├── stats.test.ts            Statistical function tests
-    ├── verify.test.ts           Verification tests
-    ├── task.test.ts             Task loading tests
-    └── swe-bench.test.ts        Importer tests
+    ├── stats.test.ts
+    ├── verify.test.ts
+    ├── task.test.ts
+    ├── exec.test.ts
+    └── swe-bench.test.ts
 ```
 
 ---
@@ -1477,47 +1547,49 @@ packages/eval/
 ```
 Phase 1: Foundation
   ├── §1 Task format + loading
-  ├── §4 Verification system
+  ├── §2.1 Runner interface + execWithTimeout
+  ├── §4 Verification system (including patch-then-test)
   └── §5 Results database
 
 Phase 2: Core harness
-  ├── §2 Runner interface + mp-agent runner
-  ├── §3 Harness (single-task + multi-session)
+  ├── §2.2 MpAgentRunner (most important runner)
+  ├── §3 Harness (single-task + multi-session + worktrees)
   └── §10 Parallel execution
 
-Phase 3: Runners
+Phase 3: Runners [parallelizable]
   ├── §2.3 Claude Code runner
   ├── §2.4 Shell + HTTP runners
   ├── §2.5 Cursor + Aider + Codex runners
   └── §2.6 Context runner (IR)
 
-Phase 4: Analysis + reporting
+Phase 4: Analysis + reporting [parallelizable with Phase 3]
   ├── §7 Statistical analysis
   └── §8 Reporting (all formats)
 
 Phase 5: SWE-bench + isolation
-  ├── §6 SWE-bench importer
-  └── §9 Docker isolation
+  ├── §6 SWE-bench importer (with env setup + patch-then-test)
+  └── §9 Docker isolation (with per-repo images)
 
-Phase 6: CI + CLI
-  ├── §11 CI regression gate
-  └── §12 CLI integration
+Phase 6: Polish
+  ├── §11 CI regression gate + baseline lifecycle
+  ├── §12 Sample task suite
+  └── §13 CLI integration
 ```
 
-Phases 1–2 are sequential (foundation then harness). Phases 3–5 can
-proceed in parallel. Phase 6 (CI + CLI) ties everything together.
+Phases 1–2 are sequential. Phases 3–4 parallelize. Phase 5 builds on
+phases 1–2. Phase 6 ties everything together.
 
 ---
 
 ## What we deliberately skip
 
-- **GPU-accelerated eval** (CUDA containers, embedding model eval) — out
-  of scope for an agent eval harness.
-- **Distributed execution** (farm out trials to multiple machines) — the
-  single-machine parallel approach is sufficient for solo dev use.
-- **Live eval dashboard** (real-time streaming of trial results to web UI) —
-  desirable but not essential for the first release. Results are available
-  after completion via reports.
-- **Custom scoring functions** (beyond pass/fail) — the `VerifySpec` is
-  binary. Numeric scoring (e.g., code quality metrics) could be added
-  later as a `score` verify type.
+- **GPU-accelerated eval** — out of scope for an agent eval harness.
+- **Distributed execution** (multi-machine parallelism) — single-machine
+  `runParallel` is sufficient for solo dev use.
+- **Live eval dashboard** (streaming trial results to web UI) — results
+  are available after completion via reports.
+- **Custom scoring functions** (beyond pass/fail) — binary `VerifySpec` is
+  sufficient for the first release. Numeric scoring (code quality metrics)
+  could be added as a `score` verify type.
+- **LLM-as-judge verification** — using an LLM to grade agent output is
+  useful but introduces cost and non-determinism. Deferred.

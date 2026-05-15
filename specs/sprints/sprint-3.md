@@ -1,27 +1,39 @@
 # Sprint 3 — Channels, Reactivity, and Self-Evolution
 
 > The sprint that opens moneypenny to the outside world and gives it
-> reflexes. Multi-channel I/O (Telegram, webhooks, WASM), a reactive
-> event layer driven by SQLite write hooks, self-evolving agent prompts
-> informed by usage data, and an embeddable SQL extension that lets
-> any SQLite client query the intelligence file.
+> reflexes. Multi-channel I/O (Telegram, webhooks, embeddable JS SDK),
+> a reactive event layer driven by SQLite write hooks, self-evolving
+> agent prompts informed by usage data, and a stable SQL query surface
+> for external tools.
 
-**Prerequisites:** Sprint 2 complete (read/write separation, unified query,
-compaction, gardener)
+**Prerequisites:** Sprint 2 complete (embeddings, parallel tools, unified
+query, compaction, gardener)
+
+---
+
+## Existing foundations (already implemented)
+
+| Component | Location | Status |
+|-----------|----------|--------|
+| `AgentBridge` event protocol | `@moneypenny/bridge` (sprint 1) | Production. Channels plug into this. |
+| WebSocket streaming | `@moneypenny/http` (sprint 1) | Production. Embed SDK reuses WS protocol. |
+| `DbWriter.exclusive()` + `defer()` | `@moneypenny/db/writer.ts` | Production. Reactive layer hooks into `flushDeferredSync`. |
+| `DbWriter.flushDeferredSync()` | `@moneypenny/db/writer.ts` | Runs deferred batch in IMMEDIATE transaction. |
+| `appendEvent` (uses `writer.defer`) | `@moneypenny/db/events.ts` | Production. Events are deferred writes. |
+| `EventBus` is **not** built | — | Sprint 3 builds it. |
+| Prompt refinements are **not** built | — | Sprint 3 builds them. |
+| Channel adapters are **not** built | — | Sprint 3 builds them. |
 
 ---
 
 ## Overview
 
-Sprint 3 adds four capabilities that transform moneypenny from a local
-development tool into a composable intelligence platform.
-
 | # | Workstream | Packages touched |
 |---|-----------|-----------------|
-| 1 | Channel adapters (Telegram, webhook, WASM) | new `@moneypenny/channels` |
+| 1 | Channel adapters (Telegram, webhook, embeddable SDK) | new `@moneypenny/channels`, new `@moneypenny/embed` |
 | 2 | Reactive event layer | `@moneypenny/db`, new `@moneypenny/events` |
 | 3 | Self-evolving prompts | `@moneypenny/ctx`, `@moneypenny/loop` |
-| 4 | Embeddable SQL extension | new `@moneypenny/sql-ext` |
+| 4 | Stable SQL query surface | `@moneypenny/db` |
 
 ---
 
@@ -32,14 +44,14 @@ development tool into a composable intelligence platform.
 Moneypenny can only be reached via CLI (`mp chat`) and web UI (`mp serve`).
 Solo developers want to interact with their agent from Telegram while AFK,
 receive webhook notifications when jobs complete, and embed a chat widget
-in their own apps (WASM).
+in their own apps.
 
 ### Design
 
 A `ChannelAdapter` interface that normalizes inbound/outbound messages
 across transports. The agent loop is already channel-agnostic thanks to the
-`AgentBridge` from sprint 1 — channels just need to translate their wire
-format into bridge calls and stream `AgentEvent`s back.
+`AgentBridge` from sprint 1 — channels translate their wire format into
+bridge calls and stream `AgentEvent`s back.
 
 ```typescript
 // @moneypenny/channels
@@ -90,13 +102,57 @@ export interface ChannelAttachment {
 
 Each channel adapter implements its own formatting for `AgentEvent`s:
 
-| Event | Telegram | Webhook | WASM |
-|-------|----------|---------|------|
-| `stream_token` | Batched edit (every 500ms) | Not sent | Direct callback |
+| Event | Telegram | Webhook | Embed SDK |
+|-------|----------|---------|-----------|
+| `stream_token` | Batched edit (every 1s) | Not sent | Direct callback |
 | `tool_call_start` | Italic status: "_Using code_search..._" | JSON payload | JSON event |
 | `tool_call_result` | Collapsed summary if long | JSON payload | JSON event |
 | `turn_complete` | Final message with cost footer | JSON payload | JSON event |
 | `error` | Error message with retry button | JSON payload with error code | Error callback |
+
+### Concurrency under channel load
+
+**The critical question:** what happens when a Telegram message and a web
+UI message arrive simultaneously for the same session?
+
+**Design:** `AgentBridge.run()` is **not safe** for concurrent calls on the
+same session (the agent loop maintains conversation state, LLM context,
+and writes to the same message history). The bridge uses a per-session
+mutex:
+
+```typescript
+// Inside AgentBridge
+private readonly sessionLocks = new Map<string, Promise<void>>();
+
+async run(prompt: string, opts: { sessionId: string }): AsyncGenerator<AgentEvent> {
+  // Wait for any in-flight run on this session to complete
+  const existing = this.sessionLocks.get(opts.sessionId);
+  if (existing) {
+    await existing;
+  }
+
+  let resolve: () => void;
+  this.sessionLocks.set(opts.sessionId, new Promise(r => { resolve = r; }));
+
+  try {
+    yield* this.executeRun(prompt, opts);
+  } finally {
+    this.sessionLocks.delete(opts.sessionId);
+    resolve!();
+  }
+}
+```
+
+**Behavior when contention occurs:**
+
+| Scenario | Behavior |
+|----------|----------|
+| Same session, different channels | Second request queues, runs after first completes |
+| Same session, same channel | Same — sequential within session |
+| Different sessions | Fully concurrent, no contention |
+| Queue depth > 3 for a session | Reject with "session busy" error, channel-specific message |
+
+Different sessions run fully concurrently — there is no global lock.
 
 ### Telegram adapter
 
@@ -104,15 +160,18 @@ Each channel adapter implements its own formatting for `AgentEvent`s:
 export class TelegramAdapter implements ChannelAdapter {
   readonly name = "telegram";
   private bot: TelegramBot;
-  private pollingActive: boolean;
+  private rateLimiter: TelegramRateLimiter;
 
   async start(bridge: AgentBridge, config: ChannelConfig): Promise<void> {
     this.bot = new TelegramBot(config.credentials.botToken);
+    this.rateLimiter = new TelegramRateLimiter();
     const allowedUsers = (config.options.allowedUsers as string[]) ?? [];
 
     this.bot.on("message", async (msg) => {
       if (allowedUsers.length > 0 && !allowedUsers.includes(String(msg.from?.id))) {
-        await this.bot.sendMessage(msg.chat.id, "Unauthorized.");
+        await this.rateLimiter.send(() =>
+          this.bot.sendMessage(msg.chat.id, "Unauthorized.")
+        );
         return;
       }
 
@@ -120,16 +179,30 @@ export class TelegramAdapter implements ChannelAdapter {
       const sessionId = this.sessionForChat(msg.chat.id);
 
       let responseText = "";
-      for await (const event of bridge.run(channelMsg.text, { sessionId })) {
-        if (event.type === "stream_token") {
-          responseText += event.text;
-          await this.debouncedEdit(msg.chat.id, responseText);
-        } else if (event.type === "tool_call_start") {
-          await this.bot.sendChatAction(msg.chat.id, "typing");
-        } else if (event.type === "turn_complete") {
-          await this.sendFinal(msg.chat.id, responseText, event);
-        } else if (event.type === "error") {
-          await this.bot.sendMessage(msg.chat.id, `Error: ${event.message}`);
+      try {
+        for await (const event of bridge.run(channelMsg.text, { sessionId })) {
+          if (event.type === "stream_token") {
+            responseText += event.text;
+            await this.rateLimiter.debouncedEdit(msg.chat.id, responseText);
+          } else if (event.type === "tool_call_start") {
+            await this.rateLimiter.send(() =>
+              this.bot.sendChatAction(msg.chat.id, "typing")
+            );
+          } else if (event.type === "turn_complete") {
+            await this.rateLimiter.send(() =>
+              this.sendFinal(msg.chat.id, responseText, event)
+            );
+          } else if (event.type === "error") {
+            await this.rateLimiter.send(() =>
+              this.bot.sendMessage(msg.chat.id, `Error: ${event.message}`)
+            );
+          }
+        }
+      } catch (err) {
+        if (err instanceof SessionBusyError) {
+          await this.rateLimiter.send(() =>
+            this.bot.sendMessage(msg.chat.id, "I'm still working on your previous request.")
+          );
         }
       }
     });
@@ -139,8 +212,56 @@ export class TelegramAdapter implements ChannelAdapter {
 }
 ```
 
-Configuration in `.mp/config.yaml`:
+### Telegram rate limiter
+
+Telegram's Bot API has aggressive rate limits: 30 messages/second globally,
+1 message/second per chat for edits. The streaming "batched edit" approach
+must respect these limits.
+
+```typescript
+class TelegramRateLimiter {
+  private readonly perChatMinInterval = 1000;  // 1 msg/sec/chat
+  private readonly globalMinInterval = 34;     // ~30 msg/sec global
+  private lastGlobal = 0;
+  private lastPerChat = new Map<number, number>();
+  private queue: Array<{ fn: () => Promise<void>; resolve: () => void }> = [];
+  private draining = false;
+
+  async send(fn: () => Promise<void>): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.queue.push({ fn, resolve });
+      if (!this.draining) this.drain();
+    });
+  }
+
+  async debouncedEdit(chatId: number, text: string): Promise<void> {
+    const last = this.lastPerChat.get(chatId) ?? 0;
+    const now = Date.now();
+    if (now - last < this.perChatMinInterval) return; // skip, next token batch will catch up
+    this.lastPerChat.set(chatId, now);
+    await this.send(() => this.bot.editMessageText(chatId, text));
+  }
+
+  private async drain(): Promise<void> {
+    this.draining = true;
+    while (this.queue.length > 0) {
+      const now = Date.now();
+      const wait = Math.max(0, this.globalMinInterval - (now - this.lastGlobal));
+      if (wait > 0) await Bun.sleep(wait);
+      const item = this.queue.shift()!;
+      this.lastGlobal = Date.now();
+      try { await item.fn(); } catch { /* logged */ }
+      item.resolve();
+    }
+    this.draining = false;
+  }
+}
+```
+
+### Configuration
+
 ```yaml
+# .mp/config.yaml
 channels:
   telegram:
     enabled: true
@@ -148,7 +269,7 @@ channels:
     allowed_users:
       - "123456789"
     default_blueprint: "default"
-    session_mode: per_chat        # per_chat | per_user | single
+    session_mode: per_chat
 ```
 
 ### Webhook adapter
@@ -181,47 +302,87 @@ export class WebhookAdapter implements ChannelAdapter {
   private async send(url: string, secret: string, payload: unknown): Promise<void> {
     const body = JSON.stringify(payload);
     const signature = this.sign(body, secret);
-    await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-MP-Signature": signature,
-      },
-      body,
-    });
+
+    const maxRetries = 3;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-MP-Signature": signature,
+            "X-MP-Delivery": crypto.randomUUID(),
+          },
+          body,
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (res.ok) return;
+        if (res.status >= 500 && attempt < maxRetries) {
+          await Bun.sleep(1000 * 2 ** attempt);
+          continue;
+        }
+        console.warn(`[mp] webhook ${res.status}: ${await res.text()}`);
+        return;
+      } catch (err) {
+        if (attempt < maxRetries) {
+          await Bun.sleep(1000 * 2 ** attempt);
+          continue;
+        }
+        console.warn(`[mp] webhook failed after ${maxRetries} retries: ${err}`);
+      }
+    }
+  }
+
+  private sign(body: string, secret: string): string {
+    const encoder = new TextEncoder();
+    const hmac = new Bun.CryptoHasher("sha256", encoder.encode(secret));
+    hmac.update(encoder.encode(body));
+    return `sha256=${hmac.digest("hex")}`;
   }
 }
 ```
 
-Configuration:
-```yaml
-channels:
-  webhook:
-    enabled: true
-    url: "https://your-server.com/mp-events"
-    secret: "${WEBHOOK_SECRET}"
-    events:
-      - job_complete
-      - error
-      - cost_alert
-      - session_complete
-```
+### Embeddable JS SDK (`@moneypenny/embed`)
 
-### WASM adapter
+> **Note:** The previous draft called this a "WASM adapter." It is not
+> WASM — it is a plain JavaScript WebSocket client that connects to
+> `mp serve`. Renamed for clarity.
 
-A browser-embeddable build of the moneypenny client that connects to
-`mp serve` over WebSocket and provides a JavaScript API for embedding
-a chat widget in any web app.
+A browser-embeddable package that connects to `mp serve` over WebSocket
+and provides a JavaScript API for embedding a chat widget in any web app.
 
 ```typescript
-// @moneypenny/channels/wasm
+// @moneypenny/embed
 
-export class MoneypennyChatWidget {
+export class MoneypennyChatClient {
   private ws: WebSocket;
   private sessionId: string;
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 5;
 
-  constructor(config: { serverUrl: string; token: string; containerId: string }) {
-    this.ws = new WebSocket(`${config.serverUrl}/api/v1/chat/stream`);
+  constructor(config: {
+    serverUrl: string;
+    token: string;
+    sessionId?: string;
+  }) {
+    this.sessionId = config.sessionId ?? crypto.randomUUID();
+    this.connect(config.serverUrl, config.token);
+  }
+
+  private connect(serverUrl: string, token: string): void {
+    this.ws = new WebSocket(
+      `${serverUrl.replace(/^http/, "ws")}/api/v1/chat/stream?token=${token}`
+    );
+
+    this.ws.onclose = (e) => {
+      if (e.code !== 1000 && this.reconnectAttempts < this.maxReconnectAttempts) {
+        this.reconnectAttempts++;
+        const delay = Math.min(1000 * 2 ** this.reconnectAttempts, 30000);
+        setTimeout(() => this.connect(serverUrl, token), delay);
+      }
+    };
+
+    this.ws.onopen = () => { this.reconnectAttempts = 0; };
   }
 
   async sendMessage(text: string): Promise<void> {
@@ -232,38 +393,39 @@ export class MoneypennyChatWidget {
     }));
   }
 
-  onEvent(handler: (event: AgentEvent) => void): void;
-  destroy(): void;
+  onEvent(handler: (event: AgentEvent) => void): () => void {
+    const listener = (e: MessageEvent) => {
+      const event = JSON.parse(e.data) as AgentEvent;
+      handler(event);
+    };
+    this.ws.addEventListener("message", listener);
+    return () => this.ws.removeEventListener("message", listener);
+  }
+
+  destroy(): void {
+    this.maxReconnectAttempts = 0;
+    this.ws.close(1000);
+  }
 }
 ```
 
-The WASM package is a thin WebSocket client (not the full moneypenny
-runtime compiled to WASM). It's published as `@moneypenny/embed` and can
-be used via:
+Published as `@moneypenny/embed`:
 
 ```html
 <script type="module">
-  import { MoneypennyChatWidget } from "@moneypenny/embed";
-  const mp = new MoneypennyChatWidget({
+  import { MoneypennyChatClient } from "@moneypenny/embed";
+  const mp = new MoneypennyChatClient({
     serverUrl: "http://localhost:1745",
     token: "your-serve-token",
-    containerId: "mp-chat",
   });
+  mp.onEvent(event => console.log(event));
+  mp.sendMessage("Hello from my app!");
 </script>
 ```
 
-### Channel management
-
-Channels are registered and managed through the HTTP API and web UI:
-
-```
-GET    /api/v1/channels              List channels + status
-PATCH  /api/v1/channels/:name        Enable/disable, update config
-GET    /api/v1/channels/:name/stats  Message count, errors, uptime
-```
-
-`mp serve` starts all enabled channels on boot. Channels can be
-hot-reloaded via API without restarting the server.
+The package is ~5 KB minified. It reuses the WebSocket protocol defined
+in sprint 1 §2 — no server-side changes required beyond what `mp serve`
+already exposes.
 
 ### Session bridging
 
@@ -276,16 +438,54 @@ Each channel maps conversations to sessions:
 | `single` | All inbound messages go to one session |
 | `ephemeral` | New session per message (stateless) |
 
+Session mapping is stored in a `channel_sessions` table (schema v12, §5):
+
+```sql
+CREATE TABLE channel_sessions (
+  channel_name TEXT NOT NULL,
+  external_id TEXT NOT NULL,        -- Telegram chat_id, webhook source, etc.
+  session_id TEXT NOT NULL REFERENCES sessions(id),
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  PRIMARY KEY (channel_name, external_id)
+);
+```
+
+### Channel management API
+
+```
+GET    /api/v1/channels              List channels + status
+PATCH  /api/v1/channels/:name        Enable/disable, update config
+GET    /api/v1/channels/:name/stats  Message count, errors, uptime
+```
+
+`mp serve` starts all enabled channels on boot. Channels can be
+hot-reloaded via API without restarting the server (stop → update config →
+start).
+
+### Acceptance criteria
+
+- [ ] Telegram adapter receives messages, streams responses, handles auth
+- [ ] Telegram rate limiter prevents API rate limit errors under load
+- [ ] Webhook adapter sends HMAC-signed POST requests with retry on 5xx
+- [ ] Embed SDK connects via WebSocket, sends/receives messages, auto-reconnects
+- [ ] Concurrent messages on different sessions run in parallel
+- [ ] Concurrent messages on the same session queue (second waits for first)
+- [ ] Session busy (queue depth > 3) returns a clear error to the channel
+- [ ] Channel hot-reload works without server restart
+- [ ] `per_chat`, `per_user`, `single`, `ephemeral` session modes all work
+- [ ] Channel status endpoint returns connected, messageCount, errors
+
 ### Implementation
 
 | Phase | Scope | Effort |
 |-------|-------|--------|
 | 1.1 | `ChannelAdapter` interface, `ChannelMessage` types, channel registry | 1.5 days |
-| 1.2 | Telegram adapter with polling, message normalization, streaming edits | 3 days |
-| 1.3 | Webhook adapter with HMAC signing, event filtering | 1.5 days |
-| 1.4 | WASM/embed adapter (WebSocket client, published as `@moneypenny/embed`) | 2 days |
-| 1.5 | Channel management API + web UI page + hot reload | 1.5 days |
-| 1.6 | Session bridging (per_chat, per_user, single, ephemeral) | 1 day |
+| 1.2 | Session-level mutex in `AgentBridge`, `SessionBusyError` | 1 day |
+| 1.3 | Telegram adapter with rate limiter, message normalization, streaming edits | 3 days |
+| 1.4 | Webhook adapter with HMAC signing, retry, event filtering | 1.5 days |
+| 1.5 | `@moneypenny/embed` SDK (WebSocket client, published as npm package) | 1.5 days |
+| 1.6 | Channel management API + web UI Channels page + hot reload | 1.5 days |
+| 1.7 | Session bridging (per_chat, per_user, single, ephemeral) + `channel_sessions` table | 1 day |
 
 ---
 
@@ -294,23 +494,90 @@ Each channel maps conversations to sessions:
 ### Problem
 
 Today, side-effects are imperative: after an agent writes a memory, the
-code explicitly calls the indexer. After a job fails, nothing happens. The
-moneypenny-rs spec (sprint-4/self-aware-db.md) envisions a reactive layer
-where database writes automatically trigger downstream effects through an
-event bus.
+code explicitly calls the indexer. After a job fails, nothing happens.
+The moneypenny-rs spec (sprint-4/self-aware-db.md) envisions a reactive
+layer where database writes automatically trigger downstream effects.
 
-### Design
+### DbWriter integration challenge
 
-Use Bun's SQLite `update_hook` (or a polled WAL watcher as fallback) to
-detect writes, then route events through a typed event bus.
+The existing `DbWriter` has **synchronous** `exclusive()` and deferred
+`defer()` methods. There is no async `write()` that returns a Promise.
+The reactive layer must work with this design, not against it.
+
+**Solution:** Hook into `flushDeferredSync()` post-commit. After the
+IMMEDIATE transaction succeeds, emit events for the batch:
+
+```typescript
+// Extended DbWriter (minimal change)
+export class DbWriter {
+  private eventCallback: ((events: WriteEvent[]) => void) | null = null;
+
+  /** Register a callback invoked after each successful deferred flush. */
+  onFlush(cb: (events: WriteEvent[]) => void): void {
+    this.eventCallback = cb;
+  }
+
+  flushDeferredSync(): void {
+    if (this.closed || this.deferred.length === 0) return;
+    this.cancelScheduledFlush();
+    const batch = this.deferred.splice(0);
+
+    // Collect write metadata during the transaction
+    const writeEvents: WriteEvent[] = [];
+    try {
+      withImmediateTransaction(this.db, () => {
+        for (const f of batch) {
+          f(this.db);
+        }
+      });
+    } catch (e) {
+      console.warn(`[mp] deferred write batch failed: ${e}`);
+      return; // no events on failure
+    }
+
+    // Post-commit: emit events
+    if (this.eventCallback) {
+      this.eventCallback(writeEvents);
+    }
+  }
+}
+```
+
+For `exclusive()`, a similar post-return hook:
+
+```typescript
+exclusive<T>(fn: (db: Database) => T): T {
+  // ... existing logic ...
+  try {
+    const result = withBusyRetry(() => fn(this.db));
+    return result;
+  } finally {
+    this.exclusiveDepth--;
+    // ... existing flush logic ...
+    // Post-return: collect changes_count from db.changes()
+    // and emit via eventCallback
+  }
+}
+```
+
+### WAL visibility timing
+
+With WAL mode, after a write commits on the writer connection, readers
+on separate connections see the data immediately (WAL reads check the
+WAL file before the main database file). This means:
+
+- Events emitted after `flushDeferredSync()` returns are safe: any
+  reactive handler that reads back the row via `DbReadPool` will see it.
+- No checkpoint synchronization is needed.
+
+This is verified by SQLite's WAL documentation: "A read transaction that
+is started after a write transaction completes will be able to see the
+changes made by the write transaction."
+
+### Event types
 
 ```typescript
 // @moneypenny/events
-
-export type DbEvent =
-  | { type: "row_insert"; table: string; rowid: number }
-  | { type: "row_update"; table: string; rowid: number }
-  | { type: "row_delete"; table: string; rowid: number };
 
 export type IntelligenceEvent =
   | { type: "memory_added"; memoryId: string; context: string }
@@ -321,64 +588,134 @@ export type IntelligenceEvent =
   | { type: "index_stale"; staleFileCount: number }
   | { type: "compaction_needed"; sessionId: string; messageCount: number }
   | { type: "governance_violation"; effect: string; toolName: string; policyName: string };
+```
 
+### EventBus
+
+```typescript
 export class EventBus {
-  private listeners: Map<string, Set<EventHandler>>;
+  private listeners = new Map<string, Set<EventHandler>>();
+  private inflightHandlers: Promise<void>[] = [];
 
-  /** Register a listener for a specific event type. */
   on<T extends IntelligenceEvent["type"]>(
     type: T,
-    handler: (event: Extract<IntelligenceEvent, { type: T }>) => void | Promise<void>,
-  ): Unsubscribe;
+    handler: EventHandler<T>,
+    opts?: { critical?: boolean; maxRetries?: number },
+  ): () => void {
+    // Register handler with metadata
+    const entry = { handler, critical: opts?.critical ?? false, maxRetries: opts?.maxRetries ?? 0 };
+    // ...
+    return () => { /* unsubscribe */ };
+  }
 
-  /** Emit an event, dispatching to all registered listeners. */
-  emit(event: IntelligenceEvent): void;
+  emit(event: IntelligenceEvent): void {
+    const handlers = this.listeners.get(event.type);
+    if (!handlers) return;
 
-  /** Drain: wait for all async handlers to complete. For graceful shutdown. */
-  drain(): Promise<void>;
+    for (const entry of handlers) {
+      const promise = this.runHandler(entry, event);
+      this.inflightHandlers.push(promise);
+      promise.finally(() => {
+        const idx = this.inflightHandlers.indexOf(promise);
+        if (idx >= 0) this.inflightHandlers.splice(idx, 1);
+      });
+    }
+  }
+
+  /** Wait for all in-flight handlers. Used during graceful shutdown. */
+  async drain(timeoutMs = 5000): Promise<void> {
+    await Promise.race([
+      Promise.allSettled(this.inflightHandlers),
+      Bun.sleep(timeoutMs),
+    ]);
+  }
 }
 ```
 
-### Event routing from DB writes
+### Handler failure isolation
+
+Handlers are classified as **critical** or **non-critical**:
+
+| Handler | Critical? | Retry? | Failure behavior |
+|---------|-----------|--------|-----------------|
+| Embed new memory | Yes | 2 retries, 1s backoff | Log warning, memory is saved but unsearchable by vector |
+| Compaction check | No | No | Skip, next session completion will re-trigger |
+| Webhook notifier | No | 3 retries, exponential | Log warning after final failure |
+| Cost alert | No | No | Log warning |
+| Skill indexer | No | 1 retry | Log warning, skill is saved but uncataloged |
+
+**Critical handler execution:**
 
 ```typescript
-// Bridge between raw SQLite hooks and typed events
-
-const TABLE_EVENT_MAP: Record<string, (rowid: number, readers: DbReadPool) => IntelligenceEvent | null> = {
-  knowledge: (rowid, readers) => {
-    const row = readers.read(db =>
-      db.prepare("SELECT id, context FROM knowledge WHERE rowid = ?").get(rowid)
-    );
-    return row ? { type: "memory_added", memoryId: row.id, context: row.context } : null;
-  },
-
-  job_runs: (rowid, readers) => {
-    const row = readers.read(db =>
-      db.prepare("SELECT job_id, status FROM job_runs WHERE rowid = ?").get(rowid)
-    );
-    if (!row || row.status === "running" || row.status === "pending") return null;
-    return { type: "job_completed", jobId: row.job_id, status: row.status };
-  },
-
-  sessions: (rowid, readers) => {
-    // check if session just ended (status changed to completed)
-    // ...
-  },
-};
+private async runHandler(entry: HandlerEntry, event: IntelligenceEvent): Promise<void> {
+  for (let attempt = 0; attempt <= entry.maxRetries; attempt++) {
+    try {
+      await Promise.race([
+        entry.handler(event),
+        Bun.sleep(entry.critical ? 10_000 : 5_000).then(() => {
+          throw new Error("handler timeout");
+        }),
+      ]);
+      return;
+    } catch (err) {
+      if (attempt < entry.maxRetries) {
+        await Bun.sleep(1000 * 2 ** attempt);
+        continue;
+      }
+      console.warn(
+        `[mp] ${entry.critical ? "CRITICAL" : "non-critical"} handler failed for ${event.type}: ${err}`
+      );
+    }
+  }
+}
 ```
 
-### Reactive handlers (built-in)
+Non-critical handler failures are logged but never block the caller.
+Critical handler failures are logged with a `CRITICAL` prefix so they
+appear in `mp doctor` output.
 
-| Event | Handler | Effect |
-|-------|---------|--------|
-| `memory_added` | Embed handler | Generate embedding for new memory, upsert to vector index |
-| `session_completed` | Compaction check | If message count > threshold, schedule compaction |
-| `job_completed` (failed) | Webhook notifier | Send to configured webhook channels |
-| `cost_threshold_crossed` | Cost alert | Notify via webhook, log warning |
-| `index_stale` | Watcher hint | Mark files for re-index on next watcher tick |
-| `skill_discovered` | Skill indexer | Scan and catalog new skill |
+### Event routing from DB writes
 
-### Custom handlers
+Rather than using SQLite's raw `update_hook` (which fires per-row and
+doesn't carry enough context), we use **explicit event emission** at the
+call site. This is more reliable and type-safe:
+
+```typescript
+// In knowledge write path:
+function addMemory(db: AgentDB, memory: NewMemory): Memory {
+  const result = db.writer.exclusive((raw) => {
+    // insert into knowledge...
+    return row;
+  });
+  db.eventBus?.emit({ type: "memory_added", memoryId: result.id, context: result.context });
+  return result;
+}
+
+// In job_runs write path:
+function updateJobRun(db: AgentDB, runId: string, status: string): void {
+  db.writer.exclusive((raw) => {
+    // update job_runs set status = ...
+  });
+  if (status === "completed" || status === "failed") {
+    db.eventBus?.emit({ type: "job_completed", jobId, status });
+  }
+}
+```
+
+**Why explicit over SQLite hooks:**
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| SQLite `update_hook` | Automatic, catches all writes | No context (only rowid + table), requires read-back, fires during transaction |
+| Explicit emission | Type-safe, carries full context, fires post-commit | Must be added at each call site |
+
+We choose explicit emission because:
+1. The event carries domain context (not just a rowid)
+2. Emission happens post-commit (readers can see the data)
+3. No risk of handlers running inside a transaction
+4. Type-safe — the compiler catches missing event fields
+
+### Custom handlers via YAML
 
 Users can register custom handlers via `.mp/events/` YAML:
 
@@ -395,29 +732,30 @@ action:
     Job "{{jobId}}" failed at {{timestamp}}.
 ```
 
-### Integration with the event loop
+Custom handlers are always non-critical with no retries.
 
-The event bus is initialized with `mp serve` and wired into the `DbWriter`:
+### Acceptance criteria
 
-```typescript
-// In DbWriter.write(), after successful commit:
-for (const event of pendingEvents) {
-  eventBus.emit(event);
-}
-```
-
-The bus is fire-and-forget for non-critical handlers. Critical handlers
-(like embedding) are awaited with a timeout.
+- [ ] `EventBus` emits events after successful DB writes (not during transaction)
+- [ ] Critical handlers retry on failure with backoff
+- [ ] Non-critical handler failures don't block the write path
+- [ ] `drain()` waits for in-flight handlers during shutdown
+- [ ] Readers can see committed data when handler runs (WAL visibility)
+- [ ] Custom YAML handlers load from `.mp/events/` and fire correctly
+- [ ] Memory addition triggers auto-embedding via `memory_added` event
+- [ ] Job failure triggers webhook notification via `job_completed` event
+- [ ] `mp doctor` reports failed critical handler events
 
 ### Implementation
 
 | Phase | Scope | Effort |
 |-------|-------|--------|
-| 2.1 | `EventBus` class with typed listeners, emit, drain | 1 day |
-| 2.2 | SQLite update hook → `DbEvent` → `IntelligenceEvent` routing | 2 days |
-| 2.3 | Built-in reactive handlers (embed, compaction check, cost alert) | 2 days |
-| 2.4 | Custom handler loading from `.mp/events/*.yaml` | 1.5 days |
-| 2.5 | Wire into `DbWriter`, integration tests | 1 day |
+| 2.1 | `EventBus` class with typed listeners, critical/non-critical classification, retry, drain | 1.5 days |
+| 2.2 | `DbWriter.onFlush()` hook for post-commit event emission | 1 day |
+| 2.3 | Explicit event emission at call sites (knowledge, job_runs, sessions, skills) | 1.5 days |
+| 2.4 | Built-in reactive handlers (embed, compaction check, cost alert, webhook) | 2 days |
+| 2.5 | Custom handler loading from `.mp/events/*.yaml` | 1 day |
+| 2.6 | Integration tests: event ordering, handler isolation, drain | 1 day |
 
 ---
 
@@ -427,34 +765,17 @@ The bus is fire-and-forget for non-critical handlers. Critical handlers
 
 Agent prompts are static. A blueprint's system prompt is the same on day 1
 as day 100, even though the agent has accumulated context about the user's
-preferences, common patterns, frequent errors, and coding style. The
-moneypenny-rs spec (sprint-4/self-aware-db.md) describes a system where
-prompts evolve based on usage data.
+preferences, common patterns, and coding style. The moneypenny-rs spec
+(sprint-4/self-aware-db.md) describes prompts that evolve from usage data.
 
 ### Design
-
-A `PromptEvolver` that periodically analyzes agent usage patterns and
-generates prompt refinements. These refinements are stored in the database
-and injected into the system prompt alongside the static blueprint prompt.
 
 ```typescript
 // @moneypenny/ctx
 
 export interface PromptEvolver {
-  /**
-   * Analyze usage patterns for an agent and generate prompt refinements.
-   * Typically run by the gardener agent or on schedule.
-   */
   evolve(agentName: string): Promise<PromptRefinement[]>;
-
-  /**
-   * Get active refinements for an agent (injected into system prompt).
-   */
   getRefinements(agentName: string): PromptRefinement[];
-
-  /**
-   * Accept or reject a refinement (user feedback loop).
-   */
   setRefinementStatus(refinementId: string, status: "accepted" | "rejected"): void;
 }
 
@@ -465,20 +786,22 @@ export interface PromptRefinement {
   content: string;
   confidence: number;           // 0..1
   status: "proposed" | "accepted" | "rejected";
-  evidence: string;             // what data led to this refinement
+  evidence: string;
+  sourceSessionIds: string[];
   createdAt: number;
+  updatedAt: number;
 }
 
 export type RefinementCategory =
-  | "user_preference"           // "User prefers functional style over classes"
-  | "common_pattern"            // "This codebase uses Zod for validation"
-  | "error_prevention"          // "Always check for null before accessing .name"
-  | "tool_usage"                // "User prefers code_search over file_read for discovery"
-  | "style_guide"               // "Use single quotes, 2-space indent"
-  | "domain_knowledge";         // "The billing module uses Stripe's API v2023-10-16"
+  | "user_preference"
+  | "common_pattern"
+  | "error_prevention"
+  | "tool_usage"
+  | "style_guide"
+  | "domain_knowledge";
 ```
 
-### Schema
+### Schema (migration v12)
 
 ```sql
 CREATE TABLE prompt_refinements (
@@ -487,9 +810,9 @@ CREATE TABLE prompt_refinements (
   category TEXT NOT NULL,
   content TEXT NOT NULL,
   confidence REAL NOT NULL DEFAULT 0.5,
-  status TEXT NOT NULL DEFAULT 'proposed',   -- proposed | accepted | rejected
+  status TEXT NOT NULL DEFAULT 'proposed',
   evidence TEXT,
-  source_sessions TEXT,                       -- JSON array of session IDs
+  source_sessions TEXT,
   created_at INTEGER NOT NULL DEFAULT (unixepoch()),
   updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
@@ -497,26 +820,103 @@ CREATE TABLE prompt_refinements (
 CREATE INDEX idx_refinements_agent ON prompt_refinements(agent_name, status);
 ```
 
+### Token budget and cap
+
+**Problem identified in gap analysis:** Without a cap, accepted refinements
+accumulate indefinitely. 20 refinements at 50 tokens each = 1000 tokens
+added to every LLM call. After months, this crowds out code context.
+
+**Solution:** Hard cap of **15 accepted refinements** per agent, with a
+**750 token budget**. When a new refinement would exceed either limit,
+the lowest-confidence accepted refinement is demoted to `archived`:
+
+```typescript
+const MAX_REFINEMENTS = 15;
+const MAX_REFINEMENT_TOKENS = 750;
+
+function pruneRefinements(
+  refinements: PromptRefinement[],
+  newRefinement: PromptRefinement,
+): { accept: PromptRefinement[]; archive: PromptRefinement[] } {
+  const all = [...refinements, newRefinement].sort(
+    (a, b) => b.confidence - a.confidence
+  );
+
+  const accept: PromptRefinement[] = [];
+  const archive: PromptRefinement[] = [];
+  let tokenCount = 0;
+
+  for (const r of all) {
+    const tokens = estimateTokens(r.content);
+    if (accept.length < MAX_REFINEMENTS && tokenCount + tokens <= MAX_REFINEMENT_TOKENS) {
+      accept.push(r);
+      tokenCount += tokens;
+    } else {
+      archive.push(r);
+    }
+  }
+
+  return { accept, archive };
+}
+```
+
+### Refinement deduplication
+
+**Problem identified in gap analysis:** `evolve()` runs on the last 20
+sessions and will propose the same refinement repeatedly if the pattern
+persists.
+
+**Solution:** Before proposing a new refinement, check existing refinements
+(all statuses) for semantic overlap. Use a two-stage check:
+
+1. **Exact substring match** — if the new content contains an existing
+   refinement's content (or vice versa), treat as duplicate.
+2. **LLM dedup check** — include existing refinements in the evolution
+   prompt so the LLM avoids reproposing them:
+
+```
+## Existing refinements (do NOT repropose these)
+{{#each existingRefinements}}
+- [{{status}}] {{content}}
+{{/each}}
+
+Only propose NEW patterns not already covered above.
+```
+
+This eliminates the need for embedding-based similarity (which would add
+complexity and cost). The LLM is already being called for evolution — the
+dedup check is free context.
+
 ### Evolution analysis
 
 The `evolve()` method:
 
 1. Loads the last N sessions for the agent (default 20)
-2. Extracts patterns using an LLM call:
-   - Tool usage frequencies
-   - User corrections ("no, I meant..." / "actually, use X instead")
-   - Repeated instructions across sessions
-   - Error patterns (same error type across sessions)
-   - Style preferences (inferred from accepted code)
-3. Compares against existing refinements
-4. Proposes new refinements or updates confidence on existing ones
+2. Loads all existing refinements (proposed, accepted, rejected)
+3. Sends to LLM with the evolution prompt
+4. LLM returns new refinements, avoiding duplicates of existing ones
+5. New refinements are inserted as `proposed`
+6. Confidence of existing accepted refinements is updated if the LLM
+   confirms the pattern is still consistent
 
 ### Evolution prompt
 
 ```
 Analyze these recent coding sessions for agent "{{agentName}}".
 
-Identify recurring patterns in these categories:
+## Existing refinements (do NOT repropose these)
+{{#each existingRefinements}}
+- [{{status}}] (confidence: {{confidence}}) {{content}}
+{{/each}}
+
+## Sessions to analyze
+{{#each sessions}}
+### Session: {{label}} ({{messageCount}} messages)
+{{compactedSummary || firstUserMessage}}
+{{/each}}
+
+## Task
+Identify NEW recurring patterns in these categories:
 1. User preferences (coding style, naming, architecture choices)
 2. Common patterns (frameworks, libraries, APIs used repeatedly)
 3. Error prevention (mistakes the agent made that the user corrected)
@@ -524,27 +924,30 @@ Identify recurring patterns in these categories:
 5. Style guides (formatting, conventions observed in accepted code)
 6. Domain knowledge (business logic, API details, architecture decisions)
 
-For each pattern, provide:
+For each NEW pattern (not already in existing refinements), provide:
 - category: one of the above
-- content: a concise instruction for the agent's system prompt
-- confidence: 0..1 based on how consistent the pattern is
+- content: a concise instruction for the agent's system prompt (max 50 words)
+- confidence: 0..1 based on how consistent the pattern is across sessions
 - evidence: specific session excerpts that support this
 
 Only propose refinements with confidence >= 0.5.
+Do NOT propose patterns that overlap with existing refinements.
 ```
 
 ### Injection into system prompt
 
 ```typescript
-// @moneypenny/ctx assembler
-
-function buildSystemPrompt(blueprint: AgentConfig, refinements: PromptRefinement[]): string {
-  const accepted = refinements.filter(r => r.status === "accepted");
+function buildSystemPrompt(
+  blueprint: AgentConfig,
+  refinements: PromptRefinement[],
+): string {
+  const accepted = refinements
+    .filter(r => r.status === "accepted")
+    .sort((a, b) => b.confidence - a.confidence);
 
   if (accepted.length === 0) return blueprint.systemPrompt;
 
   const refinementBlock = accepted
-    .sort((a, b) => b.confidence - a.confidence)
     .map(r => `- ${r.content}`)
     .join("\n");
 
@@ -557,74 +960,93 @@ ${refinementBlock}`;
 }
 ```
 
-### User feedback loop
+### Auto-accept threshold
 
-The web UI Tune page includes a "Learned Preferences" section:
+Refinements with confidence >= 0.9 and evidence from 5+ sessions are
+auto-accepted. All others require explicit user acceptance via the Tune
+page or `context_curate`:
 
-- Lists all refinements (proposed, accepted, rejected)
-- User can accept/reject proposed refinements
-- Accepted refinements are injected into the system prompt
-- Rejected refinements are excluded from future proposals (same content)
-
-The `context_curate` tool also exposes refinement management:
 ```
 context_curate({ action: "list_refinements", params: { agent: "default" } })
 context_curate({ action: "accept_refinement", params: { id: "ref_123" } })
 context_curate({ action: "reject_refinement", params: { id: "ref_123" } })
 ```
 
-### Auto-accept threshold
+### User feedback via Tune page
 
-Refinements with confidence >= 0.9 and consistent evidence across 5+
-sessions are auto-accepted. All others require explicit user acceptance.
+The web UI Tune page includes a "Learned Preferences" section:
+
+- Lists all refinements grouped by status (proposed, accepted, rejected)
+- User can accept/reject proposed refinements with one click
+- Shows confidence score and evidence excerpt
+- Rejected refinements are excluded from future proposals
+- Accepted refinements show their injection position in the system prompt
+
+### Reactive trigger
+
+The `session_completed` event (from §2) triggers an evolution check:
+
+```typescript
+eventBus.on("session_completed", async (event) => {
+  const sessionCount = getSessionCount(db, agentName);
+  const lastEvolution = getLastEvolutionRun(db, agentName);
+
+  // Evolve every 10 sessions or every 7 days, whichever comes first
+  if (sessionCount - lastEvolution.sessionCount >= 10 ||
+      Date.now() / 1000 - lastEvolution.timestamp > 604800) {
+    await evolver.evolve(agentName);
+  }
+});
+```
+
+### Acceptance criteria
+
+- [ ] `evolve()` analyzes recent sessions and proposes new refinements
+- [ ] Existing refinements are included in the prompt to prevent duplicates
+- [ ] Accepted refinements appear in the system prompt as "Learned preferences"
+- [ ] Max 15 accepted refinements per agent, within 750 token budget
+- [ ] Lowest-confidence refinement is archived when budget is exceeded
+- [ ] Auto-accept works for confidence >= 0.9 with 5+ session evidence
+- [ ] Rejected refinements are excluded from future proposals
+- [ ] `context_curate` exposes refinement management actions
+- [ ] Tune page shows refinements grouped by status with accept/reject buttons
+- [ ] Evolution triggers every 10 sessions or 7 days via reactive event
 
 ### Implementation
 
 | Phase | Scope | Effort |
 |-------|-------|--------|
 | 3.1 | `prompt_refinements` schema, `PromptRefinement` types, CRUD | 1 day |
-| 3.2 | `PromptEvolver.evolve()` — session analysis, LLM extraction | 3 days |
-| 3.3 | System prompt injection with accepted refinements | 1 day |
-| 3.4 | User feedback: web UI Tune section + `context_curate` integration | 1.5 days |
-| 3.5 | Auto-accept logic, gardener integration (scheduled evolution runs) | 1 day |
-| 3.6 | Reactive trigger: `session_completed` → check if evolution is due | 0.5 days |
+| 3.2 | `PromptEvolver.evolve()` — session analysis, dedup, LLM extraction | 3 days |
+| 3.3 | Token budget pruning, auto-accept logic | 1 day |
+| 3.4 | System prompt injection with accepted refinements | 0.5 days |
+| 3.5 | User feedback: Tune page section + `context_curate` integration | 1.5 days |
+| 3.6 | Reactive trigger: `session_completed` → evolution check | 0.5 days |
+| 3.7 | Gardener integration (scheduled evolution runs) | 0.5 days |
 
 ---
 
-## 4. Embeddable SQL Extension
+## 4. Stable SQL Query Surface
+
+> **Renamed from "Embeddable SQL Extension"** — the previous draft
+> described custom SQL functions registered via `db.function()`, but
+> these only work when the DB is opened through Bun. External tools
+> (Datasette, DBeaver, `sqlite3` CLI) won't have access to custom
+> functions. The spec now clearly separates what's portable (views)
+> from what's Bun-only (functions).
 
 ### Problem
 
 The intelligence file is a SQLite database, but its schema is an
-implementation detail. External tools (Datasette, DBeaver, custom scripts)
-can query it, but they need to understand the internal schema. The
-moneypenny-rs spec envisions an "embeddable SQL intelligence extension" —
-a set of views, functions, and virtual tables that make the intelligence
-file queryable with a stable, documented API.
+implementation detail. External tools can query it, but they need to
+understand internal table structures. A stable view layer provides a
+documented API.
 
-### Design
+### Portable layer: SQL views (works everywhere)
 
-A loadable SQLite extension (or, more practically in the TypeScript world,
-a schema layer) that provides:
-
-1. **Stable views** that abstract over internal tables
-2. **Custom SQL functions** for common intelligence queries
-3. **FTS5 integration** for natural language search from SQL
-
-```typescript
-// @moneypenny/sql-ext
-
-export function installIntelligenceExtension(db: Database): void {
-  installViews(db);
-  installFunctions(db);
-  installFTS(db);
-}
-```
-
-### Views
+These views work in any SQLite client:
 
 ```sql
--- Stable query surface: agent activity
 CREATE VIEW IF NOT EXISTS mp_agent_activity AS
 SELECT
   a.name AS agent,
@@ -637,7 +1059,6 @@ FROM agents a
 LEFT JOIN sessions s ON s.agent_name = a.name
 GROUP BY a.name;
 
--- Stable query surface: tool usage
 CREATE VIEW IF NOT EXISTS mp_tool_usage AS
 SELECT
   json_extract(m.content, '$.name') AS tool_name,
@@ -649,7 +1070,6 @@ FROM messages m
 WHERE m.role = 'tool'
 GROUP BY tool_name;
 
--- Stable query surface: daily cost
 CREATE VIEW IF NOT EXISTS mp_daily_cost AS
 SELECT
   DATE(last_activity_at, 'unixepoch') AS day,
@@ -661,7 +1081,6 @@ FROM sessions
 GROUP BY day
 ORDER BY day DESC;
 
--- Stable query surface: governance log
 CREATE VIEW IF NOT EXISTS mp_governance_log AS
 SELECT
   ge.id,
@@ -675,7 +1094,6 @@ SELECT
 FROM gov_events ge
 ORDER BY ge.created_at DESC;
 
--- Stable query surface: knowledge base
 CREATE VIEW IF NOT EXISTS mp_knowledge AS
 SELECT
   k.id,
@@ -688,36 +1106,22 @@ FROM knowledge k
 ORDER BY k.created_at DESC;
 ```
 
-### Custom SQL functions
+### Bun-only layer: custom SQL functions
 
-Registered via Bun's `db.function()`:
+These functions are registered via `db.function()` and only work when the
+DB is opened through Bun (moneypenny process, `mp query` command):
 
 ```typescript
 function installFunctions(db: Database): void {
-  db.function("mp_search", {
-    args: 2,  // (table, query)
-    handler: (table: string, query: string) => {
-      // hybrid search across the specified table
-      // returns JSON array of {id, score, snippet}
-    },
-  });
-
   db.function("mp_token_cost", {
-    args: 3,  // (model, input_tokens, output_tokens)
+    args: 3,
     handler: (model: string, inputTokens: number, outputTokens: number) => {
       return calculateCost({ model, inputTokens, outputTokens });
     },
   });
 
-  db.function("mp_summarize_session", {
-    args: 1,  // (session_id)
-    handler: (sessionId: string) => {
-      // returns compacted summary or first user message
-    },
-  });
-
   db.function("mp_time_ago", {
-    args: 1,  // (unix_timestamp)
+    args: 1,
     handler: (ts: number) => {
       const diff = Date.now() / 1000 - ts;
       if (diff < 60) return "just now";
@@ -729,10 +1133,16 @@ function installFunctions(db: Database): void {
 }
 ```
 
+**Excluded:** `mp_search()` as a SQL function. Hybrid search requires
+async embedding generation and multi-database access — it doesn't fit
+the synchronous SQL function model. Use the `code_search` tool or the
+`/api/v1/search` endpoint instead.
+
 ### FTS integration
 
+Add FTS5 index for message full-text search:
+
 ```sql
--- FTS5 index for full-text search across messages
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
   content,
   content='messages',
@@ -740,105 +1150,188 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
   tokenize='porter unicode61'
 );
 
--- FTS5 triggers to keep index in sync
-CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
   INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
 END;
 
-CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
   INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
 END;
-
--- FTS5 index for knowledge
-CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
-  content,
-  context,
-  content='knowledge',
-  content_rowid='rowid',
-  tokenize='porter unicode61'
-);
 ```
 
-### Documentation
+This allows searching across message history via plain SQL:
 
-The extension ships with a `SCHEMA.md` that documents every view, function,
-and FTS table. This file is generated from the SQL definitions and serves
-as the API contract for external tools:
+```sql
+SELECT m.*, mf.rank
+FROM messages_fts mf
+JOIN messages m ON m.rowid = mf.rowid
+WHERE messages_fts MATCH 'authentication'
+ORDER BY mf.rank
+LIMIT 20;
+```
+
+### `mp query` command
+
+A new CLI command to run SQL against the intelligence file with
+custom functions pre-loaded:
+
+```bash
+# Views work in any tool
+mp query "SELECT * FROM mp_agent_activity"
+
+# Custom functions work via mp query
+mp query "SELECT agent, mp_time_ago(last_active) FROM mp_agent_activity"
+
+# Export to CSV
+mp query --csv "SELECT * FROM mp_daily_cost" > costs.csv
+
+# Pipe-friendly JSON output
+mp query --json "SELECT * FROM mp_health"
+```
+
+### Documentation: `SCHEMA.md`
+
+The extension ships with a generated `SCHEMA.md` that documents every
+view and function. This serves as the API contract:
 
 ```markdown
 # moneypenny Intelligence File — SQL API
 
-## Views
+## Portable Views (work in any SQLite client)
 
 ### mp_agent_activity
-Agent-level aggregate statistics.
 | Column | Type | Description |
 | ...
 
-### mp_tool_usage
-Tool call statistics across all sessions.
+### mp_health (from sprint 2)
 ...
 
-## Functions
+## Bun-only Functions (require mp query or moneypenny process)
 
-### mp_search(table, query)
-Hybrid full-text + semantic search. Returns JSON array.
-...
+### mp_token_cost(model, input_tokens, output_tokens)
+Returns cost in USD. Uses moneypenny's internal pricing table.
+
+### mp_time_ago(unix_timestamp)
+Returns human-readable relative time string.
 ```
 
-### Usage examples
+### Acceptance criteria
 
-```sql
--- What agents cost the most this week?
-SELECT agent, total_cost_usd FROM mp_agent_activity ORDER BY total_cost_usd DESC;
-
--- Which tools fail most often?
-SELECT tool_name, failure_count, success_count FROM mp_tool_usage
-WHERE failure_count > 0 ORDER BY failure_count DESC;
-
--- Search memories about authentication
-SELECT mp_search('knowledge', 'authentication flow');
-
--- Daily cost trend
-SELECT day, cost_usd FROM mp_daily_cost LIMIT 30;
-
--- Recent governance denials
-SELECT tool_name, reason, created_at_iso FROM mp_governance_log
-WHERE effect = 'deny' LIMIT 20;
-```
+- [ ] All views return correct data when queried from `sqlite3` CLI
+- [ ] Views survive schema migrations (created in migration, not at runtime)
+- [ ] `mp query` command runs SQL with custom functions loaded
+- [ ] `mp query --csv` and `--json` output modes work
+- [ ] `SCHEMA.md` is auto-generated and accurate
+- [ ] External tools (Datasette) can query views without custom functions
 
 ### Implementation
 
 | Phase | Scope | Effort |
 |-------|-------|--------|
 | 4.1 | Stable views (agent_activity, tool_usage, daily_cost, governance_log, knowledge) | 1.5 days |
-| 4.2 | Custom SQL functions (mp_search, mp_token_cost, mp_time_ago, mp_summarize_session) | 2 days |
-| 4.3 | FTS5 indexes + sync triggers for messages and knowledge | 1 day |
-| 4.4 | SCHEMA.md generation, documentation | 0.5 days |
-| 4.5 | `installIntelligenceExtension()` entry point, integration tests | 1 day |
+| 4.2 | Custom SQL functions (mp_token_cost, mp_time_ago) | 0.5 days |
+| 4.3 | FTS5 index + sync triggers for messages | 0.5 days |
+| 4.4 | `mp query` CLI command with --csv and --json output | 1 day |
+| 4.5 | `SCHEMA.md` generation script | 0.5 days |
+| 4.6 | Integration tests: views correctness, external tool compatibility | 0.5 days |
 
 ---
 
-## Implementation Order
+## 5. Schema additions (migration v12)
+
+```typescript
+MIGRATIONS.push({
+  version: 12,
+  up: (db) => {
+    // Channel session mapping
+    db.exec(`CREATE TABLE IF NOT EXISTS channel_sessions (
+      channel_name TEXT NOT NULL,
+      external_id TEXT NOT NULL,
+      session_id TEXT NOT NULL REFERENCES sessions(id),
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      PRIMARY KEY (channel_name, external_id)
+    )`);
+
+    // Prompt refinements
+    db.exec(`CREATE TABLE IF NOT EXISTS prompt_refinements (
+      id TEXT PRIMARY KEY NOT NULL,
+      agent_name TEXT NOT NULL,
+      category TEXT NOT NULL,
+      content TEXT NOT NULL,
+      confidence REAL NOT NULL DEFAULT 0.5,
+      status TEXT NOT NULL DEFAULT 'proposed',
+      evidence TEXT,
+      source_sessions TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    )`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_refinements_agent
+      ON prompt_refinements(agent_name, status)`);
+
+    // Messages FTS
+    db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+      content,
+      content='messages', content_rowid='rowid',
+      tokenize='porter unicode61'
+    )`);
+    db.exec(`CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
+      INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+    END`);
+    db.exec(`CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
+      INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+    END`);
+
+    // Stable views
+    db.exec(`CREATE VIEW IF NOT EXISTS mp_agent_activity AS ...`);
+    db.exec(`CREATE VIEW IF NOT EXISTS mp_tool_usage AS ...`);
+    db.exec(`CREATE VIEW IF NOT EXISTS mp_daily_cost AS ...`);
+    db.exec(`CREATE VIEW IF NOT EXISTS mp_governance_log AS ...`);
+    db.exec(`CREATE VIEW IF NOT EXISTS mp_knowledge AS ...`);
+  },
+});
+```
+
+---
+
+## 6. Configuration consolidation
+
+By this sprint, configuration lives in 7+ places. Add a `mp config validate`
+command that checks consistency across all surfaces:
+
+```bash
+mp config validate
+# ✓ .mp/config.yaml: valid
+# ✓ .mp/agents/default.md: valid blueprint
+# ✓ .mp/policies/budget.yaml: valid policy
+# ✓ .mp/events/notify-on-failure.yaml: valid event handler
+# ✗ .mp/agents/reviewer.md: references tool "lint_check" which is not registered
+# ✗ .mp/config.yaml: channel "telegram" enabled but TELEGRAM_BOT_TOKEN not set
+```
+
+Implementation: 0.5 days. This is a read-only validation pass over all
+config surfaces.
+
+---
+
+## Implementation order
 
 ```
-Phase 2: Reactive event layer (§2)
-  │       ↑ unlocks reactive handlers used by §3
+Phase 1: Reactive event layer (§2)
+  │       ↑ foundation for §1 webhook events and §3 evolution trigger
   │
-  ├── Phase 1: Channel adapters (§1) [independent]
-  │   only needs AgentBridge from sprint 1
+  ├── Phase 2: Channel adapters (§1) [depends on §2 for webhook events]
+  │   Telegram + webhook + embed SDK
   │
-  ├── Phase 4: SQL extension (§4) [independent]
-  │   pure schema/function work, no runtime dependencies
+  ├── Phase 3: SQL query surface (§4) [independent]
+  │   Views, functions, mp query command
   │
-  └── Phase 3: Self-evolving prompts (§3)
-      depends on §2 (reactive layer for session_completed trigger)
-      depends on sprint 2 §5 (gardener for scheduled evolution)
+  └── Phase 4: Self-evolving prompts (§3) [depends on §2 for session_completed trigger]
+      Evolver, refinements, Tune page integration
 ```
 
-Channels (§1) and SQL extension (§4) can start immediately. The reactive
-layer (§2) should be built before self-evolving prompts (§3) so that
-evolution can be triggered reactively on session completion.
+The reactive event layer (§2) should be built first because both channels
+and self-evolving prompts depend on it. The SQL query surface (§4) is
+independent and can be built in parallel with anything.
 
 ---
 
@@ -846,10 +1339,12 @@ evolution can be triggered reactively on session completion.
 
 - **Bidirectional Telegram** (file upload from agent to user) — can be
   added incrementally after the adapter lands.
-- **Discord / Slack adapters** — same ChannelAdapter interface, implement
+- **Discord / Slack adapters** — same `ChannelAdapter` interface, implement
   on demand.
 - **Full WASM runtime** (running the agent loop in the browser) — the embed
   package is a WebSocket client only. Full WASM is a separate effort.
 - **Multi-agent reactive choreography** (event chains triggering other
   agents) — the event bus supports it, but the UX for defining chains is
   out of scope.
+- **`mp_search()` as a SQL function** — hybrid search is async and
+  multi-database; it doesn't fit the synchronous SQL function model.
