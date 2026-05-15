@@ -10,8 +10,14 @@ schema and scheduler behavior.
 
 ### Extended design
 
+> **Note:** The `jobs` table already has an `operation TEXT NOT NULL` column
+> that stores these values. No new `type` column is needed — the original
+> schema-v10 draft proposed one but it was redundant. The `JobOperation`
+> type below maps directly to the existing `operation` column.
+
 ```typescript
-// Extend the existing Job interface, don't replace it
+// Extend the existing Job interface, don't replace it.
+// Values stored in the existing `operation` column.
 export type JobOperation =
   | "agents.run"                    // existing
   | "pipeline.run"                  // new: data pipeline

@@ -55,9 +55,26 @@ guard), sorted by priority.
 
 ### Migration
 
-The existing `hooks` table schema is altered to store `condition` and
-`action` JSON columns instead of `script`. Any existing `Function()`-based
-hooks are logged as warnings and skipped.
+The existing `hooks` table is **recreated** (not just altered) because:
+
+1. The `phase` CHECK constraint changes from
+   `('pre:validation','pre:injection','post:transform')` to
+   `('pre_tool','post_tool','pre_llm','post_llm')` — SQLite doesn't
+   support `ALTER CONSTRAINT`.
+2. The `script TEXT NOT NULL` and `match_pattern TEXT NOT NULL` columns
+   are removed entirely, replaced by nullable `condition` and `action`
+   JSON columns.
+
+Existing rows are migrated with a phase mapping:
+- `pre:validation` → `pre_tool`
+- `pre:injection` → `pre_llm`
+- `post:transform` → `post_llm`
+
+The `script` content is **not** migrated (it was `Function()` constructor
+code). A warning is logged at startup for any hooks that had scripts.
+These must be re-created as declarative hooks.
+
+See `schema-v10.md` for the full migration SQL.
 
 ### Acceptance criteria
 

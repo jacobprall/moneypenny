@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 export const WORKSPACE_SCHEMA_VERSION = 1;
 
 export interface Migration {
@@ -213,6 +213,53 @@ ALTER TABLE policies ADD COLUMN checksum TEXT;
     version: 9,
     sql: `
 ALTER TABLE sessions ADD COLUMN agent_name TEXT DEFAULT 'default';
+`,
+  },
+  {
+    version: 10,
+    sql: `
+CREATE TABLE IF NOT EXISTS subagent_runs (
+  id TEXT PRIMARY KEY,
+  parent_session_id TEXT,
+  child_session_id TEXT,
+  blueprint TEXT NOT NULL,
+  input TEXT,
+  output TEXT,
+  status TEXT NOT NULL DEFAULT 'running',
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER,
+  cost_usd REAL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+
+ALTER TABLE agents ADD COLUMN strategy TEXT DEFAULT 'standard';
+ALTER TABLE agents ADD COLUMN memory_config TEXT;
+ALTER TABLE agents ADD COLUMN guardrails TEXT;
+ALTER TABLE agents ADD COLUMN sub_agents TEXT;
+
+CREATE TABLE IF NOT EXISTS hooks_new (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  phase TEXT NOT NULL CHECK(phase IN ('pre_tool','post_tool','pre_llm','post_llm')),
+  priority INTEGER DEFAULT 0,
+  condition TEXT,
+  action TEXT,
+  enabled INTEGER DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+INSERT OR IGNORE INTO hooks_new (id, name, phase, priority, enabled, created_at, updated_at)
+  SELECT id, name,
+    CASE phase
+      WHEN 'pre:validation' THEN 'pre_tool'
+      WHEN 'pre:injection' THEN 'pre_llm'
+      WHEN 'post:transform' THEN 'post_llm'
+      ELSE phase
+    END,
+    priority, enabled, created_at, updated_at
+  FROM hooks;
+DROP TABLE hooks;
+ALTER TABLE hooks_new RENAME TO hooks;
 `,
   },
 ];
@@ -501,10 +548,10 @@ CREATE TABLE IF NOT EXISTS policies (
 CREATE TABLE IF NOT EXISTS hooks (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  phase TEXT NOT NULL CHECK(phase IN ('pre:validation','pre:injection','post:transform')),
-  match_pattern TEXT NOT NULL,
+  phase TEXT NOT NULL CHECK(phase IN ('pre_tool','post_tool','pre_llm','post_llm')),
   priority INTEGER DEFAULT 0,
-  script TEXT NOT NULL,
+  condition TEXT,
+  action TEXT,
   enabled INTEGER DEFAULT 1,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
@@ -532,6 +579,10 @@ CREATE TABLE IF NOT EXISTS agents (
   validation_errors TEXT,
   config_json TEXT NOT NULL,
   prompt TEXT NOT NULL,
+  strategy TEXT DEFAULT 'standard',
+  memory_config TEXT,
+  guardrails TEXT,
+  sub_agents TEXT,
   job_id TEXT,
   last_loaded_at INTEGER NOT NULL,
   created_at INTEGER NOT NULL,
@@ -540,6 +591,21 @@ CREATE TABLE IF NOT EXISTS agents (
 
 CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
 CREATE INDEX IF NOT EXISTS idx_agents_enabled ON agents(enabled);
+
+-- Sub-agent invocation log
+CREATE TABLE IF NOT EXISTS subagent_runs (
+  id TEXT PRIMARY KEY,
+  parent_session_id TEXT,
+  child_session_id TEXT,
+  blueprint TEXT NOT NULL,
+  input TEXT,
+  output TEXT,
+  status TEXT NOT NULL DEFAULT 'running',
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER,
+  cost_usd REAL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
 
 -- Scheduled jobs
 CREATE TABLE IF NOT EXISTS jobs (
@@ -606,12 +672,16 @@ export function validateSchemaConsistency(): { ok: boolean; missing: string[] } 
     schemaTableNames.add(m[1]!.toLowerCase());
   }
 
+  /** Staging table names from migrations that are renamed/dropped before completion. */
+  const ephemeralMigrationTables = new Set(["hooks_new"]);
+
   const missing: string[] = [];
   for (const migration of MIGRATIONS) {
     const migRe = /CREATE TABLE[^(]*?(\w+)\s*\(/gi;
     let mm: RegExpExecArray | null;
     while ((mm = migRe.exec(migration.sql)) !== null) {
       const name = mm[1]!.toLowerCase();
+      if (ephemeralMigrationTables.has(name)) continue;
       if (!schemaTableNames.has(name)) {
         missing.push(`v${migration.version}: table "${name}" not in SCHEMA_SQL`);
       }
