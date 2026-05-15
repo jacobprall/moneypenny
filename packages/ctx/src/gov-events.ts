@@ -1,4 +1,5 @@
-import type { Database, SQLQueryBindings } from "bun:sqlite";
+import type { SQLQueryBindings } from "bun:sqlite";
+import type { AgentDB } from "@moneypenny/db";
 
 export interface NewEvent {
   id: string;
@@ -12,8 +13,8 @@ export interface NewEvent {
   createdAt: number;
 }
 
-export function append(db: Database, event: NewEvent): void {
-  db.run(
+export function append(db: AgentDB, event: NewEvent): void {
+  db.db.run(
     `INSERT INTO gov_events (id, operation, actor, session_id, input, output, error, duration_ms, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
@@ -49,7 +50,7 @@ export interface Event {
   createdAt: number;
 }
 
-export function query(db: Database, filters: EventFilters = {}): Event[] {
+export function query(db: AgentDB, filters: EventFilters = {}): Event[] {
   const conditions: string[] = [];
   const params: unknown[] = [];
 
@@ -71,6 +72,6 @@ export function query(db: Database, filters: EventFilters = {}): Event[] {
   params.push(limit);
   const sql = `SELECT id, operation, actor, session_id as sessionId, input, output, error, duration_ms as durationMs, created_at as createdAt
                FROM gov_events ${where} ORDER BY created_at DESC LIMIT ?`;
-  const rows = db.query(sql).all(...(params as SQLQueryBindings[])) as Event[];
+  const rows = db.db.query(sql).all(...(params as SQLQueryBindings[])) as Event[];
   return rows;
 }

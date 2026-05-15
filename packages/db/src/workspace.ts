@@ -5,7 +5,7 @@ import { sqlError } from "./errors";
 import type { WorkspaceDB } from "./types";
 import { WORKSPACE_SCHEMA_SQL, WORKSPACE_SCHEMA_VERSION, WORKSPACE_MIGRATIONS } from "./schema";
 import { DEFAULT_EXCLUDE_PATTERNS } from "./blueprint";
-import { languageFromExt, sha256Hex, chunkFileContent } from "@moneypenny/search/chunker";
+import { languageFromExt, sha256Hex, chunkFileContent } from "./chunker";
 import { ensureCustomSQLite } from "./sqlite-init";
 
 ensureCustomSQLite();

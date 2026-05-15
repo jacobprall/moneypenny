@@ -62,8 +62,10 @@ export function list(): string[] {
   return defaultRegistry.list();
 }
 
+import type { AgentDB } from "@moneypenny/db";
+
 export interface ExecuteOptions {
-  db: Database;
+  db: AgentDB;
   actor: string;
   sessionId?: string;
   denyByDefault?: boolean;
@@ -71,7 +73,7 @@ export interface ExecuteOptions {
 }
 
 function runPreHooks(
-  db: Database,
+  db: AgentDB,
   name: string,
   actor: string,
   sessionId: string | undefined,
@@ -89,7 +91,7 @@ function runPreHooks(
 }
 
 function decidePolicy(
-  db: Database,
+  db: AgentDB,
   actor: string,
   resource: string,
   currentInput: unknown,
@@ -112,7 +114,7 @@ function decidePolicy(
 }
 
 function runPostHooks(
-  db: Database,
+  db: AgentDB,
   name: string,
   actor: string,
   sessionId: string | undefined,
@@ -133,7 +135,7 @@ function runPostHooks(
 }
 
 function appendEvent(
-  db: Database,
+  db: AgentDB,
   name: string,
   actor: string,
   sessionId: string | undefined,

@@ -1,22 +1,6 @@
-import type { Database } from "bun:sqlite";
 import { BoundedMap } from "./bounded-map.js";
 import { compileUserRegex } from "./safe-regex.js";
-
-export type PolicyEffect = "allow" | "deny" | "audit" | "confirm";
-
-export interface Policy {
-  id: string;
-  name: string;
-  effect: PolicyEffect;
-  priority: number;
-  toolPattern: string | null;
-  pathPattern: string | null;
-  costCondition: string | null;
-  argsPattern: string | null;
-  actorPattern: string | null;
-  message: string | null;
-  enabled: number;
-}
+import { listPolicies, type AgentDB, type Policy, type PolicyEffect } from "@moneypenny/db";
 
 export interface PolicyDecision {
   effect: PolicyEffect;
@@ -84,15 +68,8 @@ export interface EvaluateContext {
   turnCost?: number;
 }
 
-export function evaluatePolicy(db: Database, context: EvaluateContext): PolicyDecision {
-  const rows = db
-    .query(
-      `SELECT id, name, effect, priority, tool_pattern as toolPattern, path_pattern as pathPattern,
-              cost_condition as costCondition, args_pattern as argsPattern, actor_pattern as actorPattern,
-              message, enabled
-       FROM policies WHERE enabled = 1 ORDER BY priority DESC`
-    )
-    .all() as Policy[];
+export function evaluatePolicy(db: AgentDB, context: EvaluateContext): PolicyDecision {
+  const rows = listPolicies(db).filter(p => p.enabled === 1);
 
   for (const p of rows) {
     const toolMatch = matchesGlob(p.toolPattern, context.toolName ?? "");

@@ -2,8 +2,10 @@ import type { Database } from "bun:sqlite";
 import { evaluatePolicy, type EvaluateContext } from "../policy.js";
 import type { Hook, HookContext, PreHookResult } from "./types.js";
 
+import type { AgentDB } from "@moneypenny/db";
+
 export interface DbPolicyHookConfig {
-  db: () => Database;
+  db: () => AgentDB;
   actor?: string;
   denyByDefault?: boolean;
   onAudit?: (toolName: string, reason: string, matchedPolicy: unknown) => void;

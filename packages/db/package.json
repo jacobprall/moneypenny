@@ -6,6 +6,7 @@
   "types": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./chunker": "./src/chunker.ts",
     "./errors": "./src/errors.ts",
     "./types": "./src/types.ts",
     "./glob": "./src/glob.ts",
@@ -20,7 +21,6 @@
     "@sqliteai/sqlite-ai": "^0.7.56",
     "@sqliteai/sqlite-sync": "^1.0.0",
     "@sqliteai/sqlite-vector": "^0.9.45",
-    "@moneypenny/search": "workspace:*",
     "yaml": "^2.9.0"
   },
   "devDependencies": {

@@ -13,9 +13,8 @@ const RunBody = z.object({
   model: z.string().optional(),
 });
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function createAgentsRouter(opts: CreateHttpAppOptions): Hono<any, any, any> {
-  const r = new Hono<any, any, any>();
+export function createAgentsRouter(opts: CreateHttpAppOptions): Hono<{ Variables: HttpVars }> {
+  const r = new Hono<{ Variables: HttpVars }>();
   r.use("*", createRequireDbMiddleware(opts.getDb));
 
   r.get("/agents", (c) => {

@@ -3,7 +3,7 @@
  * Hooks sync via CRDT; phases: pre:validation, pre:injection, post:transform, etc.
  */
 
-import type { Database } from "bun:sqlite";
+import type { AgentDB } from "@moneypenny/db";
 import { BoundedMap } from "./bounded-map.js";
 import { compileUserRegex } from "./safe-regex.js";
 
@@ -118,7 +118,7 @@ function runHookScript(script: string, ctx: HookContext): HookResult {
 }
 
 export function runHooks(
-  db: Database,
+  db: AgentDB,
   phase: string,
   operation: string,
   actor: string,
@@ -126,7 +126,7 @@ export function runHooks(
   input: unknown,
   output?: unknown
 ): { input: unknown; output?: unknown; aborted: boolean; reason?: string } {
-  const rows = db
+  const rows = db.db
     .query(
       `SELECT id, name, phase, match_pattern as matchPattern, priority, script
        FROM hooks WHERE enabled = 1 AND phase = ? ORDER BY priority DESC`

@@ -41,9 +41,8 @@ const PolicyPostBody = z.object({
   message: z.string().nullable().optional(),
 });
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function createHttpApp(opts: CreateHttpAppOptions): Hono<any, any, any> {
-  const app = new Hono<any, any, any>();
+export function createHttpApp(opts: CreateHttpAppOptions): Hono<{ Variables: HttpVars }> {
+  const app = new Hono<{ Variables: HttpVars }>();
 
   app.get("/health", (c) => {
     return c.json({ status: "ok", service: "moneypenny", version: "0.1.0" });
@@ -57,7 +56,7 @@ export function createHttpApp(opts: CreateHttpAppOptions): Hono<any, any, any> {
     });
   });
 
-  const api = new Hono<any, any, any>();
+  const api = new Hono<{ Variables: HttpVars }>();
   if (opts.getApiKey) {
     api.use("*", createTokenAuthMiddleware(opts.getApiKey));
   }
@@ -106,7 +105,7 @@ export function createHttpApp(opts: CreateHttpAppOptions): Hono<any, any, any> {
       return c.json({ error: zodErrorMessage(parsed.error) }, 400);
     }
     const b = parsed.data;
-    const decision = evaluatePolicy(c.var.db.db, {
+    const decision = evaluatePolicy(c.var.db, {
       actor: b.actor,
       toolName: b.action,
       path: b.resource,

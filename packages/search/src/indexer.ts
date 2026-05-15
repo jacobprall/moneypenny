@@ -5,7 +5,7 @@ import type { AgentDB, FileEntry, IndexOptions, IndexResult, IndexStatus, TreeDi
 import { getExcludePatterns, getExcludePatternsFromDb } from "./file-tree";
 import { getWorkspaceHandle } from "@moneypenny/db/workspace";
 import { globMatch } from "@moneypenny/db/glob";
-import { languageFromExt, sha256Hex, chunkFileContent } from "./chunker";
+import { languageFromExt, sha256Hex, chunkFileContent } from "@moneypenny/db/chunker";
 import { tryStat, mapFileRow, type FileRow } from "./fs-utils";
 import { loadGitRules, gitIgnored, type GitRule } from "./gitignore";
 import {

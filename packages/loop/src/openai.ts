@@ -10,8 +10,8 @@ import { DEFAULT_MAX_TOKENS } from "./types.js";
 import type { AssistantMessage, TokenUsage } from "./types.js";
 import type { CompletionParams, LLMProvider, StreamEvent } from "./provider.js";
 
-const MAX_RETRIES = 3;
-const INITIAL_BACKOFF_MS = 1000;
+import { withRetry } from "./retry.js";
+
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503]);
 
 function isRetryable(error: unknown): boolean {
@@ -19,14 +19,6 @@ function isRetryable(error: unknown): boolean {
     return RETRYABLE_STATUS_CODES.has((error as { status: number }).status);
   }
   return false;
-}
-
-async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) { reject(new Error("Aborted")); return; }
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener("abort", () => { clearTimeout(timer); reject(new Error("Aborted")); }, { once: true });
-  });
 }
 
 function systemBlocksToText(blocks: ContentBlock[]): string {
@@ -145,88 +137,69 @@ export function createOpenAIProvider(apiKey: string): LLMProvider {
       ...(tools ? { tools } : {}),
     };
 
-    let lastError: unknown;
+    yield* withRetry(isRetryable, params.signal, async function* () {
+      const s = await client.chat.completions.create(body, {
+        signal: params.signal ?? undefined,
+      });
 
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      if (params.signal?.aborted) return;
+      let contentText = "";
+      const toolCallMap = new Map<number, PartialToolCall>();
+      let usage: TokenUsage | null = null;
 
-      if (attempt > 0) {
-        const backoff = INITIAL_BACKOFF_MS * Math.pow(2, attempt - 1) + Math.random() * 500;
-        await sleep(backoff, params.signal);
-      }
+      for await (const chunk of s as AsyncIterable<ChatCompletionChunk>) {
+        if (params.signal?.aborted) return;
 
-      try {
-        const s = await client.chat.completions.create(body, {
-          signal: params.signal ?? undefined,
-        });
+        if (chunk.usage) {
+          usage = {
+            inputTokens: chunk.usage.prompt_tokens ?? 0,
+            outputTokens: chunk.usage.completion_tokens ?? 0,
+          };
+        }
 
-        let contentText = "";
-        const toolCallMap = new Map<number, PartialToolCall>();
-        let usage: TokenUsage | null = null;
+        const delta = chunk.choices?.[0]?.delta;
+        if (!delta) continue;
 
-        for await (const chunk of s as AsyncIterable<ChatCompletionChunk>) {
-          if (params.signal?.aborted) return;
+        if (delta.content) {
+          contentText += delta.content;
+          yield { type: "text_delta" as const, text: delta.content };
+        }
 
-          if (chunk.usage) {
-            usage = {
-              inputTokens: chunk.usage.prompt_tokens ?? 0,
-              outputTokens: chunk.usage.completion_tokens ?? 0,
-            };
-          }
-
-          const delta = chunk.choices?.[0]?.delta;
-          if (!delta) continue;
-
-          if (delta.content) {
-            contentText += delta.content;
-            yield { type: "text_delta" as const, text: delta.content };
-          }
-
-          if (delta.tool_calls) {
-            for (const tc of delta.tool_calls) {
-              let partial = toolCallMap.get(tc.index);
-              if (!partial && tc.id) {
-                partial = { id: tc.id, name: tc.function?.name ?? "", argsChunks: [] };
-                toolCallMap.set(tc.index, partial);
-              }
-              if (partial) {
-                if (tc.function?.name) partial.name = tc.function.name;
-                if (tc.function?.arguments) partial.argsChunks.push(tc.function.arguments);
-              }
+        if (delta.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            let partial = toolCallMap.get(tc.index);
+            if (!partial && tc.id) {
+              partial = { id: tc.id, name: tc.function?.name ?? "", argsChunks: [] };
+              toolCallMap.set(tc.index, partial);
+            }
+            if (partial) {
+              if (tc.function?.name) partial.name = tc.function.name;
+              if (tc.function?.arguments) partial.argsChunks.push(tc.function.arguments);
             }
           }
         }
-
-        const toolCalls: AssistantMessage["toolCalls"] = [];
-        for (const [, tc] of [...toolCallMap.entries()].sort((a, b) => a[0] - b[0])) {
-          const argsStr = tc.argsChunks.join("");
-          let parsed: Record<string, unknown> = {};
-          try {
-            parsed = asRecord(JSON.parse(argsStr));
-          } catch { /* keep empty */ }
-          toolCalls.push({ id: tc.id, name: tc.name, input: parsed });
-        }
-
-        const message: AssistantMessage = {
-          content: contentText.length > 0 ? contentText : null,
-          toolCalls,
-        };
-
-        yield {
-          type: "complete" as const,
-          message,
-          usage: usage ?? { inputTokens: 0, outputTokens: 0 },
-        };
-        return;
-      } catch (e) {
-        lastError = e;
-        if (!isRetryable(e) || attempt === MAX_RETRIES) {
-          throw e;
-        }
       }
-    }
 
-    throw lastError;
+      const toolCalls: AssistantMessage["toolCalls"] = [];
+      for (const [, tc] of [...toolCallMap.entries()].sort((a, b) => a[0] - b[0])) {
+        const argsStr = tc.argsChunks.join("");
+        let parsed: Record<string, unknown> = {};
+        try {
+          parsed = asRecord(JSON.parse(argsStr));
+        } catch { /* keep empty */ }
+        toolCalls.push({ id: tc.id, name: tc.name, input: parsed });
+      }
+
+      const message: AssistantMessage = {
+        content: contentText.length > 0 ? contentText : null,
+        toolCalls,
+      };
+
+      yield {
+        type: "complete" as const,
+        message,
+        usage: usage ?? { inputTokens: 0, outputTokens: 0 },
+      };
+    });
   }
 
   return { name: "openai", stream };

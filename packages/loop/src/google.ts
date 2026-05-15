@@ -5,8 +5,8 @@ import { DEFAULT_MAX_TOKENS } from "./types.js";
 import type { AssistantMessage, TokenUsage } from "./types.js";
 import type { CompletionParams, LLMProvider, StreamEvent } from "./provider.js";
 
-const MAX_RETRIES = 3;
-const INITIAL_BACKOFF_MS = 1000;
+import { withRetry } from "./retry.js";
+
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503]);
 
 function isRetryable(error: unknown): boolean {
@@ -17,14 +17,6 @@ function isRetryable(error: unknown): boolean {
     return true;
   }
   return false;
-}
-
-async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) { reject(new Error("Aborted")); return; }
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener("abort", () => { clearTimeout(timer); reject(new Error("Aborted")); }, { once: true });
-  });
 }
 
 function systemBlocksToText(blocks: ContentBlock[]): string {
@@ -150,85 +142,66 @@ export function createGoogleProvider(apiKey: string): LLMProvider {
     contents = patchToolResultNames(params.messages, contents);
     const tools = toGeminiTools(params.tools);
 
-    let lastError: unknown;
+    yield* withRetry(isRetryable, params.signal, async function* () {
+      const response = await ai.models.generateContentStream({
+        model: params.model,
+        contents,
+        config: {
+          maxOutputTokens: params.maxTokens ?? DEFAULT_MAX_TOKENS,
+          ...(systemText ? { systemInstruction: systemText } : {}),
+          ...(tools ? { tools } : {}),
+        },
+      });
 
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      if (params.signal?.aborted) return;
+      let contentText = "";
+      const toolCalls: AssistantMessage["toolCalls"] = [];
+      let usage: TokenUsage | null = null;
 
-      if (attempt > 0) {
-        const backoff = INITIAL_BACKOFF_MS * Math.pow(2, attempt - 1) + Math.random() * 500;
-        await sleep(backoff, params.signal);
-      }
+      for await (const chunk of response) {
+        if (params.signal?.aborted) return;
 
-      try {
-        const response = await ai.models.generateContentStream({
-          model: params.model,
-          contents,
-          config: {
-            maxOutputTokens: params.maxTokens ?? DEFAULT_MAX_TOKENS,
-            ...(systemText ? { systemInstruction: systemText } : {}),
-            ...(tools ? { tools } : {}),
-          },
-        });
+        if (chunk.usageMetadata) {
+          usage = {
+            inputTokens: chunk.usageMetadata.promptTokenCount ?? 0,
+            outputTokens: chunk.usageMetadata.candidatesTokenCount ?? 0,
+          };
+        }
 
-        let contentText = "";
-        const toolCalls: AssistantMessage["toolCalls"] = [];
-        let usage: TokenUsage | null = null;
-
-        for await (const chunk of response) {
-          if (params.signal?.aborted) return;
-
-          if (chunk.usageMetadata) {
-            usage = {
-              inputTokens: chunk.usageMetadata.promptTokenCount ?? 0,
-              outputTokens: chunk.usageMetadata.candidatesTokenCount ?? 0,
-            };
-          }
-
-          if (chunk.candidates?.[0]?.content?.parts) {
-            for (const part of chunk.candidates[0].content.parts) {
-              if (part.text) {
-                contentText += part.text;
-                yield { type: "text_delta" as const, text: part.text };
-              }
-              if (part.functionCall) {
-                const callId = part.functionCall.id ?? `call_${toolCalls.length}`;
-                const existing = toolCalls.findIndex((tc) => tc.id === callId);
-                const entry = {
-                  id: callId,
-                  name: part.functionCall.name ?? "",
-                  input: (part.functionCall.args as Record<string, unknown>) ?? {},
-                };
-                if (existing >= 0) {
-                  toolCalls[existing] = entry;
-                } else {
-                  toolCalls.push(entry);
-                }
+        if (chunk.candidates?.[0]?.content?.parts) {
+          for (const part of chunk.candidates[0].content.parts) {
+            if (part.text) {
+              contentText += part.text;
+              yield { type: "text_delta" as const, text: part.text };
+            }
+            if (part.functionCall) {
+              const callId = part.functionCall.id ?? `call_${toolCalls.length}`;
+              const existing = toolCalls.findIndex((tc) => tc.id === callId);
+              const entry = {
+                id: callId,
+                name: part.functionCall.name ?? "",
+                input: (part.functionCall.args as Record<string, unknown>) ?? {},
+              };
+              if (existing >= 0) {
+                toolCalls[existing] = entry;
+              } else {
+                toolCalls.push(entry);
               }
             }
           }
         }
-
-        const message: AssistantMessage = {
-          content: contentText.length > 0 ? contentText : null,
-          toolCalls,
-        };
-
-        yield {
-          type: "complete" as const,
-          message,
-          usage: usage ?? { inputTokens: 0, outputTokens: 0 },
-        };
-        return;
-      } catch (e) {
-        lastError = e;
-        if (!isRetryable(e) || attempt === MAX_RETRIES) {
-          throw e;
-        }
       }
-    }
 
-    throw lastError;
+      const message: AssistantMessage = {
+        content: contentText.length > 0 ? contentText : null,
+        toolCalls,
+      };
+
+      yield {
+        type: "complete" as const,
+        message,
+        usage: usage ?? { inputTokens: 0, outputTokens: 0 },
+      };
+    });
   }
 
   return { name: "google", stream };

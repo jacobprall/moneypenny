@@ -122,9 +122,6 @@ importers:
 
   packages/db:
     dependencies:
-      '@moneypenny/search':
-        specifier: workspace:*
-        version: link:../search
       '@sqliteai/sqlite-ai':
         specifier: ^0.7.56
         version: 0.7.59

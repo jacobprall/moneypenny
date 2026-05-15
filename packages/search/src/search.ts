@@ -1,4 +1,4 @@
-import { sqlError } from "@moneypenny/db/errors";
+import { sqlError, NotIndexedError, isHarmlessIndexError } from "@moneypenny/db/errors";
 import { globMatch } from "@moneypenny/db/glob";
 import type { AgentDB, SearchOptions, SearchResult } from "@moneypenny/db/types";
 import { getWorkspaceHandle } from "@moneypenny/db/workspace";
@@ -119,6 +119,9 @@ function bm25Search(database: import("bun:sqlite").Database, match: string, fetc
       .all(match, fetchLimit) as ChunkRow[];
     return rows.map(rowToResult);
   } catch (e) {
+    if (isHarmlessIndexError(e)) {
+      throw new NotIndexedError("Search index is missing or incomplete.");
+    }
     throw sqlError("hybridSearch (BM25)", e);
   }
 }

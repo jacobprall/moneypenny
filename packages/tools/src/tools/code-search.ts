@@ -299,8 +299,8 @@ export const codeSearchTool: ToolDefinition = {
         }
         return formatHybridResults(results);
       } catch (searchErr) {
-        const errMsg = searchErr instanceof Error ? searchErr.message : String(searchErr);
-        const isHarmless = /no such table|no such column|database.*not/.test(errMsg);
+        // Assume NotIndexedError or missing tables are harmless; we just fallback.
+        const isHarmless = searchErr instanceof Error && searchErr.name === "NotIndexedError";
         const fallback = await grepFallback(context.repoPath, parsed.query, context.db, {
           ...opts,
           signal: context.signal,
@@ -308,6 +308,7 @@ export const codeSearchTool: ToolDefinition = {
         if (isHarmless) {
           return fallback;
         }
+        const errMsg = searchErr instanceof Error ? searchErr.message : String(searchErr);
         return `[warning: index search failed: ${errMsg}]\n${fallback}`;
       }
     } catch (e) {
