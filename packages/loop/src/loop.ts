@@ -9,6 +9,7 @@ import {
 } from "@moneypenny/db";
 import type { HookContext } from "@moneypenny/ctx";
 import type { ToolContext } from "@moneypenny/tools";
+import { createToolServices } from "@moneypenny/tools";
 import { createProvider, type LLMProvider } from "./provider.js";
 import { calculateCost } from "./cost.js";
 import {
@@ -57,6 +58,7 @@ export async function createAgentLoop(config: LoopConfig): Promise<AgentLoop> {
     let sessionCostUsd = getSessionMetrics(db).totalCostUsd;
     let turnCostUsd = 0;
     let iteration = 0;
+    const toolServices = createToolServices(db);
 
     while (iteration < maxIter) {
       iteration++;
@@ -224,7 +226,7 @@ export async function createAgentLoop(config: LoopConfig): Promise<AgentLoop> {
         });
 
         const toolContext: ToolContext = {
-          db,
+          services: toolServices,
           repoPath: config.repoPath,
           workingDir,
           signal: config.signal,

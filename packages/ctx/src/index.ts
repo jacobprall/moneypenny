@@ -19,7 +19,8 @@ export { formatConversation, normalizeToBlocks } from "./format.js";
 
 // Governance pipeline
 export { OperationRegistry, type OperationRegistryOptions, register, get, list, execute, type Operation, type ExecuteOptions } from "./operations.js";
-export { evaluatePolicy, type Policy, type PolicyDecision, type PolicyEffect, type EvaluateContext } from "./policy.js";
+export { evaluatePolicy, type PolicyDecision, type EvaluateContext } from "./policy.js";
+export type { Policy, PolicyEffect } from "@moneypenny/db";
 export { runHooks, getPrePhases, getPostPhases, type HookContext as DbHookContext, type HookResult as DbHookResult } from "./hooks.js";
 export { append as appendGovEvent, query as queryGovEvents, type NewEvent as GovNewEvent, type Event as GovEvent } from "./gov-events.js";
 export type { OperationContext } from "./op-context.js";

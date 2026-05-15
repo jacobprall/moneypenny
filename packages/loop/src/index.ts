@@ -1,4 +1,5 @@
 export { createAgentLoop } from "./loop.js";
+export { createToolServices } from "@moneypenny/tools";
 export { createChildLoopFactory } from "./child-loop.js";
 export type { CreateChildLoopFactoryConfig } from "./child-loop.js";
 export { createProvider, inferProvider } from "./provider.js";

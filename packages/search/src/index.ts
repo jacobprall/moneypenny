@@ -6,8 +6,8 @@ export {
 } from "./indexer";
 export { hybridSearch } from "./search";
 export { getFileTree, getExcludePatterns, getExcludePatternsFromDb } from "./file-tree";
-export { chunkFileContent, languageFromExt, sha256Hex, LANGUAGE_MAP } from "./chunker";
-export type { ChunkPart } from "./chunker";
+export { chunkFileContent, languageFromExt, sha256Hex, LANGUAGE_MAP } from "@moneypenny/db/chunker";
+export type { ChunkPart } from "@moneypenny/db/chunker";
 export { parseGitignoreLines, loadGitRules, gitIgnored } from "./gitignore";
 export type { GitRule } from "./gitignore";
 export { tryStat, mapFileRow } from "./fs-utils";

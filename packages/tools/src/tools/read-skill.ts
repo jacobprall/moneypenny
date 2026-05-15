@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { getSkill, getSkillFile, listSkillFiles } from "@moneypenny/db";
 import type { ToolDefinition } from "../types.js";
 import { truncate } from "../utils.js";
 
@@ -24,9 +23,10 @@ export const readSkillTool: ToolDefinition = {
   inputSchema,
   async execute(input, context): Promise<string> {
     const parsed = input as z.infer<typeof inputSchema>;
+    const { skills } = context.services;
 
     if (!parsed.path) {
-      const skill = getSkill(context.db, parsed.name);
+      const skill = skills.getSkill(parsed.name);
       if (!skill) {
         return `Error: skill "${parsed.name}" not found.`;
       }
@@ -34,20 +34,20 @@ export const readSkillTool: ToolDefinition = {
     }
 
     if (parsed.path === "__list__") {
-      const skill = getSkill(context.db, parsed.name);
+      const skill = skills.getSkill(parsed.name);
       if (!skill) {
         return `Error: skill "${parsed.name}" not found.`;
       }
-      const files = listSkillFiles(context.db, parsed.name);
+      const files = skills.listSkillFiles(parsed.name);
       if (files.length === 0) {
         return `Skill "${parsed.name}" has no supporting files.`;
       }
       return files.join("\n");
     }
 
-    const content = getSkillFile(context.db, parsed.name, parsed.path);
+    const content = skills.getSkillFile(parsed.name, parsed.path);
     if (content === undefined) {
-      const skill = getSkill(context.db, parsed.name);
+      const skill = skills.getSkill(parsed.name);
       if (!skill) {
         return `Error: skill "${parsed.name}" not found.`;
       }

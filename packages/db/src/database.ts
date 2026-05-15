@@ -221,7 +221,43 @@ export function createAgentDBFromBlueprint(
   return createAgentDB(dbPath, { ...opts, blueprint });
 }
 
+/**
+ * Lazily open a read-only SQLite connection to `agent.dbPath` for validated SELECT queries.
+ * Memoized on `agent.queryReadDb`. Safe to call while the primary `agent.db` is writing (WAL).
+ */
+export function ensureAgentQueryReadDb(agent: AgentDB): Database {
+  if (agent.queryReadDb) {
+    return agent.queryReadDb;
+  }
+  let database: Database;
+  try {
+    database = new Database(agent.dbPath, { readonly: true, create: false });
+  } catch (e) {
+    throw sqlError("open read-only query database", e);
+  }
+  try {
+    database.exec(`PRAGMA foreign_keys=ON;`);
+  } catch (e) {
+    try {
+      database.close();
+    } catch {
+      /* ignore */
+    }
+    throw sqlError("configure read-only query PRAGMAs", e);
+  }
+  agent.queryReadDb = database;
+  return database;
+}
+
 export function closeAgentDB(agent: AgentDB): void {
+  if (agent.queryReadDb) {
+    try {
+      agent.queryReadDb.close();
+    } catch {
+      /* best effort */
+    }
+    agent.queryReadDb = undefined;
+  }
   try {
     agent.db.close();
   } catch (e) {

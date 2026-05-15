@@ -88,6 +88,7 @@ async function buildLoop(cfg: ReplConfig, pipeline: ReturnType<typeof createHook
     maxIterations: cfg.maxIterations,
     maxCostPerSession: cfg.maxCostPerSession,
     childLoopFactory: createChildLoopFactory({
+      db: cfg.db,
       model: cfg.model,
       apiKey: cfg.apiKey,
       provider: cfg.provider,

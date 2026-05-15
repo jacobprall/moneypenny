@@ -1,6 +1,5 @@
 import { z } from "zod";
-import { getSkill, getSubagentDef } from "@moneypenny/db";
-import type { ToolDefinition, ToolContext } from "../types.js";
+import type { ToolDefinition } from "../types.js";
 import { truncate } from "../utils.js";
 
 /**
@@ -13,7 +12,6 @@ export interface ChildLoopFactory {
 }
 
 export interface ChildLoopParams {
-  db: ToolContext["db"];
   repoPath: string;
   workingDir: string;
   signal?: AbortSignal;
@@ -55,12 +53,12 @@ export const delegateTool: ToolDefinition = {
     }
     const factory = context.childLoopFactory;
 
-    const subagentDef = getSubagentDef(context.db, parsed.subagent);
+    const subagentDef = context.services.subagents.getSubagentDef(parsed.subagent);
     if (!subagentDef) {
       return `Error: unknown subagent "${parsed.subagent}". Available subagents can be found in the subagent_defs table.`;
     }
 
-    const skill = getSkill(context.db, subagentDef.skill);
+    const skill = context.services.skills.getSkill(subagentDef.skill);
     if (!skill) {
       return `Error: skill "${subagentDef.skill}" referenced by subagent "${parsed.subagent}" not found.`;
     }
@@ -71,7 +69,6 @@ export const delegateTool: ToolDefinition = {
 
     try {
       const result = await factory.run({
-        db: context.db,
         repoPath: context.repoPath,
         workingDir: context.workingDir,
         signal: context.signal,

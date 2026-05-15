@@ -1,9 +1,9 @@
-import type { AgentDB } from "@moneypenny/db";
 import type { AnthropicToolDef } from "@moneypenny/ctx";
 import { z } from "zod";
 import type { ChildLoopFactory } from "./tools/delegate.js";
+import type { ToolServices } from "./services.js";
 
-export type { AgentDB, AnthropicToolDef };
+export type { AnthropicToolDef };
 
 export interface ToolDefinition {
   name: string;
@@ -13,7 +13,7 @@ export interface ToolDefinition {
 }
 
 export interface ToolContext {
-  db: AgentDB;
+  services: ToolServices;
   repoPath: string;
   workingDir: string;
   signal?: AbortSignal;

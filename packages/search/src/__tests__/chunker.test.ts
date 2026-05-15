@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { chunkFileContent, languageFromExt, sha256Hex, LANGUAGE_MAP } from "../chunker";
+import { chunkFileContent, languageFromExt, sha256Hex, LANGUAGE_MAP } from "@moneypenny/db/chunker";
 
 // ---------------------------------------------------------------------------
 // languageFromExt

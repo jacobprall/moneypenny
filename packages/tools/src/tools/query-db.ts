@@ -2,8 +2,6 @@ import { z } from "zod";
 import type { ToolDefinition } from "../types.js";
 import { truncate } from "../utils.js";
 
-const MAX_ROWS = 200;
-
 const SCHEMA_DESCRIPTION = `Run a read-only SELECT against the agent SQLite database. Only SELECT statements are permitted.
 
 ## sessions
@@ -93,13 +91,6 @@ const inputSchema = z.object({
     .describe("Optional positional bind parameters (? placeholders) for the query"),
 });
 
-const ALLOWED_PREFIX = /^\s*(?:--[^\n]*\n\s*)*(SELECT|WITH)\b/i;
-
-function ensureLimit(sql: string): string {
-  if (/\bLIMIT\b/i.test(sql)) return sql;
-  return `${sql.replace(/;\s*$/, "")} LIMIT ${MAX_ROWS}`;
-}
-
 export const queryDbTool: ToolDefinition = {
   name: "query_db",
   description: SCHEMA_DESCRIPTION,
@@ -107,27 +98,12 @@ export const queryDbTool: ToolDefinition = {
   async execute(input, context): Promise<string> {
     try {
       const { query, params } = input as z.infer<typeof inputSchema>;
-
-      if (!ALLOWED_PREFIX.test(query)) {
-        return JSON.stringify({ error: "only SELECT statements are permitted" });
-      }
-
-      const bounded = ensureLimit(query);
-      const db = context.db.db;
       const bindParams = params ?? [];
 
-      db.exec("SAVEPOINT query_db_fence");
       try {
-        const stmt = db.prepare(bounded);
-        const rows = stmt.all(...bindParams) as Record<string, unknown>[];
-        db.exec("ROLLBACK TO query_db_fence");
-        db.exec("RELEASE query_db_fence");
+        const rows = context.services.query.executeReadOnlyQuery(query, bindParams);
         return truncate(JSON.stringify({ rows, row_count: rows.length }));
       } catch (e) {
-        try {
-          db.exec("ROLLBACK TO query_db_fence");
-          db.exec("RELEASE query_db_fence");
-        } catch { /* best effort */ }
         const msg = e instanceof Error ? e.message : String(e);
         return JSON.stringify({ error: msg });
       }

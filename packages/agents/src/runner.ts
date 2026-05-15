@@ -67,7 +67,7 @@ export async function runAgent(options: RunAgentOptions): Promise<{ events: Loop
   const hooks = createHookPipeline([
     costGuard({ maxCostPerSession: maxCostSession, maxCostPerTurn: maxCostTurn }),
     credentialRedactor(),
-    dbPolicyHook({ db: () => agentDb.db }),
+    dbPolicyHook({ db: () => agentDb }),
     ...(config.permissions?.deny?.length
       ? [toolGovernance({ deniedTools: config.permissions.deny })]
       : []),

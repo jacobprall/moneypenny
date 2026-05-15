@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { compactConversation } from "@moneypenny/db";
 import type { ToolDefinition } from "../types.js";
 
 const inputSchema = z.object({
@@ -15,7 +14,7 @@ export const compactConversationTool: ToolDefinition = {
   async execute(input, context): Promise<string> {
     try {
       const { up_to_turn, summary } = input as z.infer<typeof inputSchema>;
-      compactConversation(context.db, up_to_turn, summary);
+      context.services.conversation.compactConversation(up_to_turn, summary);
       return `Compaction recorded up to turn ${up_to_turn}.`;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

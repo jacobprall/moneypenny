@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { reindexFiles } from "@moneypenny/db";
 import type { ToolDefinition } from "../types.js";
 import type { SpawnResult } from "../utils.js";
 import { truncate, spawnWithTimeout, resolveSafePath } from "../utils.js";
@@ -95,10 +94,10 @@ export const gitCommitTool: ToolDefinition = {
       });
       lines.push(formatGitResult(commitResult));
 
-      if (commitResult.exitCode === 0 && context.db.workspace) {
+      if (commitResult.exitCode === 0) {
         try {
           const diffResult = await spawnWithTimeout(
-            ["git", "diff", "--name-only", "HEAD~1", "HEAD"],
+            ["git", "show", "--pretty=format:", "--name-only", "HEAD"],
             { cwd: context.workingDir, signal: context.signal },
           );
           if (diffResult.exitCode === 0) {
@@ -107,7 +106,7 @@ export const gitCommitTool: ToolDefinition = {
               .split("\n")
               .filter(Boolean);
             if (changed.length > 0) {
-              reindexFiles(context.db.workspace, changed);
+              context.services.workspace.reindexFiles(changed);
             }
           }
         } catch {

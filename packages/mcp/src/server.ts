@@ -6,6 +6,7 @@ import {
 } from "@moneypenny/db";
 import { getIndexStatus, hybridSearch, indexCodebase } from "@moneypenny/search";
 import { createToolRegistry, registerBuiltinTools, type ToolContext } from "@moneypenny/tools";
+import { createToolServices } from "@moneypenny/tools";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -270,7 +271,7 @@ function registerRegistryTools(
       { description: tool.description, inputSchema: shape },
       wrapToolHandler(tool.name, async (args) => {
         const ctx: ToolContext = {
-          db,
+          services: createToolServices(db),
           repoPath,
           workingDir: repoPath,
         };

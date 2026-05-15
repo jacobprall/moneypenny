@@ -2,10 +2,9 @@ import path from "node:path";
 import { readdir, lstat } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { z } from "zod";
-import { hybridSearch, getExcludePatterns, DEFAULT_BINARY_EXTENSIONS } from "@moneypenny/search";
 import { globMatch } from "@moneypenny/db";
-import { validateAndRefreshResults } from "@moneypenny/db/workspace";
-import type { AgentDB, SearchOptions, SearchResult } from "@moneypenny/db/types";
+import { DEFAULT_BINARY_EXTENSIONS } from "@moneypenny/search";
+import type { SearchOptions, SearchResult } from "@moneypenny/db/types";
 import type { ToolDefinition } from "../types.js";
 import { truncate, spawnWithTimeout, MAX_FILE_SIZE } from "../utils.js";
 
@@ -109,8 +108,6 @@ function matchesPaths(relPath: string, prefixes?: string[]): boolean {
   });
 }
 
-// ── Ripgrep-based fallback ──────────────────────────────────────────────
-
 interface GrepFallbackOpts {
   limit?: number;
   languages?: string[];
@@ -179,7 +176,6 @@ async function rgFallback(
       signal: opts.signal,
     });
     if (result.timedOut) return null;
-    // rg exits 1 for "no matches" — that's fine
     if (result.exitCode !== 0 && result.exitCode !== 1) return null;
     const limit = opts.limit ?? 20;
     const matches = parseRgOutput(result.stdout, limit);
@@ -189,8 +185,6 @@ async function rgFallback(
     return null;
   }
 }
-
-// ── JS walker fallback (when rg is not installed) ───────────────────────
 
 async function jsGrepFallback(
   repoPath: string,
@@ -235,23 +229,13 @@ async function jsGrepFallback(
   return truncate(matches.join("\n\n"));
 }
 
-// ── Combined fallback: try rg first, fall back to JS walker ─────────────
-
-function loadExcludePatterns(db: AgentDB): string[] {
-  try {
-    return getExcludePatterns(db);
-  } catch {
-    return [];
-  }
-}
-
 async function grepFallback(
   repoPath: string,
   query: string,
-  db: AgentDB,
+  getExcludePatterns: () => string[],
   opts?: Omit<GrepFallbackOpts, "excludePatterns">,
 ): Promise<string> {
-  const excludePatterns = loadExcludePatterns(db);
+  const excludePatterns = getExcludePatterns();
   const fullOpts: GrepFallbackOpts = { ...opts, excludePatterns };
 
   const rgResult = await rgFallback(repoPath, query, fullOpts);
@@ -291,20 +275,20 @@ export const codeSearchTool: ToolDefinition = {
         languages: parsed.languages,
         paths: parsed.paths,
       };
+      const { search } = context.services;
 
       try {
-        let results = hybridSearch(context.db, parsed.query, opts);
-        if (context.db.workspace) {
-          results = validateAndRefreshResults(context.db.workspace, results);
-        }
+        let results = search.hybridSearch(parsed.query, opts);
+        results = search.validateAndRefreshResults(results);
         return formatHybridResults(results);
       } catch (searchErr) {
-        // Assume NotIndexedError or missing tables are harmless; we just fallback.
         const isHarmless = searchErr instanceof Error && searchErr.name === "NotIndexedError";
-        const fallback = await grepFallback(context.repoPath, parsed.query, context.db, {
-          ...opts,
-          signal: context.signal,
-        });
+        const fallback = await grepFallback(
+          context.repoPath,
+          parsed.query,
+          () => search.getExcludePatterns(),
+          { ...opts, signal: context.signal },
+        );
         if (isHarmless) {
           return fallback;
         }

@@ -19,6 +19,11 @@ export interface WorkspaceDB {
 
 export interface AgentDB {
   readonly db: Database;
+  /**
+   * Lazily opened read-only handle to the same file as `db`, for `query_db` and other
+   * parallel-safe reads. Closed by `closeAgentDB`. Do not use for writes or migrations.
+   */
+  queryReadDb?: Database;
   readonly repoPath: string;
   readonly dbPath: string;
   readonly modelLoaded: boolean;

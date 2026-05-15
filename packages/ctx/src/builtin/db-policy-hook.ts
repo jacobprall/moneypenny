@@ -1,4 +1,3 @@
-import type { Database } from "bun:sqlite";
 import { evaluatePolicy, type EvaluateContext } from "../policy.js";
 import type { Hook, HookContext, PreHookResult } from "./types.js";
 

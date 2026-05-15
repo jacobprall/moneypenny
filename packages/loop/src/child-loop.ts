@@ -1,5 +1,6 @@
 import type { ChildLoopFactory, ChildLoopParams, ChildLoopResult, ToolRegistry } from "@moneypenny/tools";
 import { createToolRegistry } from "@moneypenny/tools";
+import { getConversation, type AgentDB } from "@moneypenny/db";
 import {
   definePrompt,
   createHookPipeline,
@@ -7,11 +8,12 @@ import {
   credentialRedactor,
   toolGovernance,
 } from "@moneypenny/ctx";
-import { getConversation } from "@moneypenny/db";
 import { createAgentLoop } from "./loop.js";
 import type { ProviderName, LLMProvider } from "./provider.js";
 
 export interface CreateChildLoopFactoryConfig {
+  /** Shared agent DB for the child loop (conversation, events, compaction). */
+  db: AgentDB;
   model: string;
   apiKey: string;
   /** LLM provider name or pre-built instance. Inherited from parent loop. */
@@ -85,7 +87,7 @@ export function createChildLoopFactory(config: CreateChildLoopFactoryConfig): Ch
       let totalCost = 0;
       let iterations = 0;
 
-      for await (const event of childLoop.run(params.db, params.task)) {
+      for await (const event of childLoop.run(config.db, params.task)) {
         if (event.type === "turn.complete") {
           totalCost += event.cost.costUsd;
           iterations++;

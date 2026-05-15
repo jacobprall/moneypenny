@@ -1,7 +1,7 @@
-import type { Database } from "bun:sqlite";
+import type { AgentDB } from "@moneypenny/db";
 
 export interface OperationContext {
-  db: Database;
+  db: AgentDB;
   actor: string;
   sessionId?: string;
 }
