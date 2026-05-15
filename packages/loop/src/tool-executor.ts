@@ -99,6 +99,7 @@ export async function* executeToolsParallel(
   }
 
   const rejectedIds = new Set<string>();
+  const effectiveInputs = new Map<string, unknown>();
   for (const toolCall of toolCalls) {
     const preToolResult = await cfg.hooks.runPreTool(hookCtx, toolCall.name, toolCall.input);
     if (preToolResult.action === "pause") {
@@ -112,6 +113,10 @@ export async function* executeToolsParallel(
       appendMessage(db, { turn, role: "tool", toolCallId: toolCall.id, content: errorMsg });
       appendEvent(db, { type: "tool.error", payload: { tool: toolCall.name, error: errorMsg }, turn });
       rejectedIds.add(toolCall.id);
+      continue;
+    }
+    if ("input" in preToolResult && preToolResult.input !== undefined) {
+      effectiveInputs.set(toolCall.id, preToolResult.input);
     }
   }
 
@@ -119,8 +124,9 @@ export async function* executeToolsParallel(
   if (executableCalls.length === 0) return;
 
   for (const tc of executableCalls) {
-    yield cfg.onEvent({ type: "tool.calling", name: tc.name, input: tc.input });
-    appendEvent(db, { type: "tool.called", payload: { tool: tc.name, input: tc.input }, turn });
+    const input = effectiveInputs.get(tc.id) ?? tc.input;
+    yield cfg.onEvent({ type: "tool.calling", name: tc.name, input });
+    appendEvent(db, { type: "tool.called", payload: { tool: tc.name, input }, turn });
   }
 
   flushAgentWrites(db);
@@ -128,8 +134,9 @@ export async function* executeToolsParallel(
   const timeoutMs = cfg.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
   const results = await Promise.allSettled(
     executableCalls.map(async (toolCall) => {
+      const input = effectiveInputs.get(toolCall.id) ?? toolCall.input;
       const startMs = Date.now();
-      const output = await executeWithTimeout(cfg.tools, toolCall.name, toolCall.input, toolContext, timeoutMs, cfg.signal);
+      const output = await executeWithTimeout(cfg.tools, toolCall.name, input, toolContext, timeoutMs, cfg.signal);
       const durationMs = Date.now() - startMs;
       return { toolCall, output, durationMs };
     }),
@@ -193,12 +200,15 @@ async function* executeSingleTool(
     return "continue";
   }
 
-  yield cfg.onEvent({ type: "tool.calling", name: toolCall.name, input: toolCall.input });
-  appendEvent(db, { type: "tool.called", payload: { tool: toolCall.name, input: toolCall.input }, turn });
+  const effectiveInput =
+    "input" in preToolResult && preToolResult.input !== undefined ? preToolResult.input : toolCall.input;
+
+  yield cfg.onEvent({ type: "tool.calling", name: toolCall.name, input: effectiveInput });
+  appendEvent(db, { type: "tool.called", payload: { tool: toolCall.name, input: effectiveInput }, turn });
 
   const timeoutMs = cfg.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
   const startMs = Date.now();
-  const output = await executeWithTimeout(cfg.tools, toolCall.name, toolCall.input, toolContext, timeoutMs, cfg.signal);
+  const output = await executeWithTimeout(cfg.tools, toolCall.name, effectiveInput, toolContext, timeoutMs, cfg.signal);
   const durationMs = Date.now() - startMs;
 
   let finalOutput = truncateOutput(output, cfg.maxToolOutputBytes);

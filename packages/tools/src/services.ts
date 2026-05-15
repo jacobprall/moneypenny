@@ -36,6 +36,8 @@ export interface QueryService {
   executeReadOnlyQuery(sql: string, params?: (string | number)[]): Record<string, unknown>[];
 }
 
+import type { ContextCurateService } from "./context-curate-service.js";
+
 export interface ToolServices {
   search: SearchService;
   workspace: WorkspaceService;
@@ -43,4 +45,5 @@ export interface ToolServices {
   subagents: SubagentService;
   conversation: ConversationService;
   query: QueryService;
+  contextCurate: ContextCurateService;
 }

@@ -1,6 +1,7 @@
 import {
   appendEvent,
   appendMessage,
+  getConversation,
   getCurrentTurn,
   getLastEvent,
   getSessionMetrics,
@@ -28,9 +29,26 @@ import {
   type LoopConfig,
   type LoopEvent,
   type ToolCallInfo,
+  type TokenUsage,
 } from "./types.js";
+import { ResearchStrategy, StandardStrategy, type StrategyAction, type StrategyMessage } from "./strategy.js";
 
 import { serializeToolCalls, makeHookCtx, extractTransformed } from "./utils.js";
+
+const DEFAULT_STRATEGY = new StandardStrategy();
+
+function buildStrategyHistory(db: AgentDB, turn: number): StrategyMessage[] {
+  return getConversation(db)
+    .filter((m) => m.turn === turn && m.role !== "system")
+    .map((m) => ({
+      role: m.role as "user" | "assistant" | "tool",
+      content: m.content ?? null,
+    }));
+}
+
+function strategyProgressStatus(action: StrategyAction): string {
+  return action.action;
+}
 
 export async function createAgentLoop(config: LoopConfig): Promise<AgentLoop> {
   const workingDir = config.workingDir ?? config.repoPath;
@@ -54,10 +72,14 @@ export async function createAgentLoop(config: LoopConfig): Promise<AgentLoop> {
     onEvent: notify,
   };
 
+  const strategy = config.strategy ?? DEFAULT_STRATEGY;
+
   async function* runAfterUserMessage(db: AgentDB, turn: number): AsyncGenerator<LoopEvent> {
     let sessionCostUsd = getSessionMetrics(db).totalCostUsd;
     let turnCostUsd = 0;
     let iteration = 0;
+    let exitedEarlyViaStrategy = false;
+    let lastUsage: TokenUsage | null = null;
     const toolServices = createToolServices(db);
 
     while (iteration < maxIter) {
@@ -66,6 +88,16 @@ export async function createAgentLoop(config: LoopConfig): Promise<AgentLoop> {
       if (config.signal?.aborted) {
         yield notify({ type: "error", error: new LoopError("Aborted", "aborted") });
         return;
+      }
+
+      const strategyIdx = iteration - 1;
+      const preAction = strategy.preIteration(strategyIdx, buildStrategyHistory(db, turn));
+      if (preAction.action === "done") {
+        exitedEarlyViaStrategy = true;
+        break;
+      }
+      if (preAction.action === "inject_user_message") {
+        appendMessage(db, { turn, role: "user", content: preAction.message });
       }
 
       let assembled;
@@ -109,13 +141,18 @@ export async function createAgentLoop(config: LoopConfig): Promise<AgentLoop> {
         return;
       }
 
+      const systemForLlm =
+        preResult.injectedContext?.trim().length ?
+          [{ type: "text" as const, text: preResult.injectedContext.trim() }, ...assembled.system]
+        : assembled.system;
+
       let assistantMsg: AssistantMessage | null = null;
       let usage = null;
 
       try {
         for await (const event of provider.stream({
           model: config.model,
-          system: assembled.system,
+          system: systemForLlm,
           messages: assembled.messages,
           tools: assembled.tools,
           maxTokens: config.maxTokens,
@@ -138,6 +175,8 @@ export async function createAgentLoop(config: LoopConfig): Promise<AgentLoop> {
         yield notify({ type: "error", error: new LoopError("LLM returned no response", "llm_empty_response") });
         return;
       }
+
+      lastUsage = usage;
 
       const iterationCost = calculateCost(config.model, usage);
       turnCostUsd += iterationCost;
@@ -251,6 +290,30 @@ export async function createAgentLoop(config: LoopConfig): Promise<AgentLoop> {
         costUsd: iterationCost,
       });
 
+      const postAction = strategy.postIteration(strategyIdx, assistantText ?? null, buildStrategyHistory(db, turn));
+
+      if (strategy instanceof ResearchStrategy) {
+        yield notify({
+          type: "strategy.progress",
+          strategy: "research",
+          iteration,
+          maxIterations: strategy.maxIterations,
+          findingsCount: strategy.findingsCount,
+          status: strategyProgressStatus(postAction),
+        });
+      }
+
+      if (postAction.action === "inject_user_message") {
+        appendMessage(db, { turn, role: "user", content: postAction.message });
+        continue;
+      }
+
+      if (postAction.action === "continue") {
+        continue;
+      }
+
+      strategy.finalize();
+
       appendEvent(db, { type: "turn.complete", payload: { costUsd: turnCostUsd }, turn });
 
       yield notify({
@@ -266,6 +329,29 @@ export async function createAgentLoop(config: LoopConfig): Promise<AgentLoop> {
         },
       });
 
+      return;
+    }
+
+    if (exitedEarlyViaStrategy) {
+      strategy.finalize();
+      const u = lastUsage ?? {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadInputTokens: 0,
+      };
+      appendEvent(db, { type: "turn.complete", payload: { costUsd: turnCostUsd }, turn });
+      yield notify({
+        type: "turn.complete",
+        turn,
+        cost: {
+          model: config.model,
+          inputTokens: u.inputTokens,
+          outputTokens: u.outputTokens,
+          cachedInputTokens: u.cacheReadInputTokens ?? 0,
+          costUsd: turnCostUsd,
+          turnNumber: turn,
+        },
+      });
       return;
     }
 

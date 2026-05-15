@@ -2,6 +2,7 @@ import type { AgentDB } from "@moneypenny/db";
 import type { HookPipeline, Prompt } from "@moneypenny/ctx";
 import type { ToolRegistry, ChildLoopFactory } from "@moneypenny/tools";
 import type { ProviderName, LLMProvider } from "./provider.js";
+import type { IterationStrategy } from "./strategy.js";
 
 export const DEFAULT_MAX_ITERATIONS = 25;
 export const DEFAULT_MAX_TOKENS = 16_384;
@@ -36,6 +37,7 @@ export interface LoopConfig {
   signal?: AbortSignal;
   onEvent?: (event: LoopEvent) => void;
   childLoopFactory?: ChildLoopFactory;
+  strategy?: IterationStrategy;
 }
 
 export type LoopEvent =
@@ -46,6 +48,14 @@ export type LoopEvent =
   | { type: "tool.complete"; name: string; output: string; durationMs: number }
   | { type: "tool.error"; name: string; error: string }
   | { type: "turn.complete"; turn: number; cost: CostInfo }
+  | {
+      type: "strategy.progress";
+      strategy: string;
+      iteration: number;
+      maxIterations: number;
+      findingsCount: number;
+      status: string;
+    }
   | { type: "error"; error: LoopError }
   | { type: "paused"; reason: string };
 

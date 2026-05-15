@@ -9,6 +9,7 @@ import {
 import { hybridSearch, getExcludePatterns } from "@moneypenny/search";
 import { reindexFile, reindexFiles, validateAndRefreshResults } from "@moneypenny/db/workspace";
 import type { ToolServices } from "./services.js";
+import { createContextCurateService } from "./context-curate-service.js";
 
 const QUERY_MAX_ROWS = 200;
 const ALLOWED_SQL_PREFIX = /^\s*(?:--[^\n]*\n\s*)*(SELECT|WITH)\b/i;
@@ -92,5 +93,7 @@ export function createToolServices(db: AgentDB): ToolServices {
         });
       },
     },
+
+    contextCurate: createContextCurateService(db),
   };
 }

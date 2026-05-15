@@ -14,6 +14,12 @@ export type {
   ToolCallInfo,
   TokenUsage,
 } from "./types.js";
+export type {
+  IterationStrategy,
+  StrategyAction,
+  StrategyOutput,
+} from "./strategy.js";
+export { StandardStrategy, ResearchStrategy } from "./strategy.js";
 export {
   LoopError,
   CostLimitError,

@@ -1,6 +1,7 @@
 /**
- * Hook execution — run pre/post hooks from DB.
- * Hooks sync via CRDT; phases: pre:validation, pre:injection, post:transform, etc.
+ * @deprecated Database hook execution historically used `Function()` for scripts. Use declarative
+ * hooks (`loadDeclarativeHooks` / `createHookPipelineWithDeclarative`) and the built-in
+ * `HookPipeline` instead. This module remains for backward compatibility with older `hooks` rows.
  */
 
 import type { AgentDB } from "@moneypenny/db";
@@ -117,6 +118,10 @@ function runHookScript(script: string, ctx: HookContext): HookResult {
   return { action: "continue" };
 }
 
+/**
+ * @deprecated Prefer declarative hooks loaded into `HookPipeline` via `createHookPipelineWithDeclarative`.
+ * This path evaluates legacy `Function()` hook scripts from the database.
+ */
 export function runHooks(
   db: AgentDB,
   phase: string,

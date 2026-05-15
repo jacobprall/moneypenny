@@ -27,7 +27,22 @@ export type { OperationContext } from "./op-context.js";
 
 // Built-in hook pipeline
 export type { Hook, HookPipeline, HookContext, PreHookResult, PostHookResult, CostGuardConfig, RedactorConfig, GovernanceConfig, ConfirmationConfig } from "./builtin/types.js";
-export { createHookPipeline, type PipelineOptions } from "./builtin/pipeline.js";
+export {
+  createHookPipeline,
+  createHookPipelineWithDeclarative,
+  type PipelineOptions,
+} from "./builtin/pipeline.js";
+export type {
+  DeclarativeHook,
+  HookCondition,
+  HookAction,
+} from "./declarative-hooks.js";
+export {
+  evaluateCondition,
+  executeAction,
+  loadDeclarativeHooks,
+  declarativeHookToHook,
+} from "./declarative-hooks.js";
 export { costGuard } from "./builtin/cost-guard.js";
 export { credentialRedactor } from "./builtin/credential-redactor.js";
 export { toolGovernance } from "./builtin/tool-governance.js";

@@ -2,6 +2,7 @@ import type { ToolRegistry } from "./types.js";
 import { bashTool } from "./tools/bash.js";
 import { codeSearchTool } from "./tools/code-search.js";
 import { compactConversationTool } from "./tools/compact-conversation.js";
+import { contextCurateTool } from "./tools/context-curate.js";
 import { delegateTool } from "./tools/delegate.js";
 import { fileEditTool } from "./tools/file-edit.js";
 import { fileReadTool } from "./tools/file-read.js";
@@ -28,6 +29,7 @@ export function registerBuiltinTools(registry: ToolRegistry): void {
   registry.register(delegateTool);
   registry.register(readSkillTool);
   registry.register(queryDbTool);
+  registry.register(contextCurateTool);
   registry.register(webFetchTool);
   registry.register(webSearchTool);
 }

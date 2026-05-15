@@ -20,6 +20,8 @@ export interface RunAgentOptions {
   agentId: string;
   apiKey: string;
   model?: string;
+  /** When set, used as the user message instead of the default turn text. */
+  userTurn?: string;
 }
 
 export async function runAgent(options: RunAgentOptions): Promise<{ events: LoopEvent[] }> {
@@ -84,7 +86,7 @@ export async function runAgent(options: RunAgentOptions): Promise<{ events: Loop
   });
 
   const events: LoopEvent[] = [];
-  const userTurn = "Proceed with the above instructions.";
+  const userTurn = options.userTurn ?? "Proceed with the above instructions.";
   for await (const event of loop.run(agentDb, userTurn)) {
     events.push(event);
   }

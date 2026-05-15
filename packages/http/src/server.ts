@@ -10,9 +10,12 @@ import { evaluatePolicy } from "@moneypenny/ctx";
 import { getSyncStatus, initSyncTables } from "@moneypenny/cloud";
 import { createRequireDbMiddleware, createTokenAuthMiddleware, zodErrorMessage, type HttpVars } from "./middleware.js";
 import type { CreateHttpAppOptions } from "./types.js";
+import type { ShutdownManager } from "./shutdown.js";
+import { createShutdownManager } from "./shutdown.js";
 import { createAgentsRouter } from "./routes/agents.js";
 import { createSessionsRouter } from "./routes/sessions.js";
 import { createEventsRouter } from "./routes/events.js";
+import { createJobsRouter } from "./routes/jobs.js";
 
 const SearchBody = z.object({
   query: z.string().min(1),
@@ -52,7 +55,7 @@ export function createHttpApp(opts: CreateHttpAppOptions): Hono<{ Variables: Htt
     return c.json({
       name: "moneypenny",
       service: "http",
-      endpoints: ["/health", "/api/events", "/api/sessions", "/api/agents", "/api/policies", "/api/status", "/api/search", "/api/policy/evaluate"],
+      endpoints: ["/health", "/api/events", "/api/sessions", "/api/agents", "/api/jobs", "/api/policies", "/api/status", "/api/search", "/api/policy/evaluate"],
     });
   });
 
@@ -167,6 +170,7 @@ export function createHttpApp(opts: CreateHttpAppOptions): Hono<{ Variables: Htt
 
   app.route("/api", api);
   app.route("/api", createAgentsRouter(opts));
+  app.route("/api", createJobsRouter(opts));
   app.route("/api", createSessionsRouter(opts.getDb));
   app.route("/api", createEventsRouter(opts.getDb));
 
@@ -199,12 +203,40 @@ export function createHttpApp(opts: CreateHttpAppOptions): Hono<{ Variables: Htt
   return app;
 }
 
-export function serveHttp(port: number, opts: CreateHttpAppOptions): { server: ReturnType<typeof Bun.serve>; port: number } {
+export function serveHttp(
+  port: number,
+  opts: CreateHttpAppOptions,
+): { server: ReturnType<typeof Bun.serve>; port: number; shutdownManager: ShutdownManager } {
   const app = createHttpApp(opts);
+  const shutdownManager = createShutdownManager();
+
   const server = Bun.serve({
     fetch: app.fetch,
     port,
     hostname: "127.0.0.1",
   });
-  return { server, port: server.port ?? port };
+
+  shutdownManager.register(
+    "http-server",
+    async () => {
+      server.stop(true);
+    },
+    80,
+  );
+
+  const onSignal = (signal: string) => {
+    void shutdownManager
+      .shutdown(`Received ${signal}`)
+      .then(() => {
+        process.exit(0);
+      })
+      .catch(() => {
+        process.exit(1);
+      });
+  };
+
+  process.on("SIGTERM", () => onSignal("SIGTERM"));
+  process.on("SIGINT", () => onSignal("SIGINT"));
+
+  return { server, port: server.port ?? port, shutdownManager };
 }

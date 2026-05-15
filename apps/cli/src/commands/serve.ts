@@ -2,7 +2,7 @@ import { Command } from "commander";
 import * as path from "node:path";
 import { createAgentDB, closeAgentDB, closeWorkspaceDB, DEFAULT_BLUEPRINT, syncPolicyFiles } from "@moneypenny/db";
 import { createHttpApp } from "@moneypenny/http";
-import { scan, startScheduler } from "@moneypenny/agents";
+import { scan, startScheduler, syncJobFiles } from "@moneypenny/agents";
 import { startBackgroundSync, initSyncTables } from "@moneypenny/cloud";
 import { getBlueprintsDir, getDbPath, openWorkspace } from "../session";
 
@@ -22,6 +22,7 @@ export const serveCommand = new Command("serve")
     });
     const blueprintsDir = getBlueprintsDir(repoPath);
     scan({ agentDb, blueprintsDir });
+    syncJobFiles(agentDb, path.join(repoPath, ".mp", "jobs"));
     syncPolicyFiles(agentDb, path.join(repoPath, ".mp", "policies"));
     try {
       initSyncTables(agentDb.db);

@@ -1,3 +1,5 @@
+import type { AgentDB } from "@moneypenny/db";
+import { declarativeHookToHook, loadDeclarativeHooks } from "../declarative-hooks.js";
 import type {
   Hook,
   HookContext,
@@ -31,11 +33,12 @@ function withTimeout<T>(promise: Promise<T>, ms: number, hookName: string): Prom
   });
 }
 
-async function runSimplePhase(
+async function runPreLLMPhase(
   hooks: Hook[],
   invoke: (hook: Hook) => Promise<PreHookResult> | undefined,
   timeoutMs: number,
 ): Promise<PreHookResult> {
+  const injections: string[] = [];
   for (const hook of hooks) {
     const promise = invoke(hook);
     if (!promise) continue;
@@ -47,8 +50,40 @@ async function runSimplePhase(
       return { action: "reject", reason: `Hook "${hook.name}" failed: ${msg}` };
     }
     if (isShortCircuit(result)) return result;
+    if (result.action === "continue" && result.injectedContext?.trim()) {
+      injections.push(result.injectedContext.trim());
+    }
   }
-  return { action: "continue" };
+  return injections.length > 0
+    ? { action: "continue", injectedContext: injections.join("\n\n") }
+    : { action: "continue" };
+}
+
+async function runPreToolPhase(
+  hooks: Hook[],
+  invoke: (hook: Hook, input: unknown) => Promise<PreHookResult> | undefined,
+  initialInput: unknown,
+  timeoutMs: number,
+): Promise<PreHookResult> {
+  let currentInput = initialInput;
+  let replaced = false;
+  for (const hook of hooks) {
+    const promise = invoke(hook, currentInput);
+    if (!promise) continue;
+    let result: PreHookResult;
+    try {
+      result = await withTimeout(promise, timeoutMs, hook.name);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { action: "reject", reason: `Hook "${hook.name}" failed: ${msg}` };
+    }
+    if (isShortCircuit(result)) return result;
+    if (result.action === "continue" && "input" in result && result.input !== undefined) {
+      currentInput = result.input;
+      replaced = true;
+    }
+  }
+  return replaced ? { action: "continue", input: currentInput } : { action: "continue" };
 }
 
 async function runTransformPhase(
@@ -85,7 +120,7 @@ export function createHookPipeline(hooks: Hook[], options?: PipelineOptions): Ho
 
   return {
     runPreLLM(context: HookContext) {
-      return runSimplePhase(hooks, (h) => h.preLLM?.(context), timeoutMs);
+      return runPreLLMPhase(hooks, (h) => h.preLLM?.(context), timeoutMs);
     },
     runPostLLM(context: HookContext, responseText: string) {
       return runTransformPhase(
@@ -96,7 +131,12 @@ export function createHookPipeline(hooks: Hook[], options?: PipelineOptions): Ho
       );
     },
     runPreTool(context: HookContext, toolName: string, input: unknown) {
-      return runSimplePhase(hooks, (h) => h.preTool?.(context, toolName, input), timeoutMs);
+      return runPreToolPhase(
+        hooks,
+        (h, inp) => h.preTool?.(context, toolName, inp),
+        input,
+        timeoutMs,
+      );
     },
     runPostTool(context: HookContext, toolName: string, output: string) {
       return runTransformPhase(
@@ -107,4 +147,17 @@ export function createHookPipeline(hooks: Hook[], options?: PipelineOptions): Ho
       );
     },
   };
+}
+
+export function createHookPipelineWithDeclarative(
+  codeHooks: Hook[],
+  db: AgentDB,
+  options?: PipelineOptions,
+): HookPipeline {
+  const declarativeHooks = loadDeclarativeHooks(db);
+  const converted = declarativeHooks.map(declarativeHookToHook);
+  const allHooks = [...codeHooks, ...converted].sort(
+    (a, b) => (b.priority ?? 0) - (a.priority ?? 0),
+  );
+  return createHookPipeline(allHooks, options);
 }

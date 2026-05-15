@@ -8,7 +8,7 @@ export interface HookContext {
 }
 
 export type PreHookResult =
-  | { action: "continue" }
+  | { action: "continue"; input?: unknown; injectedContext?: string }
   | { action: "reject"; reason: string }
   | { action: "pause"; reason: string };
 
@@ -23,6 +23,8 @@ export type HookResult = PostHookResult;
 
 export interface Hook {
   name: string;
+  /** Higher runs first when using createHookPipelineWithDeclarative merge sort. Default: 0. */
+  priority?: number;
   preLLM?: (context: HookContext) => Promise<PreHookResult>;
   postLLM?: (
     context: HookContext,
