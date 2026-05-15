@@ -219,15 +219,19 @@ export function printBanner(opts: {
 
   process.stdout.write("\n");
 
+  const spacedTitle = "M O N E Y P E N N Y";
+
   if (t.id === "phosphor") {
     const modelRaw = opts.provider && opts.provider !== "anthropic"
       ? `${opts.model} (${opts.provider})`
       : opts.model;
+    const title = `${spacedTitle}  v${opts.version}`;
+    const tag = "TERMINAL ACTIVE";
     const contentWidths = [
       9 + modelRaw.length,
       9 + repo.length,
       9 + opts.session.length,
-      30 + opts.version.length,
+      title.length + 2 + tag.length,
     ];
     const W = Math.max(48, Math.max(...contentWidths) + 6);
 
@@ -239,20 +243,18 @@ export function printBanner(opts: {
       `  ${chrome("│")} ${pad(content, rawLen)} ${chrome("│")}`;
 
     process.stdout.write(top + "\n");
-    const title = `MONEYPENNY v${opts.version}`;
-    const tag = "TERMINAL ACTIVE";
-    const titleRow = `${accent(title)}${" ".repeat(Math.max(1, W - 4 - title.length - tag.length))}${chrome(tag)}`;
+    const titleRow = `${accent(`${spacedTitle}  `)}${chrome(`v${opts.version}`)}${" ".repeat(Math.max(1, W - 4 - title.length - tag.length))}${chrome(tag)}`;
     process.stdout.write(row(titleRow, W - 4) + "\n");
     process.stdout.write(row(`${chrome("MODEL:")}   ${modelDisplay}`, 9 + modelRaw.length) + "\n");
     process.stdout.write(row(`${chrome("PATH:")}    ${repo}`, 9 + repo.length) + "\n");
     process.stdout.write(row(`${chrome("SESSION:")} ${opts.session}`, 9 + opts.session.length) + "\n");
     process.stdout.write(bot + "\n");
   } else if (t.id === "arcade") {
-    const title = " M  O  N  E  Y  P  E  N  N  Y ";
+    const title = ` ${spacedTitle} `;
     process.stdout.write(`  ${chrome("░▒▓")}${accent(title)}${chrome("▓▒░")}  ${chrome(`v${opts.version}`)}\n`);
     process.stdout.write(`  ${modelDisplay} ${sep} ${repo}\n`);
   } else {
-    process.stdout.write(`  ${bold(accent("moneypenny"))} ${chrome(`v${opts.version}`)}\n`);
+    process.stdout.write(`  ${bold(accent(spacedTitle))} ${chrome(`v${opts.version}`)}\n`);
     process.stdout.write(`  ${modelDisplay} ${sep} ${repo} ${sep} ${chrome(opts.session)}\n`);
     process.stdout.write(`  ${chrome("/help for commands")} ${sep} ${chrome("/exit to quit")}\n`);
   }

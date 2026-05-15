@@ -162,13 +162,13 @@ export const chatCommand = new Command("chat")
         ];
 
         const userSkillsDir = path.join(repoPath, ".mp", "skills");
-        const bundledSkillsDir = path.resolve(import.meta.dir, "../../../packages/skills/bundled");
+        const bundledSkillsDir = path.resolve(import.meta.dir, "../../../../packages/skills/bundled");
         scanSkillDirs(db, [
           { dir: bundledSkillsDir, source: "builtin" },
           { dir: userSkillsDir, source: "user" },
         ]);
 
-        syncPolicyFiles(db, path.join(repoPath, ".mp", "policies"));
+        syncPolicyFiles(db, path.join(repoPath, ".mp", "policies"), { only: [] });
 
         const prompt = createDefaultPrompt(toolDefs);
 

@@ -1,3 +1,4 @@
+import type { Interface as ReadlineInterface } from "node:readline";
 import { inferProvider, type ProviderName } from "@moneypenny/loop";
 import {
   compactConversation,
@@ -22,6 +23,7 @@ import { availableProviders, writeGlobalConfigKey } from "./config.js";
 import { listAgentDefs } from "./session.js";
 import { timeAgo } from "./pickers.js";
 import { getTheme, setTheme, isThemeName, THEME_NAMES, THEMES } from "./theme.js";
+import { interactiveSelect } from "./select.js";
 
 interface ModelEntry {
   id: string;
@@ -47,6 +49,8 @@ const MODEL_CATALOG: ModelEntry[] = [
 export interface SlashContext {
   db: AgentDB;
   repoPath: string;
+  rl: ReadlineInterface;
+  activeModel: string;
 }
 
 export type SlashResult =
@@ -83,7 +87,7 @@ export async function handleSlashCommand(
     }
     case "sessions":
     case "session": {
-      return handleSessionCommand(db, argRest);
+      return handleSessionCommand(db, argRest, ctx);
     }
     case "agents":
     case "agent": {
@@ -139,10 +143,10 @@ export async function handleSlashCommand(
       break;
     }
     case "model": {
-      return handleModelCommand(argRest);
+      return handleModelCommand(argRest, ctx);
     }
     case "theme": {
-      return handleThemeCommand(argRest);
+      return handleThemeCommand(argRest, ctx);
     }
     default:
       printError(`Unknown command /${cmd}. Type /help.`);
@@ -150,9 +154,10 @@ export async function handleSlashCommand(
   }
 }
 
-function handleModelCommand(
+async function handleModelCommand(
   argRest: string,
-): { switchModel: { model: string; provider: ProviderName } } | void {
+  ctx: SlashContext,
+): Promise<{ switchModel: { model: string; provider: ProviderName } } | void> {
   const available = availableProviders();
   const filtered = MODEL_CATALOG.filter((m) => available.includes(m.provider));
 
@@ -196,22 +201,24 @@ function handleModelCommand(
     return;
   }
 
+  const initialIndex = Math.max(0, filtered.findIndex((m) => m.id === ctx.activeModel));
+  const options = filtered.map((entry) => ({
+    label: entry.label,
+    value: entry,
+    hint: `${entry.id} · ${entry.provider}`,
+  }));
+
   process.stdout.write("\n");
-  let currentProvider: ProviderName | null = null;
-  for (let i = 0; i < filtered.length; i++) {
-    const entry = filtered[i]!;
-    if (entry.provider !== currentProvider) {
-      currentProvider = entry.provider;
-      process.stdout.write(`  ${bold(currentProvider)}\n`);
-    }
-    process.stdout.write(`    ${muted(String(i + 1) + ".")} ${entry.label} ${muted(`(${entry.id})`)}\n`);
-  }
-  process.stdout.write(`\n  ${muted("/model <name|#> to switch")}\n\n`);
+  const picked = await interactiveSelect(options, { initialIndex, rl: ctx.rl });
+  if (!picked || picked.id === ctx.activeModel) return;
+
+  printInfo(`  Switching to ${accent(picked.label)} ${muted(`(${picked.id})`)}`);
+  return { switchModel: { model: picked.id, provider: picked.provider } };
 }
 
 // ── /theme ──────────────────────────────────────────────────────────────
 
-function handleThemeCommand(argRest: string): void {
+async function handleThemeCommand(argRest: string, ctx: SlashContext): Promise<void> {
   if (argRest) {
     const name = argRest.toLowerCase();
     if (!isThemeName(name)) {
@@ -225,21 +232,29 @@ function handleThemeCommand(argRest: string): void {
   }
 
   const current = getTheme();
+  const options = THEME_NAMES.map((name) => ({
+    label: THEMES[name]!.label,
+    value: name,
+    hint: THEMES[name]!.id === current.id ? "(active)" : undefined,
+  }));
+  const initialIndex = THEME_NAMES.indexOf(current.id);
+
   process.stdout.write("\n");
-  for (const name of THEME_NAMES) {
-    const t = THEMES[name];
-    const marker = t.id === current.id ? accent("●") : muted("○");
-    process.stdout.write(`    ${marker} ${t.label}${t.id === current.id ? muted(" (active)") : ""}\n`);
-  }
-  process.stdout.write(`\n  ${muted("/theme <name> to switch")}\n\n`);
+  const picked = await interactiveSelect(options, { initialIndex, rl: ctx.rl });
+  if (!picked || picked === current.id) return;
+
+  setTheme(picked);
+  writeGlobalConfigKey("theme", picked);
+  printInfo(`  Switched to ${accent(THEMES[picked]!.label)} theme`);
 }
 
 // ── /session ─────────────────────────────────────────────────────────────
 
-function handleSessionCommand(
+async function handleSessionCommand(
   db: AgentDB,
   argRest: string,
-): SlashResult {
+  ctx: SlashContext,
+): Promise<SlashResult> {
   const sessions = listSessions(db);
 
   if (argRest === "new" || argRest === "fresh") {
@@ -277,16 +292,26 @@ function handleSessionCommand(
     return;
   }
 
+  type SessionChoice = { sessionId: string } | "new";
+  const sep = muted("·");
+  const options = sessions.map((s) => ({
+    label: s.label ?? "(unlabeled)",
+    value: { sessionId: s.id } as SessionChoice,
+    hint: `${String(s.turns)} turns ${sep} $${s.costUsd.toFixed(2)} ${sep} ${timeAgo(s.lastActiveAt)}`,
+  }));
+  options.push({ label: "New session", value: "new" as SessionChoice });
+
+  const initialIndex = Math.max(0, sessions.findIndex((s) => s.id === db.activeSessionId));
+
   process.stdout.write("\n");
-  for (let i = 0; i < sessions.length; i++) {
-    const s = sessions[i]!;
-    const label = s.label ?? muted("(unlabeled)");
-    const active = s.id === db.activeSessionId ? accent(" ←") : "";
-    const sep = muted("·");
-    const info = `${String(s.turns)} turns ${sep} $${s.costUsd.toFixed(2)} ${sep} ${timeAgo(s.lastActiveAt)}`;
-    process.stdout.write(`    ${muted(String(i + 1) + ".")} ${label}  ${info}${active}\n`);
-  }
-  process.stdout.write(`\n  ${muted("/session <#|id> to switch · /session new to start fresh")}\n\n`);
+  const picked = await interactiveSelect(options, { initialIndex, rl: ctx.rl });
+  if (!picked) return;
+
+  if (picked === "new") return { newSession: true };
+
+  const label = sessions.find((s) => s.id === picked.sessionId)?.label ?? picked.sessionId.slice(0, 8);
+  printInfo(`  Switching to session ${accent(label)}`);
+  return { switchSession: picked };
 }
 
 // ── /agent ───────────────────────────────────────────────────────────────

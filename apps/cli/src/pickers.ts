@@ -10,6 +10,7 @@ import { bold, muted } from "./display.js";
 import { getTheme } from "./theme.js";
 import { listAgentDefs, openAgent } from "./session.js";
 import type { WorkspaceDB } from "@moneypenny/db";
+import { interactiveSelect } from "./select.js";
 
 export function ask(rl: readline.Interface, prompt: string): Promise<string> {
   return new Promise((resolve) => rl.question(prompt, resolve));
@@ -33,17 +34,15 @@ export async function pickAgentDef(
     return { name: "default", description: "General-purpose coding assistant", filePath: "" };
   }
 
-  process.stdout.write(`\n  ${bold("Available agents:")}\n\n`);
-  for (let i = 0; i < defs.length; i++) {
-    const d = defs[i]!;
-    const desc = d.description ? muted(d.description) : "";
-    process.stdout.write(`    ${muted(String(i + 1) + ".")} ${d.name} ${desc}\n`);
-  }
+  const options = defs.map((d) => ({
+    label: d.name,
+    value: d,
+    hint: d.description,
+  }));
 
-  const ans = await ask(rl, `\n  Select agent ${muted(`[1]`)}: `);
-  const idx = parseInt(ans.trim(), 10);
-  if (idx >= 1 && idx <= defs.length) return defs[idx - 1]!;
-  return defs[0]!;
+  process.stdout.write(`\n  ${bold("Available agents:")}\n\n`);
+  const picked = await interactiveSelect(options, { rl });
+  return picked ?? defs[0]!;
 }
 
 export async function pickSession(
@@ -53,28 +52,26 @@ export async function pickSession(
   if (sessions.length === 0) return { action: "fresh" };
 
   const t = getTheme();
-  process.stdout.write(`\n  ${bold(t.sessionHeader)}\n\n`);
-  for (let i = 0; i < sessions.length; i++) {
-    const s = sessions[i]!;
-    const label = s.label ?? muted("unlabeled");
-    const meta = [
+  const sep = muted("·");
+
+  type SessionChoice = { action: "resume"; sessionId: string } | { action: "fresh" };
+  const options = sessions.map((s, i) => ({
+    label: s.label ?? "unlabeled",
+    value: { action: "resume" as const, sessionId: s.id } as SessionChoice,
+    hint: [
       `${String(s.turns)} turn${s.turns === 1 ? "" : "s"}`,
       timeAgo(s.lastActiveAt),
-    ].join(` ${muted("·")} `);
-    const marker = i === 0 ? ` ${muted(t.sessionLatest)}` : "";
-    process.stdout.write(`    ${muted(String(i + 1) + ".")} ${label}  ${muted(meta)}${marker}\n`);
-  }
+      ...(i === 0 ? [t.sessionLatest] : []),
+    ].join(` ${sep} `),
+  }));
+  options.push({
+    label: t.sessionFreshLabel,
+    value: { action: "fresh" as const } as SessionChoice,
+  });
 
-  process.stdout.write(`\n  ${muted("Enter # to resume, or")} ${bold("f")} ${muted(t.sessionFreshLabel)}\n`);
-  const ans = await ask(rl, `  ${muted(">")} `);
-  const trimmed = ans.trim().toLowerCase();
-
-  if (trimmed === "f" || trimmed === "fresh") return { action: "fresh" };
-
-  const idx = parseInt(trimmed, 10);
-  if (idx >= 1 && idx <= sessions.length) return { action: "resume", sessionId: sessions[idx - 1]!.id };
-
-  return { action: "resume", sessionId: sessions[0]!.id };
+  process.stdout.write(`\n  ${bold(t.sessionHeader)}\n\n`);
+  const picked = await interactiveSelect(options, { rl });
+  return picked ?? { action: "resume", sessionId: sessions[0]!.id };
 }
 
 export interface ResolvedAgent {

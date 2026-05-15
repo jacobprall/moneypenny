@@ -153,7 +153,7 @@ export async function runRepl(cfg: ReplConfig): Promise<void> {
   let activeAgentName = cfg.agentName;
 
   const activeDb = cfg.db;
-  const slashCtx: SlashContext = { db: activeDb, repoPath: cfg.repoPath };
+  const slashCtx: SlashContext = { db: activeDb, repoPath: cfg.repoPath, rl, activeModel };
 
   function sessionLabel(): string {
     const session = getActiveSession(activeDb);
@@ -177,6 +177,7 @@ export async function runRepl(cfg: ReplConfig): Promise<void> {
     provider: activeProvider,
     apiKey: activeApiKey,
     localGen,
+    activeSessionId: activeDb.activeSessionId,
   });
 
   try {
@@ -202,6 +203,7 @@ export async function runRepl(cfg: ReplConfig): Promise<void> {
               activeModel = newConfig.model;
               activeProvider = newConfig.provider;
               activeApiKey = newConfig.apiKey;
+              slashCtx.activeModel = activeModel;
               loop = await buildLoop({
                 ...cfg,
                 db: activeDb,
@@ -241,6 +243,16 @@ export async function runRepl(cfg: ReplConfig): Promise<void> {
     renderer.stop();
     rl.close();
     await maybeExtractKnowledge({ ...cfg, db: activeDb }, localGen);
+    // Also run auto-label on exit to label the session we just finished
+    await runAutoLabel({
+      repoPath: cfg.repoPath,
+      model: activeModel,
+      provider: activeProvider,
+      apiKey: activeApiKey,
+      localGen,
+      // Pass undefined so it doesn't skip the session we just finished
+      activeSessionId: undefined,
+    });
     localGen.close();
   }
 }
@@ -274,5 +286,12 @@ export async function runPiped(cfg: ReplConfig): Promise<void> {
     process.exitCode = 1;
   } finally {
     await maybeExtractKnowledge(cfg);
+    await runAutoLabel({
+      repoPath: cfg.repoPath,
+      model: cfg.model,
+      provider: cfg.provider,
+      apiKey: cfg.apiKey,
+      activeSessionId: undefined,
+    });
   }
 }

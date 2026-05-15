@@ -2,11 +2,12 @@ import path from "node:path";
 import { readdir, lstat } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { z } from "zod";
-import { hybridSearch } from "@moneypenny/search";
+import { hybridSearch, getExcludePatterns, DEFAULT_BINARY_EXTENSIONS } from "@moneypenny/search";
+import { globMatch } from "@moneypenny/db";
 import { validateAndRefreshResults } from "@moneypenny/db/workspace";
-import type { SearchOptions, SearchResult } from "@moneypenny/db/types";
+import type { AgentDB, SearchOptions, SearchResult } from "@moneypenny/db/types";
 import type { ToolDefinition } from "../types.js";
-import { truncate, MAX_FILE_SIZE } from "../utils.js";
+import { truncate, spawnWithTimeout, MAX_FILE_SIZE } from "../utils.js";
 
 const LANG_EXT: Record<string, string[]> = {
   typescript: [".ts", ".tsx"],
@@ -24,11 +25,34 @@ const LANG_EXT: Record<string, string[]> = {
   swift: [".swift"],
 };
 
-const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".svn", ".hg"]);
+const SKIP_DIRS = new Set([
+  "node_modules", ".git", ".mp", "dist", "build", ".svn", ".hg",
+  ".next", "target", "coverage", "__pycache__", ".venv", "venv", "out",
+  ".mp.db", ".mp.db-wal", ".mp.db-shm", "mp.db", "mp.db-wal", "mp.db-shm",
+  "workspace.db", "workspace.db-wal", "workspace.db-shm",
+]);
+
+const NUL_CHECK_BYTES = 8192;
+
+function looksLikeBinary(buf: Buffer): boolean {
+  const len = Math.min(buf.length, NUL_CHECK_BYTES);
+  for (let i = 0; i < len; i++) {
+    if (buf[i] === 0) return true;
+  }
+  return false;
+}
+
+function isBinaryExt(filePath: string): boolean {
+  const seg = filePath.split("/").pop() ?? filePath;
+  const dot = seg.lastIndexOf(".");
+  if (dot <= 0) return false;
+  return DEFAULT_BINARY_EXTENSIONS.has(seg.slice(dot + 1).toLowerCase());
+}
 
 async function* walkFiles(
   dir: string,
   skipDirs: Set<string>,
+  excludePatterns: string[],
   signal?: AbortSignal,
   rootReal?: string,
 ): AsyncGenerator<string> {
@@ -43,11 +67,15 @@ async function* walkFiles(
   for (const e of entries) {
     if (signal?.aborted) return;
     const full = path.join(dir, e.name);
+    const rel = path.relative(root, full).split(path.sep).join("/");
     if (e.isSymbolicLink()) continue;
     if (e.isDirectory()) {
       if (skipDirs.has(e.name)) continue;
-      yield* walkFiles(full, skipDirs, signal, root);
+      if (excludePatterns.some((p) => globMatch(p, rel) || globMatch(p, `${rel}/`))) continue;
+      yield* walkFiles(full, skipDirs, excludePatterns, signal, root);
     } else if (e.isFile()) {
+      if (isBinaryExt(rel)) continue;
+      if (excludePatterns.some((p) => globMatch(p, rel))) continue;
       try {
         const st = await lstat(full);
         if (st.size > MAX_FILE_SIZE) continue;
@@ -81,26 +109,112 @@ function matchesPaths(relPath: string, prefixes?: string[]): boolean {
   });
 }
 
-async function grepFallback(
+// ── Ripgrep-based fallback ──────────────────────────────────────────────
+
+interface GrepFallbackOpts {
+  limit?: number;
+  languages?: string[];
+  paths?: string[];
+  signal?: AbortSignal;
+  excludePatterns?: string[];
+}
+
+function buildRgArgs(query: string, opts: GrepFallbackOpts): string[] {
+  const args = [
+    "--no-heading",
+    "--line-number",
+    "--max-count", String(opts.limit ?? 20),
+    "--color", "never",
+  ];
+
+  for (const pat of opts.excludePatterns ?? []) {
+    args.push("--glob", `!${pat}`);
+  }
+
+  if (opts.paths?.length) {
+    for (const p of opts.paths) {
+      args.push("--glob", p.endsWith("/") ? `${p}**` : `${p}/**`);
+    }
+  }
+
+  if (opts.languages?.length) {
+    for (const lang of opts.languages) {
+      const exts = LANG_EXT[lang.toLowerCase()];
+      if (exts) {
+        for (const ext of exts) {
+          args.push("--glob", `*${ext}`);
+        }
+      }
+    }
+  }
+
+  args.push("--fixed-strings", "--", query, ".");
+  return args;
+}
+
+function parseRgOutput(stdout: string, limit: number): string[] {
+  const matches: string[] = [];
+  const lines = stdout.split("\n").filter(Boolean);
+  for (const line of lines) {
+    const m = line.match(/^\.\/(.+?):(\d+):(.*)$/);
+    if (!m) continue;
+    const [, file, lineNo, content] = m;
+    const n = parseInt(lineNo!, 10);
+    matches.push(`--- ${file}:${Math.max(1, n - 1)}-${n + 1} ---\n${content}`);
+    if (matches.length >= limit) break;
+  }
+  return matches;
+}
+
+async function rgFallback(
   repoPath: string,
   query: string,
-  opts?: { limit?: number; languages?: string[]; paths?: string[]; signal?: AbortSignal },
+  opts: GrepFallbackOpts,
+): Promise<string | null> {
+  try {
+    const args = buildRgArgs(query, opts);
+    const result = await spawnWithTimeout(["rg", ...args], {
+      cwd: repoPath,
+      timeoutMs: 10_000,
+      signal: opts.signal,
+    });
+    if (result.timedOut) return null;
+    // rg exits 1 for "no matches" — that's fine
+    if (result.exitCode !== 0 && result.exitCode !== 1) return null;
+    const limit = opts.limit ?? 20;
+    const matches = parseRgOutput(result.stdout, limit);
+    if (matches.length === 0) return `No matches for "${query}".`;
+    return truncate(matches.join("\n\n"));
+  } catch {
+    return null;
+  }
+}
+
+// ── JS walker fallback (when rg is not installed) ───────────────────────
+
+async function jsGrepFallback(
+  repoPath: string,
+  query: string,
+  opts: GrepFallbackOpts,
 ): Promise<string> {
-  const limit = opts?.limit ?? 20;
+  const limit = opts.limit ?? 20;
   const matches: string[] = [];
   const root = path.resolve(repoPath);
 
-  outer: for await (const abs of walkFiles(root, SKIP_DIRS, opts?.signal)) {
+  outer: for await (const abs of walkFiles(root, SKIP_DIRS, opts.excludePatterns ?? [], opts.signal)) {
     const rel = path.relative(root, abs);
-    if (!matchesPaths(rel, opts?.paths)) continue;
-    if (!matchesLanguages(abs, opts?.languages)) continue;
+    if (!matchesPaths(rel, opts.paths)) continue;
+    if (!matchesLanguages(abs, opts.languages)) continue;
 
-    let content: string;
+    let buf: Buffer;
     try {
-      content = await Bun.file(abs).text();
+      buf = Buffer.from(await Bun.file(abs).arrayBuffer());
     } catch {
       continue;
     }
+    if (looksLikeBinary(buf)) continue;
+
+    const content = buf.toString("utf-8");
     if (!content.includes(query)) continue;
 
     const lines = content.split(/\r?\n/);
@@ -119,6 +233,31 @@ async function grepFallback(
     return `No matches for "${query}" (filesystem grep fallback).`;
   }
   return truncate(matches.join("\n\n"));
+}
+
+// ── Combined fallback: try rg first, fall back to JS walker ─────────────
+
+function loadExcludePatterns(db: AgentDB): string[] {
+  try {
+    return getExcludePatterns(db);
+  } catch {
+    return [];
+  }
+}
+
+async function grepFallback(
+  repoPath: string,
+  query: string,
+  db: AgentDB,
+  opts?: Omit<GrepFallbackOpts, "excludePatterns">,
+): Promise<string> {
+  const excludePatterns = loadExcludePatterns(db);
+  const fullOpts: GrepFallbackOpts = { ...opts, excludePatterns };
+
+  const rgResult = await rgFallback(repoPath, query, fullOpts);
+  if (rgResult !== null) return rgResult;
+
+  return jsGrepFallback(repoPath, query, fullOpts);
 }
 
 function formatHybridResults(results: SearchResult[]): string {
@@ -162,7 +301,7 @@ export const codeSearchTool: ToolDefinition = {
       } catch (searchErr) {
         const errMsg = searchErr instanceof Error ? searchErr.message : String(searchErr);
         const isHarmless = /no such table|no such column|database.*not/.test(errMsg);
-        const fallback = await grepFallback(context.repoPath, parsed.query, {
+        const fallback = await grepFallback(context.repoPath, parsed.query, context.db, {
           ...opts,
           signal: context.signal,
         });

@@ -13,6 +13,7 @@ import { summariseSession, type SummariseConfig } from "./summarise.js";
 export interface AutoLabelConfig extends SummariseConfig {
   repoPath: string;
   localGen?: LocalGen;
+  activeSessionId?: string;
 }
 
 /** Returns the single mp.db path for a repo. */
@@ -68,7 +69,7 @@ export async function runAutoLabel(config: AutoLabelConfig): Promise<void> {
 
       for (const session of sessions) {
         if (session.label !== null) continue;
-        if (session.id === db.activeSessionId) continue;
+        if (session.id === config.activeSessionId) continue;
 
         try {
           const { userText, assistantText } = getFirstMessages(db, session.id);
