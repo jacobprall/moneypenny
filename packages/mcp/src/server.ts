@@ -1,359 +1,317 @@
-import {
-  compactConversation,
-  getConversation,
-  getEvents,
-  type AgentDB,
-} from "@moneypenny/db";
-import { getIndexStatus, hybridSearch, indexCodebase } from "@moneypenny/search";
-import { createToolRegistry, registerBuiltinTools, type ToolContext } from "@moneypenny/tools";
-import { createToolServices } from "@moneypenny/tools";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
-import type { MCPServerConfig, MCPServerHandle } from "./types.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
+import type { Database } from "bun:sqlite";
+import { createToolSet } from "@moneypenny/engine";
 
-const INSPECT_TABLES = ["events", "messages", "code_chunks", "file_tree", "config", "metrics"] as const;
-type InspectTable = (typeof INSPECT_TABLES)[number];
-const INSPECT_TABLE_ENUM = z.enum(INSPECT_TABLES);
-
-function allowName(name: string, config?: MCPServerConfig): boolean {
-  const allowed = config?.tools;
-  if (allowed == null) return true;
-  if (allowed.length === 0) return false;
-  return allowed.includes(name);
+interface McpTool {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  handler: (args: Record<string, unknown>) => Promise<string>;
 }
 
-function allowResource(name: string, config?: MCPServerConfig): boolean {
-  if (config?.resources === false) return false;
-  const allowed = config?.resourceNames;
-  if (allowed == null) return true;
-  if (allowed.length === 0) return false;
-  return allowed.includes(name);
-}
-
-type ToolResult = { content: [{ type: "text"; text: string }]; isError?: true };
-
-function toolErr(message: string): ToolResult {
-  return { content: [{ type: "text", text: message }], isError: true };
-}
-
-function toolOk(text: string): ToolResult {
-  return { content: [{ type: "text", text }] };
-}
-
-function wrapToolHandler(
-  name: string,
-  fn: (args: any) => string | Promise<string>,
-): (args: any) => Promise<ToolResult> {
-  return async (args) => {
-    try {
-      return toolOk(await fn(args));
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return toolErr(`${name} failed: ${msg}`);
+function extractProperties(t: unknown): Record<string, unknown> {
+  try {
+    const params = (t as any).parameters;
+    if (params?.shape) {
+      const props: Record<string, unknown> = {};
+      for (const [key, schema] of Object.entries(params.shape)) {
+        const desc =
+          (schema as any)?._def?.description ??
+          (schema as any)?.description;
+        const typeName = (schema as any)?._def?.typeName;
+        let type = "string";
+        if (typeName === "ZodNumber") type = "number";
+        if (typeName === "ZodBoolean") type = "boolean";
+        props[key] = { type, ...(desc ? { description: desc } : {}) };
+      }
+      return props;
     }
-  };
+  } catch {}
+  return {};
 }
 
-function wrapResourceHandler(fn: () => string | Promise<string>) {
-  return async (uri: { href: string }) => {
-    try {
-      const text = await fn();
+function createMcpToolList(db: Database): McpTool[] {
+  const toolSet = createToolSet(db);
+
+  return Object.entries(toolSet).map(([name, t]) => ({
+    name,
+    description: (t as any).description ?? name,
+    inputSchema: {
+      type: "object" as const,
+      properties: extractProperties(t),
+    },
+    handler: async (args: Record<string, unknown>) => {
+      const execute = (t as any).execute;
+      if (!execute) return JSON.stringify({ error: "No execute function" });
+      const result = await execute(args);
+      return JSON.stringify(result);
+    },
+  }));
+}
+
+export function createMcpServer(db: Database): Server {
+  const server = new Server(
+    { name: "moneypenny", version: "0.3.0" },
+    { capabilities: { tools: {}, resources: {} } },
+  );
+
+  const tools = createMcpToolList(db);
+  const toolMap = new Map(tools.map((t) => [t.name, t]));
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: t.inputSchema,
+    })),
+  }));
+
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const t = toolMap.get(request.params.name);
+    if (!t) {
       return {
-        contents: [{ uri: uri.href, text, mimeType: "application/json" }],
+        content: [
+          { type: "text", text: `Unknown tool: ${request.params.name}` },
+        ],
+        isError: true,
       };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+    }
+
+    try {
+      const result = await t.handler(
+        (request.params.arguments as Record<string, unknown>) ?? {},
+      );
+      return { content: [{ type: "text", text: result }] };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  });
+
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: [
+      {
+        uri: "moneypenny://context",
+        name: "Agent Context",
+        description:
+          "Assembled context (previous sessions, skills, conventions, policies)",
+        mimeType: "application/json",
+      },
+      {
+        uri: "moneypenny://health",
+        name: "System Health",
+        description: "Database statistics and health metrics",
+        mimeType: "application/json",
+      },
+      {
+        uri: "moneypenny://cost-today",
+        name: "Today's Cost",
+        description: "Token usage and cost for today",
+        mimeType: "application/json",
+      },
+      {
+        uri: "moneypenny://sessions",
+        name: "Recent Sessions",
+        description: "List of recent sessions with labels and cost",
+        mimeType: "application/json",
+      },
+      {
+        uri: "moneypenny://conventions",
+        name: "Project Conventions",
+        description: "Detected and user-defined project conventions",
+        mimeType: "application/json",
+      },
+      {
+        uri: "moneypenny://skills",
+        name: "Learned Skills",
+        description: "Skills the agent has learned across sessions",
+        mimeType: "application/json",
+      },
+      {
+        uri: "moneypenny://budget",
+        name: "Budget Status",
+        description: "Current budget usage and limits",
+        mimeType: "application/json",
+      },
+    ],
+  }));
+
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const uri = request.params.uri;
+
+    if (uri === "moneypenny://context") {
+      const row = db
+        .query<{ context: string }, []>(
+          "SELECT context FROM v_agent_context",
+        )
+        .get();
+      return {
+        contents: [
+          { uri, mimeType: "application/json", text: row?.context ?? "{}" },
+        ],
+      };
+    }
+
+    if (uri === "moneypenny://health") {
+      const row = db
+        .query<{ health: string }, []>("SELECT health FROM v_health")
+        .get();
+      return {
+        contents: [
+          { uri, mimeType: "application/json", text: row?.health ?? "{}" },
+        ],
+      };
+    }
+
+    if (uri === "moneypenny://cost-today") {
+      const row = db
+        .query<
+          {
+            total: number;
+            sessions: number;
+            tokens_in: number;
+            tokens_out: number;
+          },
+          []
+        >("SELECT * FROM v_cost_today")
+        .get();
       return {
         contents: [
           {
-            uri: uri.href,
-            text: JSON.stringify({ error: msg }),
+            uri,
             mimeType: "application/json",
+            text: JSON.stringify(row ?? {}),
           },
         ],
       };
     }
-  };
-}
 
-function resolveRepoPath(db: AgentDB, config?: MCPServerConfig): string {
-  const p = config?.repoPath ?? db.repoPath;
-  return p && p.length > 0 ? p : ".";
-}
-
-function zodShape(schema: z.ZodType): Record<string, z.ZodTypeAny> | null {
-  if (schema instanceof z.ZodObject) {
-    return schema.shape;
-  }
-  if (schema instanceof z.ZodEffects) {
-    return zodShape(schema.innerType());
-  }
-  return null;
-}
-
-const INSPECT_QUERIES: Record<InspectTable, string> = {
-  events: `SELECT * FROM events ORDER BY created_at DESC LIMIT ?`,
-  messages: `SELECT * FROM messages ORDER BY turn DESC, created_at DESC LIMIT ?`,
-  code_chunks: `SELECT path, chunk_index, start_line, end_line, language, chunk_text FROM code_chunks ORDER BY rowid DESC LIMIT ?`,
-  file_tree: `SELECT * FROM file_tree ORDER BY path ASC LIMIT ?`,
-  config: `SELECT * FROM config ORDER BY key ASC LIMIT ?`,
-  metrics: `SELECT * FROM metrics ORDER BY turn DESC LIMIT ?`,
-};
-
-const INSPECT_COUNT_QUERIES: Record<InspectTable, string> = Object.fromEntries(
-  INSPECT_TABLES.map((t) => [t, `SELECT COUNT(*) AS c FROM "${t}"`]),
-) as Record<InspectTable, string>;
-
-function registerInspectTool(server: McpServer, db: AgentDB, config?: MCPServerConfig): string[] {
-  if (!allowName("inspect_db", config)) return [];
-
-  server.registerTool(
-    "inspect_db",
-    {
-      description:
-        "Inspect the agent database. Returns table row counts, recent events, and config; or rows from a specific table.",
-      inputSchema: {
-        table: INSPECT_TABLE_ENUM.optional().describe("When set, return rows from this table"),
-        limit: z
-          .number()
-          .int()
-          .positive()
-          .max(5000)
-          .optional()
-          .describe("Max rows when reading a table (default: 50)"),
-      },
-    },
-    wrapToolHandler("inspect_db", (args) => {
-      const limit = args.limit ?? 50;
-
-      if (args.table == null) {
-        const rowCounts: Record<string, number> = {};
-        for (const t of INSPECT_TABLES) {
-          const row = db.db.prepare(INSPECT_COUNT_QUERIES[t]).get() as { c: number };
-          rowCounts[t] = Number(row.c);
-        }
-        const recentEvents = db.db
-          .prepare(`SELECT * FROM events ORDER BY created_at DESC LIMIT 5`)
-          .all() as Record<string, unknown>[];
-        const configRows = db.db
-          .prepare(`SELECT key, value FROM config`)
-          .all() as { key: string; value: string }[];
-        const configObj = Object.fromEntries(configRows.map((r) => [r.key, r.value]));
-        return JSON.stringify({ rowCounts, recentEvents, config: configObj }, null, 2);
-      }
-
-      const table: InspectTable = args.table;
-      const rows = db.db.prepare(INSPECT_QUERIES[table]).all(limit);
-      return JSON.stringify(rows);
-    }),
-  );
-
-  return ["inspect_db"];
-}
-
-function registerNativeAgentDbTools(server: McpServer, db: AgentDB, config?: MCPServerConfig): string[] {
-  const registered: string[] = [];
-
-  if (allowName("code_search", config)) {
-    server.registerTool(
-      "code_search",
-      {
-        description:
-          "Search the codebase using natural language or code snippets. Returns relevant code chunks ranked by combined keyword and semantic similarity.",
-        inputSchema: {
-          query: z.string().describe("Natural language question or code snippet to search for"),
-          limit: z
-            .number()
-            .int()
-            .positive()
-            .max(500)
-            .optional()
-            .describe("Maximum results to return (default: 20)"),
-          languages: z.array(z.string()).optional().describe("Filter by programming language"),
-          paths: z.array(z.string()).optional().describe("Filter by path glob patterns"),
-        },
-      },
-      wrapToolHandler("code_search", (args) => {
-        const results = hybridSearch(db, args.query, {
-          limit: args.limit,
-          languages: args.languages,
-          paths: args.paths,
-        });
-        const formatted = results
-          .map(
-            (r) =>
-              `${r.path}:${r.startLine}-${r.endLine} (score: ${r.score.toFixed(2)})\n${r.chunkText}`,
-          )
-          .join("\n\n");
-        return formatted || "No results found.";
-      }),
-    );
-    registered.push("code_search");
-  }
-
-  if (allowName("compact_conversation", config)) {
-    server.registerTool(
-      "compact_conversation",
-      {
-        description: "Compact earlier conversation turns into a summary to free context space.",
-        inputSchema: {
-          up_to_turn: z.number().describe("Compact all messages up to and including this turn number"),
-          summary: z.string().describe("A comprehensive summary of the compacted conversation turns"),
-        },
-      },
-      wrapToolHandler("compact_conversation", (args) => {
-        compactConversation(db, args.up_to_turn, args.summary);
-        return `Compacted conversation up to turn ${args.up_to_turn}.`;
-      }),
-    );
-    registered.push("compact_conversation");
-  }
-
-  if (allowName("index_codebase", config)) {
-    server.registerTool(
-      "index_codebase",
-      {
-        description: "Update the code search index. Only re-indexes files that have changed since last index.",
-        inputSchema: {
-          force: z.boolean().optional().describe("Force full re-index even if files appear unchanged"),
-        },
-      },
-      wrapToolHandler("index_codebase", (args) => {
-        const repoPath = resolveRepoPath(db, config);
-        const result = indexCodebase(db, repoPath, { forceReindex: args.force });
-        return `Indexed ${result.filesScanned} files (${result.filesChanged} changed), created ${result.chunksCreated} chunks in ${result.elapsedMs}ms.`;
-      }),
-    );
-    registered.push("index_codebase");
-  }
-
-  if (allowName("index_status", config)) {
-    server.registerTool(
-      "index_status",
-      {
-        description: "Returns statistics about the current code index.",
-      },
-      wrapToolHandler("index_status", () => {
-        const status = getIndexStatus(db);
-        return JSON.stringify(status, null, 2);
-      }),
-    );
-    registered.push("index_status");
-  }
-
-  registered.push(...registerInspectTool(server, db, config));
-  return registered;
-}
-
-function registerRegistryTools(
-  server: McpServer,
-  db: AgentDB,
-  nativeNames: Set<string>,
-  config?: MCPServerConfig,
-): void {
-  const registry = createToolRegistry();
-  const repoPath = resolveRepoPath(db, config);
-  registerBuiltinTools(registry);
-
-  for (const tool of registry.list()) {
-    if (nativeNames.has(tool.name)) continue;
-    if (!allowName(tool.name, config)) continue;
-
-    const shape = zodShape(tool.inputSchema);
-    if (shape == null) {
-      console.warn(`[mp-mcp] Skipping tool "${tool.name}": could not extract input schema shape`);
-      continue;
+    if (uri === "moneypenny://sessions") {
+      const sessions = db
+        .query<
+          {
+            id: string;
+            label: string | null;
+            agent_name: string | null;
+            is_active: number;
+            created_at: number;
+          },
+          []
+        >(
+          "SELECT id, label, agent_name, is_active, created_at FROM sessions ORDER BY created_at DESC LIMIT 20",
+        )
+        .all();
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify(sessions),
+          },
+        ],
+      };
     }
 
-    server.registerTool(
-      tool.name,
-      { description: tool.description, inputSchema: shape },
-      wrapToolHandler(tool.name, async (args) => {
-        const ctx: ToolContext = {
-          services: createToolServices(db),
-          repoPath,
-          workingDir: repoPath,
-        };
-        return await tool.execute(args, ctx);
-      }),
-    );
-  }
-}
+    if (uri === "moneypenny://conventions") {
+      const convs = db
+        .query<
+          { name: string; category: string; description: string; confidence: number },
+          []
+        >(
+          "SELECT name, category, description, confidence FROM conventions WHERE confidence > 0.3 ORDER BY confidence DESC",
+        )
+        .all();
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify(convs),
+          },
+        ],
+      };
+    }
 
-function registerMCPResources(server: McpServer, db: AgentDB, config?: MCPServerConfig): void {
-  if (allowResource("conversation", config)) {
-    server.registerResource(
-      "conversation",
-      "conversation://current",
-      { mimeType: "application/json" },
-      wrapResourceHandler(() => {
-        const messages = getConversation(db);
-        return JSON.stringify(messages, null, 2);
-      }),
-    );
-  }
+    if (uri === "moneypenny://skills") {
+      const skills = db
+        .query<
+          { name: string; description: string; instructions: string | null; confidence: number },
+          []
+        >(
+          "SELECT name, description, instructions, confidence FROM skills WHERE confidence > 0.3 ORDER BY confidence DESC",
+        )
+        .all();
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify(skills),
+          },
+        ],
+      };
+    }
 
-  if (allowResource("events", config)) {
-    server.registerResource(
-      "events",
-      "events://recent",
-      { mimeType: "application/json" },
-      wrapResourceHandler(() => {
-        const events = getEvents(db, { limit: 50 });
-        return JSON.stringify(events, null, 2);
-      }),
-    );
-  }
+    if (uri === "moneypenny://budget") {
+      const daily = db
+        .query<{ total: number }, []>(
+          "SELECT COALESCE(total, 0) as total FROM v_cost_today",
+        )
+        .get();
 
-  if (allowResource("config", config)) {
-    server.registerResource(
-      "config",
-      "config://all",
-      { mimeType: "application/json" },
-      wrapResourceHandler(() => {
-        const rows = db.db.prepare("SELECT key, value FROM config").all() as { key: string; value: string }[];
-        return JSON.stringify(Object.fromEntries(rows.map((r) => [r.key, r.value])), null, 2);
-      }),
-    );
-  }
+      const policyRow = db
+        .query<{ conditions: string | null }, [string]>(
+          "SELECT conditions FROM policies WHERE name = ?",
+        )
+        .get("Budget Guard");
 
-  if (allowResource("index-stats", config)) {
-    server.registerResource(
-      "index-stats",
-      "index://stats",
-      { mimeType: "application/json" },
-      wrapResourceHandler(() => {
-        const status = getIndexStatus(db);
-        return JSON.stringify(status, null, 2);
-      }),
-    );
-  }
-}
+      let limits = { maxDailyUsd: 10, maxSessionUsd: 1 };
+      if (policyRow?.conditions) {
+        try {
+          limits = JSON.parse(policyRow.conditions);
+        } catch {}
+      }
 
-export function createMCPServer(db: AgentDB, config?: MCPServerConfig): MCPServerHandle {
-  const server = new McpServer({
-    name: "moneypenny",
-    version: "0.1.0",
+      const budget = {
+        daily_spent: daily?.total ?? 0,
+        daily_limit: limits.maxDailyUsd,
+        daily_remaining: Math.max(0, limits.maxDailyUsd - (daily?.total ?? 0)),
+        session_limit: limits.maxSessionUsd,
+      };
+
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify(budget),
+          },
+        ],
+      };
+    }
+
+    throw new Error(`Unknown resource: ${uri}`);
   });
 
-  const nativeNames = new Set(registerNativeAgentDbTools(server, db, config));
-  registerRegistryTools(server, db, nativeNames, config);
+  return server;
+}
 
-  if (config?.resources !== false) {
-    registerMCPResources(server, db, config);
-  }
-
-  let transport: StdioServerTransport | null = null;
-
-  return {
-    async serveStdio() {
-      transport = new StdioServerTransport();
-      await server.connect(transport);
-    },
-    async close() {
-      await server.close();
-      transport = null;
-    },
-  };
+export async function startStdioServer(db: Database): Promise<void> {
+  const server = createMcpServer(db);
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
 }

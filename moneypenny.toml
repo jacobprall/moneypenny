@@ -1,0 +1,26 @@
+# Moneypenny configuration
+# See README.md for full documentation
+
+[agent]
+name = "Moneypenny"
+model = "claude-sonnet-4-20250514"
+strategy = "standard"           # standard | research | evolution
+
+[pointers]
+cap = 20                        # max active session pointers before consolidation
+auto_summarize = true
+auto_consolidate = true
+
+[worker]
+interval_ms = 30000             # background work loop interval
+batch_size = 10
+
+[custodian]
+compact_after_turns = 50        # compact sessions longer than this
+archive_after_days = 30         # archive inactive sessions after this
+purge_after_days = 90           # purge archived sessions after this
+chunk_prune_after_days = 14     # remove stale code chunks
+
+[search]
+fts_weight = 0.4                # BM25 weight in hybrid search
+semantic_weight = 0.6           # embedding similarity weight

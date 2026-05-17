@@ -1,7 +1,10 @@
 node_modules/
 dist/
-*.tsbuildinfo
-.env*
-.mp/
-models/
 *.db
+*.db-wal
+*.db-shm
+.env
+.DS_Store
+.moneypenny/
+models/
+mp

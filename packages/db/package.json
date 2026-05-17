@@ -4,28 +4,11 @@
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
-  "exports": {
-    ".": "./src/index.ts",
-    "./chunker": "./src/chunker.ts",
-    "./errors": "./src/errors.ts",
-    "./types": "./src/types.ts",
-    "./glob": "./src/glob.ts",
-    "./workspace": "./src/workspace.ts"
-  },
-  "scripts": {
-    "build": "tsup src/index.ts --format esm --dts --external bun:sqlite",
-    "test": "bun test",
-    "typecheck": "tsc --noEmit"
-  },
   "dependencies": {
-    "@sqliteai/sqlite-ai": "^0.7.56",
-    "@sqliteai/sqlite-sync": "^1.0.0",
-    "@sqliteai/sqlite-vector": "^0.9.45",
-    "yaml": "^2.9.0"
+    "ai": "^4.3.0",
+    "@ai-sdk/anthropic": "^1.2.0"
   },
-  "devDependencies": {
-    "bun-types": "latest",
-    "tsup": "^8.0.0",
-    "typescript": "^5.7.0"
+  "peerDependencies": {
+    "bun-types": "*"
   }
 }

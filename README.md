@@ -1,243 +1,300 @@
-# moneypenny
+# Moneypenny
 
-The portable intelligence layer for coding agents. Persistent context, governance, and cost controls from a single `.mp/` directory in your repo. Standalone CLI, MCP sidecar for Cursor or Claude Code, or background daemon with scheduled agents.
+Local-first coding agent platform. The brain is the database.
 
-## Why moneypenny
-
-**A full-stack coding agent from a single SQLite file.** Persistent sessions, hybrid search, local embeddings, policy enforcement, cost tracking, audit logs. One `.mp/mp.db` per repo, no external services. Bring your Anthropic, OpenAI, or Google key.
-
-**Your codebase, indexed and searchable in milliseconds.** On first run, moneypenny walks your repo, chunks every source file, and builds a full-text BM25 index with vector embeddings generated locally. No API calls. Subsequent runs are incremental. `mp search "where do we handle rate limiting"` returns ranked results from keyword and semantic matching in under a millisecond.
-
-**The more you build, the more it knows.** Every session persists. Pick up next week where you left off. At session end, moneypenny extracts architecture decisions, code conventions, debugging insights, and user preferences into learned skills. Existing skills on the same topic are merged, not duplicated. Project knowledge compounds across sessions.
-
-**Version-controlled governance.** On first run, moneypenny scaffolds `.mp/agents/_global.yaml` with sensible defaults: deny `.git/` and `node_modules/`, set exclude patterns, configure turn limits. Agent definitions layer additional restrictions inline. Policies support cost caps, audit trails, confirmation prompts, and regex argument matching. Commit them alongside your code.
-
-```yaml
-# .mp/agents/_global.yaml
-deny_paths:
-  - "**/.git/**"
-  - "**/node_modules/**"
-
-exclude_patterns:
-  - "**/node_modules/**"
-  - "**/.git/**"
-  - "**/dist/**"
-
-max_turns: 64
-```
-
-**Agents defined as markdown files.** Drop a `.md` file with YAML frontmatter into `.mp/agents/`. Frontmatter declares the model, tools, permissions, and turn limits. The body is the system prompt. All agents share a single `mp.db` with sessions scoped by agent name.
-
-```markdown
----
-name: security-reviewer
-description: Reviews code for security vulnerabilities
-model: claude-sonnet-4-6
-tools:
-  - read_file
-  - grep
-  - code_search
-deny_paths:
-  - "**/.env*"
-  - "**/secrets/**"
-deny_tools:
-  - "run_terminal_cmd"
-max_turns: 32
----
-
-You are a security-focused code reviewer. Focus on input validation,
-auth flaws, injection vulnerabilities, and credential exposure.
-```
-
-**MCP in both directions.** `mp setup cursor` gives Cursor, Claude Code, or any MCP client access to moneypenny's search, index, and governance. Going the other direction, point moneypenny at external MCP servers (GitHub, Linear, Slack) via `mcp-servers.json`. Their tools appear as `mcp__github__create_pull_request`, governed by the same pipeline.
-
-**Delegate to subagents.** The `delegate` tool spawns a child loop with its own tool restrictions, iteration budget, and cost ceiling. A code review subagent gets `read_file` and `code_search` but not `bash`. It runs, returns a result, and the parent continues. No shared memory, no leaking permissions.
-
-**Cloud sync for teams.** `mp cloud init` enables CRDT-based replication via sqlite-sync. Policies, learned skills, agent definitions, and config sync across machines automatically. The agent stays local-first. The cloud is a coordination layer, not a dependency.
-
-### Also includes
-
-- **50+ bundled skills** for refactoring, design patterns, and code smell identification. Available via `read_skill` and `delegate`.
-- **Per-model cost tracking** with rate tables for 25+ models. Per-turn and per-session spend reported and enforced.
-- **Local SLM** for session naming, compaction, and knowledge extraction. Bundled Qwen 0.5B, no API calls for housekeeping.
-- **Parallel tool execution.** Multiple tool calls in a single turn run concurrently, each policy-gated.
-- **Cache-optimized prompts.** Static context separated from dynamic context with an explicit cache breakpoint for LLM prefix caching.
+Moneypenny gives your coding agent persistent memory, learned skills, project awareness, file manipulation, and a web dashboard — all stored in a single SQLite database on your machine. It can read, write, and run code; remember facts across sessions; detect project conventions; and manage its own context autonomously.
 
 ## Quickstart
 
-### Prerequisites
-
-- [Bun](https://bun.sh) >= 1.0
-- An LLM API key (Anthropic, OpenAI, or Google)
-
-### Install
-
 ```bash
-git clone https://github.com/nicholasgasior/moneypenny.git
-cd moneypenny
-pnpm install
+cd your-project
+
+# Start everything: watcher + dashboard + background work loop
+bun run /path/to/moneypenny/apps/cli/src/main.ts start
+
+# Or: interactive coding chat
+bun run /path/to/moneypenny/apps/cli/src/main.ts chat
+
+# Or: MCP server for Cursor/Claude Desktop
+bun run /path/to/moneypenny/apps/cli/src/main.ts serve
 ```
 
-### Configure
+## Commands
 
-Set your API key via environment variable:
+### Core
+| Command | Description |
+|---------|-------------|
+| `mp start` | Start watcher + dashboard (`:4966`) + background work loop |
+| `mp serve` | Start MCP server (stdio) for Cursor/Claude Desktop |
+| `mp chat [agent]` | Interactive streaming chat REPL |
+| `mp chat --resume <id>` | Resume a previous session |
+| `mp dashboard` | Start web dashboard only |
 
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-```
+### Intelligence
+| Command | Description |
+|---------|-------------|
+| `mp index [path]` | Index codebase with AST-aware chunking |
+| `mp embed [batch]` | Generate embeddings for semantic search |
+| `mp detect` | Detect project conventions from code |
+| `mp skills` | List learned skills |
+| `mp work` | Process pending work queue |
+| `mp custodian` | Run custodian maintenance pipeline |
 
-Or persist it in the global config:
+### Agent Pool
+| Command | Description |
+|---------|-------------|
+| `mp pool run <agent> <task>` | Run background agent |
+| `mp pool schedule` | Process scheduled jobs |
 
-```bash
-mp config set anthropic_api_key sk-ant-...
-```
+### Inspect
+| Command | Description |
+|---------|-------------|
+| `mp status` | Database health |
+| `mp context [agent]` | System prompt |
+| `mp agents` | List agents |
+| `mp policies` | List policies |
+| `mp sessions` | List/view/search sessions |
+| `mp costs` | Cost tracking |
 
-### Download models
+## Chat Slash Commands
 
-Local embedding and text generation models for zero-cost indexing, session naming, and compaction:
-
-```bash
-mp setup models
-```
-
-### Verify setup
-
-```bash
-mp doctor
-```
-
-### Start coding
-
-```bash
-mp chat "refactor the auth module to use JWT"
-```
-
-### Set up as MCP sidecar for Cursor
-
-```bash
-mp setup cursor
-# Restart Cursor — moneypenny tools are now available via MCP
-```
-
-### Run background agents
-
-Define an agent in `.mp/agents/pr-reviewer.md`:
-
-```markdown
----
-name: PR Reviewer
-schedule: "0 9 * * 1-5"
-model: claude-sonnet-4-6
-tools:
-  - code_search
-  - read_file
-  - "mcp__github__*"
-max_turns: 20
----
-
-Review open PRs. Assess code quality, potential bugs, and security concerns.
-```
-
-Start the daemon:
-
-```bash
-mp serve
-```
-
-## CLI Commands
+Type these during `mp chat`:
 
 | Command | Description |
-|---|---|
-| `mp chat [message]` | Interactive agent session |
-| `mp search <query>` | Hybrid code search (BM25 + vector) |
-| `mp index` | Build or refresh the codebase index |
-| `mp inspect` | Query agent state (events, messages, metrics) |
-| `mp mcp` | Start MCP server (stdio) |
-| `mp setup <target>` | Configure integrations (`cursor`, `claude`, `models`) |
-| `mp config <get\|set>` | Read/write global configuration |
-| `mp doctor` | Validate environment and configuration |
-| `mp policy <subcommand>` | Manage governance policies (`list`, `add`, `remove`, `sync`) |
-| `mp events` | Query the event/audit log |
-| `mp serve` | Start daemon (scheduler + HTTP + MCP) |
-| `mp agents <subcommand>` | List, run, and manage background agents |
-| `mp cloud <subcommand>` | Cloud sync and team management |
+|---------|-------------|
+| `/help` | Show available commands |
+| `/context` | Show current system prompt |
+| `/cost` | Session + daily cost |
+| `/sessions` | Recent sessions |
+| `/status` | System health |
+| `/skills` | Learned skills |
+| `/conventions` | Project conventions |
+| `/clear` | Clear conversation |
+| `/quit` | Exit |
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Transports                                                 │
-│    CLI · MCP Server · HTTP API · Daemon                     │
-├─────────────────────────────────────────────────────────────┤
-│  @moneypenny/agents  Agent loader, scheduler, cron, chaining│
-│  @moneypenny/http    Localhost API + SSE event streaming     │
-│  @moneypenny/mcp     MCP server + client + IDE sidecar      │
-│  @moneypenny/cloud   Optional sync (sqlite-sync, team.db)   │
-├─────────────────────────────────────────────────────────────┤
-│  @moneypenny/loop    Agent turn loop, LLM providers, cost   │
-│  @moneypenny/tools   Built-in tools (file ops, bash, git)   │
-│  @moneypenny/skills  SKILL.md discovery, subagent delegation│
-├─────────────────────────────────────────────────────────────┤
-│  @moneypenny/ctx     Prompt assembly + governance pipeline  │
-│  @moneypenny/search  Indexer, chunker, hybrid BM25+vector   │
-├─────────────────────────────────────────────────────────────┤
-│  @moneypenny/db      SQLite + extensions (vector, ai, sync) │
-└─────────────────────────────────────────────────────────────┘
+The brain is the database.
+┌──────────────────────────────────────────────────┐
+│                    SQLite DB                      │
+│  sessions → messages → session_pointers           │
+│  code_chunks (AST-chunked, FTS5, embeddings)     │
+│  skills, conventions, policies, agent_defs       │
+│  work_queue, events, jobs, config                │
+└──────────────────────────────────────────────────┘
+        ↑               ↑              ↑
+   @moneypenny/db   @moneypenny/engine  @moneypenny/mcp
+   migrations       agent loop          stdio server
+   context asm      19 tools            7+ resources
+   work queue       LLM abstraction     client manager
+                    embeddings
+                    hooks + pool
+                    strategies
+                    custodian
+                    governance
+        ↑               ↑              ↑
+                  apps/cli
+          config sync, watcher, REPL
+          AST indexer, scaffold
+          web dashboard (Hono, 10 pages)
+          root config (TOML)
 ```
 
-### Repo layout
+## Tools (19)
+
+The agent has 19 built-in tools that make it a coding agent, not just a chat wrapper:
+
+### File Operations
+- **read_file** — Read file contents with optional line range
+- **read_files** — Batch read multiple files
+- **write_file** — Write/create files with auto directory creation
+- **list_directory** — List files and directories (recursive)
+- **run_command** — Execute shell commands (builds, tests, git)
+
+### Search
+- **search_code** — Hybrid search (FTS5 + semantic) across indexed code
+- **search_messages** — Full-text search across conversation history
+
+### Memory
+- **save_memory** — Persist knowledge/observations for future recall
+- **recall_memory** — Search saved memories across sessions
+
+### Session Management
+- **expand_previous_session** — Retrieve session pointer summary
+- **get_full_session** — Load full transcript
+- **pin_session** / **unpin_session** — Pin important sessions
+- **list_sessions** — Browse session history
+
+### Knowledge
+- **learn_skill** — Teach the agent a new skill
+- **add_convention** — Add a project convention
+
+### Introspection
+- **query_db** — Read-only SQL against the intelligence database
+- **context_curate** — 13-action super-tool for self-management (memory search/forget, cost review, skills CRUD, sessions manage, policy inspect, index status, prune stale chunks, conventions list)
+- **run_maintenance** — Check work queue status
+
+## LLM Provider Abstraction
+
+Moneypenny routes LLM calls through a tier system so you can use expensive models for interactive work and cheap/local models for background housekeeping:
+
+| Tier | Default | Used for |
+|------|---------|----------|
+| `strong` | claude-sonnet-4 | Interactive chat, complex reasoning |
+| `fast` | claude-sonnet-4 | Summarization, convention detection, skill extraction |
+| `local` | *(falls back to fast)* | Labeling, compaction, pointer key generation |
+
+### Supported providers
+
+| Prefix | Provider | Example |
+|--------|----------|---------|
+| `ollama:` | Local Ollama | `ollama:llama3.2`, `ollama:qwen2.5-coder` |
+| `anthropic:` | Anthropic | `anthropic:claude-sonnet-4-20250514` |
+| `openai:` | OpenAI | `openai:gpt-4o` |
+| `google:` | Google | `google:gemini-2.0-flash` |
+| *(bare)* | Auto-detected | `claude-sonnet-4-20250514`, `gpt-4o`, `gemini-2.0-flash` |
+
+Configure in `moneypenny.toml`:
+
+```toml
+[models]
+strong = "claude-sonnet-4-20250514"
+fast   = "claude-sonnet-4-20250514"
+local  = "ollama:llama3.2"
+ollama_base_url = "http://localhost:11434/v1"
+```
+
+Or change live from the dashboard Settings page.
+
+## Web Dashboard
+
+`mp start` launches a web dashboard at `http://localhost:4966` with 10 pages:
+
+| Page | What it shows |
+|------|--------------|
+| **Overview** | Session count, messages, code chunks, today's cost, work queue status |
+| **Sessions** | Browse all sessions, FTS search, view full transcripts |
+| **Agents** | Defined agents with models, triggers, tool sets, system prompts |
+| **Skills** | Learned skills with confidence levels and instructions |
+| **Conventions** | Detected and user-defined project patterns by category |
+| **Events** | Audit log stream with type filtering |
+| **Costs** | Today's spend + daily cost breakdown by agent |
+| **Work Queue** | Pending and recently processed work items with status |
+| **MCP Servers** | Manage external MCP server connections (add/remove, command, args, env) |
+| **Settings** | Model tier config (strong/fast/local), API key status, policies, config store |
+
+API endpoints: `/api/health`, `/api/config`, `/api/models`
+
+## Context Views
+
+Named context views assemble different system prompts for different tasks:
+
+| View | Focus |
+|------|-------|
+| `default` | Full context: sessions, skills, conventions, policies |
+| `coding` | Conventions, policies, codebase profile |
+| `research` | Skills, session history, structured finding/source format |
+| `refactoring` | Conventions, policies, structural focus |
+| `review` | Conventions, correctness, edge cases, maintainability |
+
+## Agent Strategies
+
+| Strategy | Behavior |
+|----------|----------|
+| `standard` | Single-shot reply with tool use |
+| `research` | Structured investigation with FINDING/SOURCE/GAPS + RESEARCH_COMPLETE report |
+| `evolution` | Iterative self-improvement with plateau detection |
+
+## Custodian Pipeline
+
+`mp custodian` runs automated maintenance:
+
+1. **Label** unlabeled sessions (LLM via `local` tier)
+2. **Compact** long sessions (compress old messages, `local` tier)
+3. **Archive** stale sessions (inactive > N days)
+4. **Purge** old archived sessions (ensure pointers exist first)
+5. **Summarize** sessions without pointers (`fast` tier)
+6. **Consolidate** excess pointers (merge oldest, `fast` tier)
+7. **Prune** stale code chunks
+
+## Governance
+
+Built-in hooks for security and cost control:
+
+- **Credential Redactor** — strips API keys, tokens, passwords before LLM context
+- **Budget Enforcer** — daily spend limits with warn/deny thresholds
+- **Operation Logger** — per-tool latency and error tracking
+
+## Configuration
+
+### moneypenny.toml (repo root)
+
+```toml
+[agent]
+name = "Moneypenny"
+model = "claude-sonnet-4-20250514"
+strategy = "standard"           # standard | research | evolution
+
+[models]
+strong = "claude-sonnet-4-20250514"     # interactive chat
+fast   = "claude-sonnet-4-20250514"     # summarization, conventions, skills
+local  = ""                              # labeling, compaction (e.g. "ollama:llama3.2")
+ollama_base_url = "http://localhost:11434/v1"
+
+[pointers]
+cap = 20                        # max active session pointers
+auto_summarize = true
+auto_consolidate = true
+
+[worker]
+interval_ms = 30000             # background work loop interval
+batch_size = 10
+
+[custodian]
+compact_after_turns = 50
+archive_after_days = 30
+purge_after_days = 90
+chunk_prune_after_days = 14
+
+[search]
+fts_weight = 0.4
+semantic_weight = 0.6
+```
+
+### .moneypenny/ (per-project)
 
 ```
-moneypenny/
-├── apps/
-│   └── cli/                 # mp CLI (Bun binary)
-├── packages/
-│   ├── db/                  # Layer 1 — Storage (SQLite, schemas, migrations)
-│   ├── search/              # Layer 2 — Code intelligence (indexing, hybrid search)
-│   ├── ctx/                 # Layer 3 — Context assembly + governance pipeline
-│   ├── loop/                # Layer 4 — Agent loop (LLM streaming, cost, tool exec)
-│   ├── tools/               # Layer 5 — Tool registry + built-in tools
-│   ├── skills/              # Layer 6 — Skills catalog + subagent definitions
-│   ├── mcp/                 # Layer 7 — MCP server, client, sidecar, IDE setup
-│   ├── http/                # Layer 8 — HTTP API + SSE routes
-│   ├── cloud/               # Layer 9 — Cloud sync (sqlite-sync, team DB)
-│   └── agents/              # Layer 10 — Agent loader, scheduler, runner
-├── package.json             # pnpm workspace root
-├── pnpm-workspace.yaml
-└── tsconfig.base.json
+.moneypenny/
+  agents/
+    default.toml      # Agent definition (model, tools, system prompt)
+  policies/
+    budget.toml       # Daily + session cost limits
+  conventions.toml    # Project conventions
 ```
 
-### Storage model
+## Environment Variables
 
-Per-repository state lives in `.mp/`:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | — | Required for chat |
+| `OPENAI_API_KEY` | — | Required for embeddings |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | — | Optional, for Gemini models |
+| `MP_DATA` | `~/.moneypenny` | Database directory |
+| `MP_MODEL` | `claude-sonnet-4-20250514` | Default model |
+| `MP_PORT` | `4966` | Dashboard port |
+| `MP_WORK_INTERVAL` | `30000` | Work loop interval (ms) |
 
-```
-project/
-└── .mp/
-    ├── mp.db                    # Single DB: sessions, metrics, skills, config
-    ├── workspace.sqlite         # Shared code index (file tree, chunks, FTS, vectors)
-    ├── agents/
-    │   ├── _global.yaml         # Repo-wide defaults (permissions, excludes, model)
-    │   ├── default.md           # Default agent definition
-    │   └── pr-reviewer.md       # Specialized agent
-    └── skills/                  # User-defined SKILL.md files
-```
+## Tech Stack
 
-Global config and models live in `~/.mp/`:
-
-```
-~/.mp/
-├── config.json                # API keys, default model, preferences
-└── models/
-    ├── nomic-embed-text-v1.5.Q8_0.gguf    # Local embeddings (768 dims)
-    └── qwen2.5-0.5b-instruct-q4_k_m.gguf  # Local text gen (session naming, compaction)
-```
-
-### Governance pipeline
-
-Every tool call flows through: **pre-hooks → policy evaluate → execute → post-hooks → event log**.
-
-Governance composes in two layers. **`_global.yaml`** defines repo-wide permissions and exclude patterns (`deny_paths`, `deny_tools`, `allow_paths`). **Agent `.md` files** layer additional restrictions. `deny_paths` and `deny_tools` merge additively with global config; `model`, `tools`, and `max_turns` override. For cost caps, audit, and confirmation rules, use the `policies` key in either file. Built-in guards for cost limits, credential redaction, and path boundaries are always active.
+- **Runtime**: Bun
+- **Database**: SQLite (bun:sqlite) with WAL mode
+- **LLM**: Vercel AI SDK with tiered routing (Anthropic, OpenAI, Google, Ollama)
+- **Embeddings**: OpenAI text-embedding-3-small (1536d)
+- **Search**: FTS5 + cosine similarity hybrid
+- **MCP**: @modelcontextprotocol/sdk (server + client)
+- **Dashboard**: Hono + JSX (10 pages)
+- **Config**: TOML with hot-reload
 
 ## License
 

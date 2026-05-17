@@ -1,137 +1,166 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join as pathJoin } from "node:path";
-import { inferProvider, type ProviderName } from "@moneypenny/loop";
+import { z } from "zod";
+import type { Database } from "bun:sqlite";
+import { readdir, stat } from "node:fs/promises";
+import { join, basename } from "node:path";
 
-export interface ResolvedConfig {
-  provider: ProviderName;
-  apiKey: string;
-  model: string;
-  maxCostPerSession?: number;
-  confirmDestructive: boolean;
-  autoIndex: boolean;
+const AgentDefSchema = z.object({
+  name: z.string(),
+  model: z.string().optional(),
+  system_prompt: z.string().optional(),
+  tools: z.array(z.string()).optional(),
+  trigger_on: z.enum(["manual", "session_close", "schedule"]).optional(),
+});
+
+const PolicySchema = z.object({
+  name: z.string(),
+  effect: z.enum(["allow", "warn", "deny"]).default("warn"),
+  description: z.string(),
+  conditions: z.record(z.unknown()).optional(),
+});
+
+const JobSchema = z.object({
+  name: z.string(),
+  schedule: z.string().optional(),
+  agent: z.string(),
+  action: z.string().optional(),
+  enabled: z.boolean().default(true),
+});
+
+const ConventionsSchema = z.array(
+  z.object({
+    name: z.string(),
+    category: z.string().default("general"),
+    description: z.string(),
+  }),
+);
+
+function idFromPath(filePath: string): string {
+  return basename(filePath, ".toml");
 }
 
-let _globalcache: Record<string, unknown> | null | undefined;
-
-export function globalConfigPath(): string {
-  return pathJoin(homedir(), ".mp", "config.json");
-}
-
-function loadGlobalRaw(): Record<string, unknown> {
-  if (_globalcache !== undefined) {
-    return _globalcache ?? {};
-  }
-  const p = globalConfigPath();
-  if (!existsSync(p)) {
-    _globalcache = null;
-    return {};
-  }
-  try {
-    const raw = JSON.parse(readFileSync(p, "utf8")) as unknown;
-    if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
-      _globalcache = raw as Record<string, unknown>;
-      return _globalcache;
-    }
-  } catch {
-    /* skip */
-  }
-  _globalcache = null;
-  return {};
-}
-
-export function invalidateGlobalConfigCache(): void {
-  _globalcache = undefined;
-}
-
-export function writeGlobalConfigKey(key: string, value: unknown): void {
-  const p = globalConfigPath();
-  let obj: Record<string, unknown> = {};
-  if (existsSync(p)) {
-    try {
-      const raw = JSON.parse(readFileSync(p, "utf8")) as unknown;
-      if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
-        obj = raw as Record<string, unknown>;
+export async function syncConfigFile(
+  db: Database,
+  filePath: string,
+): Promise<void> {
+  if (filePath.includes("/agents/")) {
+    const raw = await Bun.file(filePath).text();
+    const parsed = Bun.TOML.parse(raw);
+    const def = AgentDefSchema.parse(parsed);
+    const id = idFromPath(filePath);
+    db.query(
+      `INSERT OR REPLACE INTO agent_defs (id, name, model, system_prompt, tools, trigger_on, source_path, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch())`,
+    ).run(
+      id,
+      def.name,
+      def.model ?? null,
+      def.system_prompt ?? null,
+      def.tools ? JSON.stringify(def.tools) : null,
+      def.trigger_on ?? null,
+      filePath,
+    );
+  } else if (filePath.includes("/policies/")) {
+    const raw = await Bun.file(filePath).text();
+    const parsed = Bun.TOML.parse(raw);
+    const policy = PolicySchema.parse(parsed);
+    const id = idFromPath(filePath);
+    db.query(
+      `INSERT OR REPLACE INTO policies (id, name, description, effect, conditions, source_path, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, unixepoch())`,
+    ).run(
+      id,
+      policy.name,
+      policy.description,
+      policy.effect,
+      policy.conditions ? JSON.stringify(policy.conditions) : null,
+      filePath,
+    );
+  } else if (filePath.includes("/jobs/")) {
+    const raw = await Bun.file(filePath).text();
+    const parsed = Bun.TOML.parse(raw);
+    const job = JobSchema.parse(parsed);
+    const id = idFromPath(filePath);
+    db.query(
+      `INSERT OR REPLACE INTO jobs (id, name, schedule, agent_name, action, enabled, source_path, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch())`,
+    ).run(
+      id,
+      job.name,
+      job.schedule ?? null,
+      job.agent,
+      job.action ?? null,
+      job.enabled ? 1 : 0,
+      filePath,
+    );
+  } else if (basename(filePath) === "conventions.toml") {
+    const raw = await Bun.file(filePath).text();
+    const parsed = Bun.TOML.parse(raw);
+    const items = Array.isArray(parsed) ? parsed : (parsed as any).convention;
+    const conventions = ConventionsSchema.parse(items);
+    const baseId = idFromPath(filePath);
+    db.transaction(() => {
+      db.query("DELETE FROM conventions WHERE id LIKE ?").run(`${baseId}:%`);
+      for (let i = 0; i < conventions.length; i++) {
+        const c = conventions[i];
+        db.query(
+          `INSERT INTO conventions (id, name, category, description, confidence, created_at)
+           VALUES (?, ?, ?, ?, 1.0, unixepoch())`,
+        ).run(`${baseId}:${i}`, c.name, c.category, c.description);
       }
-    } catch { /* overwrite corrupt file */ }
-  }
-  obj[key] = value;
-  mkdirSync(dirname(p), { recursive: true });
-  writeFileSync(p, `${JSON.stringify(obj, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  try { chmodSync(p, 0o600); } catch { /* best effort */ }
-  invalidateGlobalConfigCache();
-}
-
-/** Read a global config value as a string. Public for theme/config access. */
-export function readGlobalConfig(key: string): string | undefined {
-  const obj = loadGlobalRaw();
-  if (!(key in obj)) return undefined;
-  const v = obj[key];
-  if (v === undefined || v === null) return undefined;
-  if (typeof v === "boolean" || typeof v === "number") return String(v);
-  if (typeof v === "string") return v;
-  try {
-    return JSON.stringify(v);
-  } catch {
-    return undefined;
+    })();
   }
 }
 
-const PROVIDER_KEY_MAP: Record<ProviderName, { envVar: string; configKey: string; label: string }> = {
-  anthropic: { envVar: "ANTHROPIC_API_KEY", configKey: "anthropic_api_key", label: "Anthropic" },
-  openai: { envVar: "OPENAI_API_KEY", configKey: "openai_api_key", label: "OpenAI" },
-  google: { envVar: "GOOGLE_API_KEY", configKey: "google_api_key", label: "Google" },
-};
-
-function resolveApiKey(provider: ProviderName): string | undefined {
-  const spec = PROVIDER_KEY_MAP[provider];
-  return process.env[spec.envVar] ?? readGlobalConfig(spec.configKey);
-}
-
-/** Returns providers that have a configured API key. */
-export function availableProviders(): ProviderName[] {
-  return (["anthropic", "openai", "google"] as ProviderName[]).filter(
-    (p) => resolveApiKey(p) != null,
-  );
-}
-
-export function resolveConfig(flags: Partial<ResolvedConfig>): ResolvedConfig {
-  const model =
-    flags.model ??
-    process.env.MP_MODEL ??
-    readGlobalConfig("model") ??
-    "claude-sonnet-4-6";
-
-  const VALID_PROVIDERS: ProviderName[] = ["anthropic", "openai", "google"];
-  const rawProvider = flags.provider ?? readGlobalConfig("provider");
-  const provider: ProviderName =
-    rawProvider && VALID_PROVIDERS.includes(rawProvider as ProviderName)
-      ? (rawProvider as ProviderName)
-      : inferProvider(model);
-
-  const apiKey = flags.apiKey ?? resolveApiKey(provider);
-  if (!apiKey) {
-    const spec = PROVIDER_KEY_MAP[provider];
-    throw new Error(
-      `No ${spec.label} API key found. Set ${spec.envVar} or run \`mp config set ${spec.configKey} <key>\``,
+export async function removeConfig(
+  db: Database,
+  filePath: string,
+): Promise<void> {
+  if (filePath.includes("/agents/")) {
+    db.query("DELETE FROM agent_defs WHERE source_path = ?").run(filePath);
+  } else if (filePath.includes("/policies/")) {
+    db.query("DELETE FROM policies WHERE source_path = ?").run(filePath);
+  } else if (filePath.includes("/jobs/")) {
+    db.query("DELETE FROM jobs WHERE source_path = ?").run(filePath);
+  } else if (basename(filePath) === "conventions.toml") {
+    db.query("DELETE FROM conventions WHERE id LIKE ?").run(
+      `${idFromPath(filePath)}:%`,
     );
   }
+}
 
-  const maxParsed = parseFloat(readGlobalConfig("max_cost_per_session") ?? "0");
+async function findTomlFiles(dir: string): Promise<string[]> {
+  const results: string[] = [];
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return results;
+  }
+  for (const entry of entries) {
+    const full = join(dir, entry);
+    const s = await stat(full);
+    if (s.isDirectory()) {
+      results.push(...(await findTomlFiles(full)));
+    } else if (entry.endsWith(".toml")) {
+      results.push(full);
+    }
+  }
+  return results;
+}
 
-  const confirmDestructive =
-    flags.confirmDestructive ??
-    (readGlobalConfig("confirm_destructive") !== "false" && readGlobalConfig("confirm_destructive") !== "0");
-
-  const autoIndex =
-    flags.autoIndex ?? (readGlobalConfig("auto_index") !== "false" && readGlobalConfig("auto_index") !== "0");
-
-  return {
-    provider,
-    apiKey,
-    model,
-    maxCostPerSession: flags.maxCostPerSession ?? (Number.isFinite(maxParsed) && maxParsed > 0 ? maxParsed : undefined),
-    confirmDestructive,
-    autoIndex,
-  };
+export async function syncAllConfigs(
+  db: Database,
+  configDir: string,
+): Promise<number> {
+  const files = await findTomlFiles(configDir);
+  let count = 0;
+  for (const file of files) {
+    try {
+      await syncConfigFile(db, file);
+      count++;
+    } catch (err) {
+      console.error(`Failed to sync ${file}:`, err);
+    }
+  }
+  return count;
 }

@@ -1,172 +1,149 @@
-/**
- * MCP Client Manager — spawns external MCP servers as subprocesses and
- * registers their tools on a {@link ToolRegistry}.
- *
- * Tools are namespaced as `mcp__<server>__<tool_name>`.
- */
-
-import { existsSync } from "fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { z } from "zod";
-import type { ToolContext, ToolDefinition, ToolRegistry } from "@moneypenny/tools";
+import type { Database } from "bun:sqlite";
 
-export interface McpServerEntry {
+export interface McpServerConfig {
+  name: string;
   command: string;
   args?: string[];
   env?: Record<string, string>;
-  cwd?: string;
 }
-
-export type McpServersConfig = Record<string, McpServerEntry>;
 
 interface ConnectedServer {
-  name: string;
+  config: McpServerConfig;
   client: Client;
   transport: StdioClientTransport;
-  tools: Map<string, { description: string; inputSchema: Record<string, unknown> }>;
+  tools: Array<{
+    name: string;
+    description?: string;
+    inputSchema: Record<string, unknown>;
+  }>;
 }
-
-function interpolateEnv(value: string): string {
-  return value.replace(/\$\{([^}]+)\}/g, (_, key) => process.env[key] ?? "");
-}
-
-function resolveEnv(env: Record<string, string> | undefined): Record<string, string> {
-  if (!env) return {};
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(env)) {
-    out[k] = interpolateEnv(v);
-  }
-  return out;
-}
-
-const looseObjectSchema = z.record(z.string(), z.unknown());
 
 export class McpClientManager {
-  private servers: ConnectedServer[] = [];
+  private servers = new Map<string, ConnectedServer>();
 
-  async loadFromConfig(configPath: string): Promise<void> {
-    if (!existsSync(configPath)) {
-      console.error(`[mcp] no config at ${configPath}; skipping`);
-      return;
+  async connect(config: McpServerConfig): Promise<string[]> {
+    if (this.servers.has(config.name)) {
+      await this.disconnect(config.name);
     }
-    const raw = await Bun.file(configPath).text();
-    let config: McpServersConfig;
-    try {
-      config = JSON.parse(raw) as McpServersConfig;
-    } catch (e) {
-      console.error(`[mcp] invalid JSON in ${configPath}:`, e instanceof Error ? e.message : e);
-      return;
-    }
-    await this.startAll(config);
-  }
-
-  async startAll(config: McpServersConfig): Promise<void> {
-    const entries = Object.entries(config);
-    if (entries.length === 0) return;
-
-    const results = await Promise.allSettled(entries.map(([name, entry]) => this.startServer(name, entry)));
-
-    for (let i = 0; i < results.length; i++) {
-      const result = results[i];
-      const name = entries[i]![0];
-      if (result?.status === "rejected") {
-        console.error(`[mcp] failed to start ${name}:`, result.reason);
-      }
-    }
-  }
-
-  private async startServer(name: string, entry: McpServerEntry): Promise<void> {
-    const env = {
-      ...process.env,
-      ...resolveEnv(entry.env),
-    } as Record<string, string>;
 
     const transport = new StdioClientTransport({
-      command: entry.command,
-      args: entry.args,
-      env,
-      cwd: entry.cwd,
-      stderr: "pipe",
+      command: config.command,
+      args: config.args,
+      env: { ...process.env, ...(config.env ?? {}) } as Record<string, string>,
     });
 
-    const client = new Client({ name: `mp-${name}`, version: "1.0.0" });
+    const client = new Client(
+      { name: "moneypenny", version: "0.1.0" },
+      { capabilities: {} },
+    );
 
     await client.connect(transport);
 
-    const { tools: rawTools } = await client.listTools();
-    const toolMap = new Map<string, { description: string; inputSchema: Record<string, unknown> }>();
+    const { tools } = await client.listTools();
 
-    for (const t of rawTools) {
-      toolMap.set(t.name, {
-        description: t.description ?? "",
-        inputSchema: (t.inputSchema ?? {}) as Record<string, unknown>,
-      });
-    }
+    const connected: ConnectedServer = {
+      config,
+      client,
+      transport,
+      tools: tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema as Record<string, unknown>,
+      })),
+    };
 
-    this.servers.push({ name, client, transport, tools: toolMap });
-    console.error(`[mcp] ${name}: started (${rawTools.length} tools)`);
+    this.servers.set(config.name, connected);
+    return tools.map((t) => `${config.name}/${t.name}`);
   }
 
-  /** Builds {@link ToolDefinition} entries for all connected MCP tools. */
-  listToolDefinitions(): ToolDefinition[] {
-    const out: ToolDefinition[] = [];
-    for (const server of this.servers) {
-      for (const [toolName, meta] of server.tools) {
-        const qualifiedName = `mcp__${server.name}__${toolName}`;
-        const serverRef = server;
-        const originalName = toolName;
+  async disconnect(name: string): Promise<void> {
+    const server = this.servers.get(name);
+    if (!server) return;
+    try {
+      await server.client.close();
+    } catch {}
+    this.servers.delete(name);
+  }
 
-        out.push({
-          name: qualifiedName,
-          description: meta.description || `MCP tool ${originalName} from ${server.name}`,
-          inputSchema: looseObjectSchema,
-          execute: async (input, _ctx: ToolContext) => {
-            const args = typeof input === "object" && input !== null ? (input as Record<string, unknown>) : {};
-            const result = await serverRef.client.callTool({
-              name: originalName,
-              arguments: args,
-            });
+  async disconnectAll(): Promise<void> {
+    for (const name of [...this.servers.keys()]) {
+      await this.disconnect(name);
+    }
+  }
 
-            if ("content" in result && Array.isArray(result.content)) {
-              const textParts = result.content
-                .filter((c: { type: string }) => c.type === "text")
-                .map((c: { type: string; text?: string }) => c.text ?? "");
-              return textParts.join("\n");
-            }
+  async callTool(
+    qualifiedName: string,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    const [serverName, ...toolParts] = qualifiedName.split("/");
+    const toolName = toolParts.join("/");
 
-            return JSON.stringify(result);
-          },
+    const server = this.servers.get(serverName);
+    if (!server) throw new Error(`MCP server '${serverName}' not connected`);
+
+    const result = await server.client.callTool({
+      name: toolName,
+      arguments: args,
+    });
+
+    return result.content;
+  }
+
+  listTools(): Array<{
+    server: string;
+    name: string;
+    qualifiedName: string;
+    description?: string;
+    inputSchema: Record<string, unknown>;
+  }> {
+    const result: Array<{
+      server: string;
+      name: string;
+      qualifiedName: string;
+      description?: string;
+      inputSchema: Record<string, unknown>;
+    }> = [];
+
+    for (const [serverName, server] of this.servers) {
+      for (const tool of server.tools) {
+        result.push({
+          server: serverName,
+          name: tool.name,
+          qualifiedName: `${serverName}/${tool.name}`,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
         });
       }
     }
-    return out;
+    return result;
   }
 
-  /** Registers every connected MCP tool on the given registry. */
-  registerWithRegistry(registry: ToolRegistry): void {
-    for (const def of this.listToolDefinitions()) {
-      registry.register(def);
+  listServers(): Array<{
+    name: string;
+    command: string;
+    toolCount: number;
+  }> {
+    return [...this.servers.entries()].map(([name, server]) => ({
+      name,
+      command: server.config.command,
+      toolCount: server.tools.length,
+    }));
+  }
+
+  static loadFromConfig(db: Database): McpServerConfig[] {
+    const row = db
+      .query<{ value: string }, [string]>(
+        "SELECT value FROM config WHERE key = ?",
+      )
+      .get("mcp.servers");
+
+    if (!row) return [];
+    try {
+      return JSON.parse(row.value);
+    } catch {
+      return [];
     }
-  }
-
-  getServerNames(): string[] {
-    return this.servers.map((s) => s.name);
-  }
-
-  getToolCount(): number {
-    return this.servers.reduce((sum, s) => sum + s.tools.size, 0);
-  }
-
-  async shutdown(): Promise<void> {
-    const closeOps = this.servers.map(async (s) => {
-      try {
-        await s.client.close();
-      } catch {
-        // best-effort
-      }
-    });
-    await Promise.allSettled(closeOps);
-    this.servers = [];
   }
 }

@@ -2,15 +2,22 @@
   "name": "moneypenny",
   "private": true,
   "type": "module",
+  "version": "0.3.0",
   "packageManager": "pnpm@9.15.4",
   "engines": { "node": ">=22" },
   "scripts": {
-    "build": "pnpm -r build",
-    "check": "biome check .",
-    "check:fix": "biome check --write .",
-    "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck",
-    "dev": "bun run apps/cli/src/index.ts",
-    "chat": "bun run apps/cli/src/index.ts chat"
+    "dev": "bun run apps/cli/src/main.ts start",
+    "serve": "bun run apps/cli/src/main.ts serve",
+    "chat": "bun run apps/cli/src/main.ts chat",
+    "index": "bun run apps/cli/src/main.ts index",
+    "embed": "bun run apps/cli/src/main.ts embed",
+    "detect": "bun run apps/cli/src/main.ts detect",
+    "build": "bun build --compile apps/cli/src/main.ts --outfile mp",
+    "custodian": "bun run apps/cli/src/main.ts custodian",
+    "dashboard": "bun run apps/cli/src/main.ts dashboard",
+    "test": "bun test"
+  },
+  "bin": {
+    "mp": "apps/cli/src/main.ts"
   }
 }
