@@ -1,0 +1,22 @@
+/* syntax highlight: align with design tokens */
+.hljs {
+  background: var(--bg-elevated) !important;
+  color: var(--fg) !important;
+  border: 1px solid var(--border);
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-title {
+  color: var(--accent) !important;
+}
+.hljs-string,
+.hljs-attr {
+  color: var(--info) !important;
+}
+.hljs-number,
+.hljs-literal {
+  color: var(--warn) !important;
+}
+.hljs-comment {
+  color: var(--fg-faint) !important;
+}

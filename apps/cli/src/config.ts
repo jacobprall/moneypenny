@@ -38,11 +38,23 @@ function idFromPath(filePath: string): string {
   return basename(filePath, ".toml");
 }
 
+function tableExists(db: Database, table: string): boolean {
+  const row = db
+    .query<{ n: number }, [string]>(
+      `SELECT COUNT(1) as n FROM sqlite_master WHERE type = 'table' AND name = ?`,
+    )
+    .get(table);
+  return (row?.n ?? 0) > 0;
+}
+
 export async function syncConfigFile(
   db: Database,
   filePath: string,
 ): Promise<void> {
-  if (filePath.includes("/agents/")) {
+  if (
+    filePath.includes("/agents/") &&
+    tableExists(db, "agent_defs")
+  ) {
     const raw = await Bun.file(filePath).text();
     const parsed = Bun.TOML.parse(raw);
     const def = AgentDefSchema.parse(parsed);
@@ -65,17 +77,17 @@ export async function syncConfigFile(
     const policy = PolicySchema.parse(parsed);
     const id = idFromPath(filePath);
     db.query(
-      `INSERT OR REPLACE INTO policies (id, name, description, effect, conditions, source_path, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, unixepoch())`,
+      `INSERT OR REPLACE INTO policies (id, name, effect, description, conditions, enabled, source_path, updated_at)
+       VALUES (?, ?, ?, ?, ?, 1, ?, unixepoch())`,
     ).run(
       id,
       policy.name,
-      policy.description,
       policy.effect,
+      policy.description,
       policy.conditions ? JSON.stringify(policy.conditions) : null,
       filePath,
     );
-  } else if (filePath.includes("/jobs/")) {
+  } else if (filePath.includes("/jobs/") && tableExists(db, "jobs")) {
     const raw = await Bun.file(filePath).text();
     const parsed = Bun.TOML.parse(raw);
     const job = JobSchema.parse(parsed);
@@ -115,11 +127,11 @@ export async function removeConfig(
   db: Database,
   filePath: string,
 ): Promise<void> {
-  if (filePath.includes("/agents/")) {
+  if (filePath.includes("/agents/") && tableExists(db, "agent_defs")) {
     db.query("DELETE FROM agent_defs WHERE source_path = ?").run(filePath);
   } else if (filePath.includes("/policies/")) {
     db.query("DELETE FROM policies WHERE source_path = ?").run(filePath);
-  } else if (filePath.includes("/jobs/")) {
+  } else if (filePath.includes("/jobs/") && tableExists(db, "jobs")) {
     db.query("DELETE FROM jobs WHERE source_path = ?").run(filePath);
   } else if (basename(filePath) === "conventions.toml") {
     db.query("DELETE FROM conventions WHERE id LIKE ?").run(

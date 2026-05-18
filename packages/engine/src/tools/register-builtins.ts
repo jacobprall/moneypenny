@@ -1,0 +1,35 @@
+import type { ToolRegistry } from "./registry.js";
+import { readFileTool } from "./builtins/read_file.js";
+import { writeFileTool } from "./builtins/write_file.js";
+import { editFileTool } from "./builtins/edit_file.js";
+import { listDirectoryTool } from "./builtins/list_directory.js";
+import { searchCodeTool } from "./builtins/search_code.js";
+import { findSymbolTool } from "./builtins/find_symbol.js";
+import { readSymbolTool } from "./builtins/read_symbol.js";
+import { searchMessagesTool } from "./builtins/search_messages.js";
+import { expandPreviousSessionTool } from "./builtins/expand_previous_session.js";
+import { spawnAgentTool } from "./builtins/spawn_agent.js";
+import { requestHumanInputTool } from "./builtins/request_human_input.js";
+import { changeDirectoryTool } from "./builtins/change_directory.js";
+import { runCommandTool } from "./builtins/run_command.js";
+import { learnSkillTool } from "./builtins/learn_skill.js";
+import { recordPointerTool } from "./builtins/record_pointer.js";
+import { queryConventionsTool } from "./builtins/query_conventions.js";
+export function registerBuiltins(reg: ToolRegistry): void {
+  reg.register(readFileTool);
+  reg.register(writeFileTool);
+  reg.register(editFileTool);
+  reg.register(listDirectoryTool);
+  reg.register(searchCodeTool);
+  reg.register(findSymbolTool);
+  reg.register(readSymbolTool);
+  reg.register(searchMessagesTool);
+  reg.register(expandPreviousSessionTool);
+  reg.register(spawnAgentTool);
+  reg.register(requestHumanInputTool);
+  reg.register(changeDirectoryTool);
+  reg.register(runCommandTool);
+  reg.register(learnSkillTool);
+  reg.register(recordPointerTool);
+  reg.register(queryConventionsTool);
+}

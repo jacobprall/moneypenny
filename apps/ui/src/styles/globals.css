@@ -1,0 +1,218 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src:
+    local('IBM Plex Mono'),
+    local('IBMPlexMono-Regular'),
+    url('/fonts/IBMPlexMono-Regular.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src:
+    local('IBM Plex Mono Medium'),
+    local('IBMPlexMono-Medium'),
+    url('/fonts/IBMPlexMono-Medium.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src:
+    local('IBM Plex Mono SemiBold'),
+    local('IBMPlexMono-SemiBold'),
+    url('/fonts/IBMPlexMono-SemiBold.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src:
+    local('IBM Plex Mono Bold'),
+    local('IBMPlexMono-Bold'),
+    url('/fonts/IBMPlexMono-Bold.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src:
+    local('Inter'),
+    local('Inter Regular'),
+    local('Inter-Regular'),
+    url('/fonts/Inter-Regular.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src:
+    local('JetBrains Mono'),
+    local('JetBrainsMono-Regular'),
+    url('/fonts/JetBrainsMono-Regular.woff2') format('woff2');
+}
+
+:root {
+  /* Surfaces */
+  --bg:           oklch(0.12 0.005 230);  /* near-black, slight cool tint */
+  --bg-elevated:  oklch(0.16 0.005 230);  /* subtle lift, no shadow */
+  --bg-active:    oklch(0.20 0.005 230);  /* hover/selected */
+
+  /* Borders */
+  --border:       oklch(0.28 0.005 230);  /* default 1px */
+  --border-bold:  oklch(0.42 0.005 230);  /* emphasis */
+
+  /* Text */
+  --fg:           oklch(0.92 0.01  90);   /* warm off-white (phosphor) */
+  --fg-dim:       oklch(0.65 0.01  90);
+  --fg-faint:     oklch(0.45 0.005 90);
+
+  /* Accent — single high-contrast accent */
+  --accent:       oklch(0.78 0.18  140);  /* CRT green-cyan */
+  --accent-fg:    oklch(0.15 0.005 230);  /* text on accent */
+
+  /* Semantic */
+  --warn:         oklch(0.80 0.15  85);   /* amber */
+  --error:        oklch(0.65 0.20  25);   /* red */
+  --info:         oklch(0.78 0.12  220);  /* cyan */
+  --success:      var(--accent);
+}
+
+* {
+  border-radius: 0;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: 'IBM Plex Mono', 'JetBrains Mono', ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+*:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 0;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) var(--bg-elevated);
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--bg-elevated);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--border);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--border-bold);
+}
+
+/* ── Boot scanline: 200ms horizontal sweep, one-shot ── */
+@keyframes boot-scanline {
+  0%   { transform: translateY(-100vh); opacity: 1; }
+  100% { transform: translateY(100vh);  opacity: 0; }
+}
+
+.boot-scanline::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  height: 2px;
+  background: var(--accent);
+  opacity: 0;
+  z-index: 9999;
+  pointer-events: none;
+  animation: boot-scanline 200ms ease-out 1 forwards;
+}
+
+/* ── Boot fade from black ── */
+@keyframes boot-fade {
+  0%   { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+.boot-fade {
+  animation: boot-fade 200ms ease-out 1 forwards;
+}
+
+/* ── Cursor blink: 1s infinite ── */
+@keyframes cursor-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+.animate-cursor-blink::after {
+  content: '▌';
+  display: inline;
+  animation: cursor-blink 1s step-end infinite;
+  color: var(--accent);
+}
+
+/* ── Border pulse: running state indicator ── */
+@keyframes border-pulse {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 1; }
+}
+
+.animate-pulse-border {
+  animation: border-pulse 1.4s ease-in-out infinite;
+}
+
+/* ── Content fade-in: 80ms ── */
+@keyframes content-fade-in {
+  0%   { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: content-fade-in 80ms ease-out forwards;
+}
+
+/* ── Color transition for hover states ── */
+.transition-colors-fast {
+  transition: color 60ms, background-color 60ms, border-color 60ms;
+}
+
+/* ── Slide-in for drawers: 120ms ── */
+@keyframes slide-in-right {
+  0%   { transform: translateX(100%); }
+  100% { transform: translateX(0); }
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 120ms ease-out forwards;
+}

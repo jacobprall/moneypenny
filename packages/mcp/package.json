@@ -5,9 +5,12 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "dependencies": {
+    "@moneypenny/core": "workspace:*",
     "@moneypenny/db": "workspace:*",
     "@moneypenny/engine": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.12.0"
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.24.0",
+    "zod-to-json-schema": "^3.24.0"
   },
   "peerDependencies": {
     "bun-types": "*"

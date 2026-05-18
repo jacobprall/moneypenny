@@ -86,14 +86,13 @@ export async function embedChunks(
   const embeddings = await generateEmbeddings(texts);
 
   const stmt = db.prepare(
-    "UPDATE code_chunks SET embedding = ?, embed_model = ?, embed_dims = ? WHERE id = ?",
+    "UPDATE code_chunks SET embedding = ?, embedding_dim = ? WHERE id = ?",
   );
 
   db.transaction(() => {
     for (let i = 0; i < chunks.length; i++) {
       stmt.run(
         embeddingToBlob(embeddings[i]),
-        EMBED_MODEL,
         EMBED_DIMS,
         chunks[i].id,
       );
@@ -180,7 +179,7 @@ export async function hybridSearch(
             start_line: number | null;
             rank: number;
           },
-          [string]
+          [string, number]
         >(
           `SELECT c.file_path, c.symbol_name, c.content, c.start_line, fts.rank
            FROM code_chunks_fts fts
@@ -188,7 +187,7 @@ export async function hybridSearch(
            WHERE code_chunks_fts MATCH ?
            ORDER BY rank LIMIT ?`,
         )
-        .all(sanitized)
+        .all(sanitized, limit * 3)
     : [];
 
   const hasEmbeddings =

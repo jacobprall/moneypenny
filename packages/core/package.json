@@ -1,0 +1,16 @@
+{
+  "name": "@moneypenny/core",
+  "version": "0.2.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@moneypenny/db": "workspace:*",
+    "@moneypenny/engine": "workspace:*",
+    "zod": "^3.24.0",
+    "zod-to-json-schema": "^3.24.0"
+  },
+  "peerDependencies": {
+    "bun-types": "*"
+  }
+}

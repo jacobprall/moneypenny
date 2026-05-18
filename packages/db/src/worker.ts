@@ -118,7 +118,7 @@ async function processLabel(
     .query<{ content: string }, [string]>(
       `SELECT content FROM messages
        WHERE session_id = ? AND role IN ('user', 'assistant') AND content IS NOT NULL
-       ORDER BY turn ASC LIMIT 10`,
+       ORDER BY seq ASC LIMIT 10`,
     )
     .all(item.session_id);
 
@@ -154,7 +154,7 @@ async function processSummarize(
     .query<{ role: string; content: string }, [string]>(
       `SELECT role, content FROM messages
        WHERE session_id = ? AND content IS NOT NULL
-       ORDER BY turn ASC`,
+       ORDER BY seq ASC`,
     )
     .all(item.session_id);
 
@@ -189,9 +189,9 @@ async function processSummarize(
 
   const id = crypto.randomUUID();
   db.query(
-    `INSERT INTO session_pointers (id, session_id, key, phrase, summary, created_at)
-     VALUES (?, ?, ?, ?, ?, unixepoch())`,
-  ).run(id, item.session_id, key, phrase, summary.trim());
+    `INSERT INTO session_pointers (id, session_id, key, phrase, created_at)
+     VALUES (?, ?, ?, ?, unixepoch())`,
+  ).run(id, item.session_id, key, phrase);
 
   db.query(
     "UPDATE sessions SET label = ? WHERE id = ? AND label IS NULL",
@@ -225,11 +225,10 @@ async function processConsolidate(
         session_id: string;
         key: string;
         phrase: string;
-        summary: string | null;
       },
       [number]
     >(
-      `SELECT id, session_id, key, phrase, summary FROM session_pointers
+      `SELECT id, session_id, key, phrase FROM session_pointers
        WHERE archived = 0 AND pinned = 0
        ORDER BY created_at ASC LIMIT ?`,
     )
@@ -238,9 +237,7 @@ async function processConsolidate(
   if (oldest.length < 2) return;
 
   const descriptions = oldest
-    .map(
-      (p) => `- ${p.key}: ${p.phrase}${p.summary ? ` (${p.summary})` : ""}`,
-    )
+    .map((p) => `- ${p.key}: ${p.phrase}`)
     .join("\n");
 
   const mergedJson = await llmGenerate(
@@ -263,15 +260,13 @@ async function processConsolidate(
   db.transaction(() => {
     const id = crypto.randomUUID();
     db.query(
-      `INSERT INTO session_pointers (id, session_id, key, phrase, summary, created_at, consolidated_from)
-       VALUES (?, ?, ?, ?, ?, unixepoch(), ?)`,
+      `INSERT INTO session_pointers (id, session_id, key, phrase, created_at)
+       VALUES (?, ?, ?, ?, unixepoch())`,
     ).run(
       id,
       sourceIds[sourceIds.length - 1],
       merged.key,
       merged.phrase,
-      merged.summary,
-      JSON.stringify(sourceIds),
     );
 
     for (const pid of sourcePointerIds) {

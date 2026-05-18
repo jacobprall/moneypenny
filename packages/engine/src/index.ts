@@ -44,8 +44,14 @@ export {
   resolveModel as resolveModelFromLlm,
   configureLlm,
   getLlmConfig,
+  setLlmDatabase,
   modelForTier,
   llm,
   llmJson,
 } from "./llm.js";
-export type { ModelTier, ModelConfig } from "./llm.js";
+export type { ModelTier, ModelConfig, SqliteAiConfig } from "./llm.js";
+export * from "./events/index.js";
+export * from "./tools/index.js";
+export * from "./blueprints/index.js";
+export * from "./ideas/index.js";
+export * from "./runtime/index.js";

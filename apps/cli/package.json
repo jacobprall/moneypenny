@@ -4,6 +4,8 @@
   "type": "module",
   "main": "src/main.ts",
   "dependencies": {
+    "@moneypenny/api": "workspace:*",
+    "@moneypenny/core": "workspace:*",
     "@moneypenny/db": "workspace:*",
     "@moneypenny/engine": "workspace:*",
     "@moneypenny/mcp": "workspace:*",
