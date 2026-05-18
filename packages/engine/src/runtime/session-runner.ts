@@ -26,6 +26,7 @@ const MAX_SPAWN_DEPTH = 5;
 
 export class EngineSessionRunner implements ToolSessionRunner {
   private readonly loops = new Map<string, AgentLoop>();
+  private readonly launching = new Set<string>();
 
   constructor(private readonly deps: Deps) {}
 
@@ -37,7 +38,8 @@ export class EngineSessionRunner implements ToolSessionRunner {
     if (initialMessage) {
       insertPendingUserMessage(this.deps.writeDb, sessionId, initialMessage);
     }
-    if (this.loops.has(sessionId)) return;
+    if (this.loops.has(sessionId) || this.launching.has(sessionId)) return;
+    this.launching.add(sessionId);
     const loop = new AgentLoop(sessionId, {
       ...this.deps,
       runner: this,
@@ -58,8 +60,17 @@ export class EngineSessionRunner implements ToolSessionRunner {
       },
     });
     this.loops.set(sessionId, loop);
-    void loop.run().finally(() => {
+    this.launching.delete(sessionId);
+    loop.run().catch((err) => {
+      console.error(`[session-runner] loop failed for ${sessionId}:`, err);
+      this.deps.events.emit({
+        type: "session.failed",
+        session_id: sessionId,
+        detail: { error: String(err) },
+      });
+    }).finally(() => {
       this.loops.delete(sessionId);
+      this.launching.delete(sessionId);
     });
   }
 

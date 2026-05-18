@@ -24,6 +24,7 @@ export type ShutdownHandles = {
   aiDb: Database;
   writeDb: Database;
   readDb: Database;
+  registryHandles?: Array<{ close(): Promise<void> | void }>;
 };
 
 const DRAIN_MS = 5000;
@@ -46,20 +47,34 @@ export async function shutdownRuntime(h: ShutdownHandles): Promise<void> {
   h.scheduler.stop();
   h.custodian.stop();
   h.workLoop.stop();
-  h.watcher.stop();
+  await h.watcher.stop();
+
+  if (h.registryHandles) {
+    for (const rh of h.registryHandles) {
+      try { await rh.close(); } catch {}
+    }
+  }
 
   h.events.emit({ type: "system.shutdown" });
 
   try {
     h.aiDb.exec("SELECT llm_model_free()");
-  } catch {}
+  } catch (e) {
+    console.error("[shutdown] llm_model_free:", e instanceof Error ? e.message : e);
+  }
   try {
     h.aiDb.close();
-  } catch {}
+  } catch (e) {
+    console.error("[shutdown] aiDb.close:", e instanceof Error ? e.message : e);
+  }
   try {
     h.readDb.close();
-  } catch {}
+  } catch (e) {
+    console.error("[shutdown] readDb.close:", e instanceof Error ? e.message : e);
+  }
   try {
     h.writeDb.close();
-  } catch {}
+  } catch (e) {
+    console.error("[shutdown] writeDb.close:", e instanceof Error ? e.message : e);
+  }
 }

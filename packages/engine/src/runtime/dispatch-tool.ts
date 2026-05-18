@@ -116,6 +116,13 @@ export async function dispatchTool(
   try {
     const value = await tool.execute(parsed.data, ctx);
     const ms = performance.now() - start;
+    let resultSize = 0;
+    try {
+      const s = JSON.stringify(value);
+      resultSize = s ? s.length : 0;
+    } catch {
+      resultSize = -1;
+    }
     ctx.events.emit({
       type: "tool.completed",
       session_id: ctx.sessionId,
@@ -123,7 +130,7 @@ export async function dispatchTool(
       detail: {
         tool_call_id: call.id,
         duration_ms: ms,
-        result_size: JSON.stringify(value).length,
+        result_size: resultSize,
       },
     });
     return { ok: true, value };

@@ -87,8 +87,8 @@ async function wireLlm(
   if (saved) {
     try {
       configureLlm(JSON.parse(saved.value) as Parameters<typeof configureLlm>[0]);
-    } catch {
-      /* ignore */
+    } catch (e) {
+      console.error("[llm] failed to parse saved config:", e instanceof Error ? e.message : e);
     }
   }
 
@@ -394,6 +394,7 @@ export async function runHttpServer(paths: ResolvedPaths): Promise<void> {
       aiDb,
       writeDb,
       readDb,
+      registryHandles: [blueprints],
     };
     await shutdownRuntime(handles);
   };

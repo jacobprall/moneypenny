@@ -188,6 +188,7 @@ export async function llm(
     model: resolveModel(modelStr),
     prompt,
     maxTokens: opts?.maxTokens,
+    abortSignal: AbortSignal.timeout(120_000),
   });
   return text;
 }

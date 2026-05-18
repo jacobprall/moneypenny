@@ -44,14 +44,16 @@ export function createSessionsRoutes(ctx: ActionContext) {
       const status = c.req.query("status") ?? undefined;
       const blueprint = c.req.query("blueprint") ?? undefined;
       const label = c.req.query("label") ?? undefined;
-      const cursor = c.req.query("cursor");
-      const limit = c.req.query("limit");
+      const cursorRaw = c.req.query("cursor");
+      const limitRaw = c.req.query("limit");
+      const cursorN = cursorRaw ? Number(cursorRaw) : null;
+      const limitN = limitRaw ? Number(limitRaw) : undefined;
       const out = act.listSessions(ctx, {
         status,
         blueprint,
         label,
-        cursor: cursor ? Number(cursor) : null,
-        limit: limit ? Number(limit) : undefined,
+        cursor: cursorN != null && Number.isFinite(cursorN) ? cursorN : null,
+        limit: limitN != null && Number.isFinite(limitN) ? Math.min(Math.max(limitN, 1), 200) : undefined,
       });
       return c.json(out);
     })

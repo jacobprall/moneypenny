@@ -31,6 +31,7 @@ export type EventType =
   | "blueprint.invalid"
   | "blueprint.removed"
   | "schedule.fired"
+  | "schedule.failed"
   | "schedule.skipped"
   | "cwd.missing"
   | "permission.denied"

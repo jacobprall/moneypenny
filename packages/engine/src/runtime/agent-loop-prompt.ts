@@ -4,12 +4,18 @@ import { listConventions, listSkills } from "@moneypenny/db";
 import type { Message } from "@moneypenny/db";
 import type { StoredSessionConfig } from "./types.js";
 
+function sanitizePromptField(s: string): string {
+  return s.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "").slice(0, 2000);
+}
+
 export function buildV2SystemPrompt(
   readDb: Database,
   cfg: StoredSessionConfig,
 ): string {
   const parts: string[] = [
+    "--- BEGIN BLUEPRINT INSTRUCTIONS ---",
     cfg.instructions.trim(),
+    "--- END BLUEPRINT INSTRUCTIONS ---",
     "",
     `Working directory (cwd): ${cfg.cwd}`,
   ];
@@ -17,8 +23,8 @@ export function buildV2SystemPrompt(
     const convs = listConventions(readDb).slice(0, 40);
     if (convs.length) {
       parts.push(
-        "## Conventions",
-        ...convs.map((c) => `- **${c.name}**: ${c.description}`),
+        "## Conventions (from project knowledge base)",
+        ...convs.map((c) => `- **${sanitizePromptField(c.name)}**: ${sanitizePromptField(c.description)}`),
       );
     }
   }
@@ -28,8 +34,8 @@ export function buildV2SystemPrompt(
     const picked = all.filter((s) => want.has(s.name));
     if (picked.length) {
       parts.push(
-        "## Requested skills",
-        ...picked.map((s) => `- **${s.name}**: ${s.description}`),
+        "## Requested skills (from project knowledge base)",
+        ...picked.map((s) => `- **${sanitizePromptField(s.name)}**: ${sanitizePromptField(s.description)}`),
       );
     }
   }

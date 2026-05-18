@@ -56,11 +56,18 @@ export class Scheduler {
         });
         sessionId = launched.sessionId;
       } catch (e) {
+        const nxt = nextCronUnix(row.cron_expr, now);
+        recordScheduleRun(this.deps.writeDb, row.id, {
+          lastSessionId: row.last_session_id ?? "",
+          nextRunAt: nxt,
+          lastRunAt: now,
+        });
         this.deps.events.emit({
-          type: "schedule.skipped",
+          type: "schedule.failed",
           detail: {
             blueprint: row.blueprint,
             reason: String(e),
+            next_run_at: nxt,
           },
         });
         continue;

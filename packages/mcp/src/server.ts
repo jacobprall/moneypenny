@@ -33,7 +33,7 @@ function defineTool<T extends z.ZodRawShape>(def: {
     >,
     handler: async (raw) => {
       const parsed = def.schema.safeParse(raw);
-      if (!parsed.success) return JSON.stringify({ error: parsed.error.flatten() });
+      if (!parsed.success) throw new Error(`Invalid args: ${JSON.stringify(parsed.error.flatten())}`);
       return JSON.stringify(await def.handler(parsed.data));
     },
   };
@@ -279,12 +279,9 @@ function buildTools(ctx: ActionContext): McpTool[] {
     defineTool({
       name: "reload_blueprints",
       description: "Force blueprint registry refresh",
-      schema: z.object({
-        globalDir: z.string(),
-        repoDir: z.string().optional(),
-      }),
-      handler: async (a) => {
-        actions.reloadBlueprints(ctx, { global: a.globalDir, repo: a.repoDir });
+      schema: z.object({}),
+      handler: async () => {
+        ctx.registry.reload();
         return { ok: true };
       },
     }),

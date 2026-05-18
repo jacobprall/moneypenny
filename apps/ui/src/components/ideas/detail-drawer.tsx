@@ -1,5 +1,6 @@
 import ReactMarkdown from 'react-markdown'
 import { useNavigate } from '@tanstack/react-router'
+import rehypeSanitize from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -36,7 +37,7 @@ export function IdeaDetailDrawer(props: {
               </pre>
             </details>
             <div className="border border-border bg-panel p-4 font-sans text-sm text-fg">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{props.idea.body}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{props.idea.body}</ReactMarkdown>
             </div>
             <div className="flex gap-2">
               <Button type="button" variant="primary" size="sm" onClick={() => setLaunchOpen(true)}>

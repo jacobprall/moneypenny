@@ -70,9 +70,16 @@ export class EventBus {
     let resume: (() => void) | undefined;
     let closed = false;
 
+    let droppedCount = 0;
     const enqueue = (e: Event): void => {
       if (closed) return;
-      if (queue.length >= MAX_QUEUE) queue.shift();
+      if (queue.length >= MAX_QUEUE) {
+        queue.shift();
+        droppedCount++;
+        if (droppedCount === 1 || droppedCount % 100 === 0) {
+          console.warn(`[event-bus] subscriber queue full, dropped ${droppedCount} events total`);
+        }
+      }
       queue.push(e);
       resume?.();
       resume = undefined;

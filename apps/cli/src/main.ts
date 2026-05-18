@@ -44,7 +44,9 @@ async function wireLlmForCli(
   if (saved) {
     try {
       configureLlm(JSON.parse(saved.value) as Parameters<typeof configureLlm>[0]);
-    } catch {}
+    } catch (e) {
+      console.error("[llm] failed to parse saved config:", e instanceof Error ? e.message : e);
+    }
   }
   const rootCfg = await loadRootConfig(repoRoot);
   if (rootCfg.models) {

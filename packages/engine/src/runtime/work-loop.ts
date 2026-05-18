@@ -6,6 +6,7 @@ import type { WorkLoopDeps } from "./types.js";
 
 export class WorkLoop {
   private handle: ReturnType<typeof setInterval> | undefined;
+  private ticking = false;
 
   constructor(private readonly deps: WorkLoopDeps) {}
 
@@ -20,7 +21,13 @@ export class WorkLoop {
   }
 
   private async tick(): Promise<void> {
-    await this.drainBatch(this.deps.writeDb, this.deps.events);
+    if (this.ticking) return;
+    this.ticking = true;
+    try {
+      await this.drainBatch(this.deps.writeDb, this.deps.events);
+    } finally {
+      this.ticking = false;
+    }
   }
 
   private async drainBatch(db: Database, events: EventBus): Promise<void> {
@@ -29,8 +36,9 @@ export class WorkLoop {
         { id: number; type: string; session_id: string | null; payload: string | null },
         [number]
       >(
-        `SELECT id, type, session_id, payload FROM work_queue
-         WHERE processed_at IS NULL ORDER BY id ASC LIMIT ?`,
+        `UPDATE work_queue SET processed_at = -1
+         WHERE id IN (SELECT id FROM work_queue WHERE processed_at IS NULL ORDER BY id ASC LIMIT ?)
+         RETURNING id, type, session_id, payload`,
       )
       .all(this.deps.batchSize);
 

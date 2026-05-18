@@ -1,18 +1,20 @@
-let toolCallingSessionId: string | undefined;
-let toolCallingRunId: string | undefined;
+import { AsyncLocalStorage } from "node:async_hooks";
 
-export function setToolCallingSession(id: string | undefined): void {
-  toolCallingSessionId = id;
+interface ToolCallContext {
+  sessionId: string;
+  runId: string;
+}
+
+const store = new AsyncLocalStorage<ToolCallContext>();
+
+export function runInToolContext<T>(ctx: ToolCallContext, fn: () => T): T {
+  return store.run(ctx, fn);
 }
 
 export function getToolCallingSession(): string | undefined {
-  return toolCallingSessionId;
-}
-
-export function setToolCallingRunId(id: string | undefined): void {
-  toolCallingRunId = id;
+  return store.getStore()?.sessionId;
 }
 
 export function getToolCallingRunId(): string | undefined {
-  return toolCallingRunId;
+  return store.getStore()?.runId;
 }

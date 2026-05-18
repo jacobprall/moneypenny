@@ -166,6 +166,15 @@ export class BlueprintRegistry {
     disableScheduleByBlueprint(db, blueprintName);
   }
 
+  reload(): void {
+    this.rebuildAll();
+  }
+
+  async stop(): Promise<void> {
+    await this.handle?.close?.();
+    this.handle = undefined;
+  }
+
   resolve(name: string, _cwd?: string): Blueprint | undefined {
     return this.items.get(name) ?? (name === "default" ? this.getDefault() : undefined);
   }

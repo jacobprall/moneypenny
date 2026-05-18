@@ -43,7 +43,7 @@ export async function migrate(db: Database, sqlDir: string): Promise<number> {
     const sql = await Bun.file(join(sqlDir, file)).text();
     db.transaction(() => {
       db.exec(sql);
-      db.exec(`INSERT INTO schema_version (version) VALUES (${version})`);
+      db.query<unknown, [number]>(`INSERT INTO schema_version (version) VALUES (?)`).run(version);
     })();
     applied++;
   }
@@ -70,7 +70,10 @@ export async function migrateV2(
   const current = row?.version ?? 0;
 
   if (current > 0 && current < V2_BASE) {
-    return { applied: 0, isFreshV2: false };
+    throw new Error(
+      `Schema version ${current} is a legacy v1 version (expected 0 or >= ${V2_BASE}). ` +
+      `Run the v1-to-v2 migration first: mp migrate`,
+    );
   }
 
   const isFreshV2 = current === 0;
@@ -91,7 +94,7 @@ export async function migrateV2(
     const sql = await Bun.file(join(sqlV2Dir, file)).text();
     writeDb.transaction(() => {
       writeDb.exec(sql);
-      writeDb.exec(`INSERT INTO schema_version (version) VALUES (${version})`);
+      writeDb.query<unknown, [number]>(`INSERT INTO schema_version (version) VALUES (?)`).run(version);
     })();
     applied++;
   }

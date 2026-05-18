@@ -30,8 +30,7 @@ import { parseSessionConfig } from "./types.js";
 import {
   getToolCallingSession,
   getToolCallingRunId,
-  setToolCallingSession,
-  setToolCallingRunId,
+  runInToolContext,
 } from "./tool-context.js";
 
 type AgentLoopDeps = RuntimeDeps & {
@@ -151,6 +150,16 @@ export class AgentLoop {
         if (st === "running")
           updateSessionStatus(writeDb, this.sessionId, "active");
       }
+    } catch (err) {
+      console.error(`[agent-loop] fatal error in session ${this.sessionId}:`, err);
+      try {
+        updateSessionStatus(writeDb, this.sessionId, "failed");
+      } catch {}
+      events.emit({
+        type: "session.failed",
+        session_id: this.sessionId,
+        detail: { error: String(err) },
+      });
     } finally {
       this.abortCtl = new AbortController();
     }
@@ -287,8 +296,10 @@ export class AgentLoop {
           break;
         }
       }
-    } catch {
-      /* aborted */
+    } catch (err) {
+      if (!(err instanceof Error && err.name === "AbortError") && !this.abortCtl.signal.aborted) {
+        throw err;
+      }
     }
 
     buf = (await result.text) ?? buf;
@@ -399,11 +410,7 @@ export class AgentLoop {
         description: td.description,
         parameters: td.inputSchema,
         execute: async (args, { toolCallId }) => {
-            const prev = getToolCallingSession();
-            const prevRun = getToolCallingRunId();
-            setToolCallingSession(this.sessionId);
-            setToolCallingRunId(run.id);
-            try {
+          return runInToolContext({ sessionId: this.sessionId, runId: run.id }, async () => {
             const cur = getSession(this.deps.readDb, this.sessionId);
             const parsedCfg = cur ? parseSessionConfig(cur.config) : null;
             const cwd = parsedCfg?.cwd ?? process.cwd();
@@ -455,10 +462,7 @@ export class AgentLoop {
             });
             if ("ok" in res && res.ok) return res.value;
             return { error: res.error, message: res.message };
-          } finally {
-            setToolCallingSession(prev);
-            setToolCallingRunId(prevRun);
-          }
+          });
         },
       });
     }

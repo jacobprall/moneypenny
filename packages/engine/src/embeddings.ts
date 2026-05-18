@@ -20,25 +20,30 @@ export async function generateEmbeddings(
 
   for (let i = 0; i < texts.length; i += BATCH_SIZE) {
     const batch = texts.slice(i, i + BATCH_SIZE);
-    const resp = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: EMBED_MODEL,
-        input: batch.map((t) => t.slice(0, 8000)),
-        dimensions: EMBED_DIMS,
-      }),
-    });
-
-    if (!resp.ok) {
-      const err = await resp.text();
-      throw new Error(`Embedding API error ${resp.status}: ${err}`);
+    let resp: Response | undefined;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      resp = await fetch("https://api.openai.com/v1/embeddings", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: EMBED_MODEL,
+          input: batch.map((t) => t.slice(0, 8000)),
+          dimensions: EMBED_DIMS,
+        }),
+      });
+      if (resp.ok || (resp.status >= 400 && resp.status < 500 && resp.status !== 429)) break;
+      await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
     }
 
-    const json: EmbeddingResponse = await resp.json();
+    if (!resp!.ok) {
+      const err = await resp!.text();
+      throw new Error(`Embedding API error ${resp!.status}: ${err}`);
+    }
+
+    const json: EmbeddingResponse = await resp!.json();
     json.data.sort((a, b) => a.index - b.index);
 
     for (const item of json.data) {
@@ -130,7 +135,7 @@ export async function semanticSearch(
       },
       []
     >(
-      "SELECT id, file_path, symbol_name, content, start_line, embedding FROM code_chunks WHERE embedding IS NOT NULL",
+      "SELECT id, file_path, symbol_name, content, start_line, embedding FROM code_chunks WHERE embedding IS NOT NULL LIMIT 5000",
     )
     .all();
 

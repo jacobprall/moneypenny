@@ -33,8 +33,8 @@ export class Watcher {
     }
   }
 
-  stop(): void {
-    void this.codeWatch?.close();
-    void this.configWatch?.close();
+  async stop(): Promise<void> {
+    await this.codeWatch?.close();
+    await this.configWatch?.close();
   }
 }

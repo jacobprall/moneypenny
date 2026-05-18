@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import CronExpressionParser from "cron-parser";
 import type { Blueprint } from "./types.js";
 
 export const KNOWN_TOOL_NAMES = new Set([
@@ -29,15 +30,20 @@ const MODEL_HINTS = new Set([
 ]);
 
 function validCron(expr: string): boolean {
-  const parts = expr.trim().split(/\s+/);
-  return parts.length >= 5 && parts.length <= 6;
+  try {
+    CronExpressionParser.parse(expr.trim(), { tz: "UTC" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export type ValidateBlueprintResult =
   | { ok: true; blueprint: Blueprint; warnings: string[] }
   | { ok: false; errors: string[] };
 
-export function validateBlueprint(bp: Blueprint): ValidateBlueprintResult {
+export function validateBlueprint(input: Blueprint): ValidateBlueprintResult {
+  let bp = { ...input };
   const errors: string[] = [];
   const warnings: string[] = [];
 
@@ -54,7 +60,7 @@ export function validateBlueprint(bp: Blueprint): ValidateBlueprintResult {
       if (KNOWN_TOOL_NAMES.has(t)) next.push(t);
       else warnings.push(`unknown tool dropped: ${t}`);
     }
-    bp.tools = next;
+    bp = { ...bp, tools: next };
   }
 
   if (bp.model && !MODEL_HINTS.has(bp.model)) {

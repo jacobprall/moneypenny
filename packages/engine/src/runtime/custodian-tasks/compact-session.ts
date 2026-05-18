@@ -41,4 +41,7 @@ export async function maybeCompactRunningSession(
     role: "system",
     content: `[compact] ${summary}`,
   });
+  db.query<unknown, [string, number]>(
+    `DELETE FROM messages WHERE session_id = ? AND seq < ?`,
+  ).run(sessionId, mid.seq);
 }

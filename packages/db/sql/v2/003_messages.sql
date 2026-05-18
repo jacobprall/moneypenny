@@ -15,6 +15,8 @@ CREATE INDEX idx_messages_session ON messages(session_id, seq);
 CREATE INDEX idx_messages_run     ON messages(run_id) WHERE run_id IS NOT NULL;
 CREATE INDEX idx_messages_pending ON messages(session_id, seq) WHERE pending = 1;
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_session_seq ON messages(session_id, seq);
+
 CREATE VIRTUAL TABLE messages_fts USING fts5(content, content=messages, content_rowid=rowid);
 
 CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN

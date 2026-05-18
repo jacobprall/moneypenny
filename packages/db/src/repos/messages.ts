@@ -162,6 +162,11 @@ export function listMessages(
 }
 
 export function searchMessagesFts(db: Database, ftsQuery: string): Message[] {
+  const sanitized = ftsQuery
+    .replace(/[^\w\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!sanitized) return [];
   return db
     .query<Message, [string]>(
       `SELECT m.* FROM messages m
@@ -170,5 +175,5 @@ export function searchMessagesFts(db: Database, ftsQuery: string): Message[] {
        ORDER BY m.created_at DESC
        LIMIT 200`,
     )
-    .all(ftsQuery);
+    .all(sanitized);
 }

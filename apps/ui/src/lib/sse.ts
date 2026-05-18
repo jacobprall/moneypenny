@@ -95,6 +95,7 @@ class FetchSseConnection {
               this.onEvent(obj as ServerEvent)
             }
           }
+          await new Promise((r) => setTimeout(r, 1500))
         } catch {
           if (!this.active) break
           await new Promise((r) => setTimeout(r, 1500))

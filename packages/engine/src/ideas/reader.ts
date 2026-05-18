@@ -1,8 +1,16 @@
 import { existsSync, readdirSync, unlinkSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, basename } from "node:path";
 import { parseIdeaFile, writeIdeaFile, parseIdeaContent } from "./parse.js";
 import type { Idea, IdeaSource } from "./types.js";
 import yaml from "js-yaml";
+
+function safeName(filename: string): string {
+  const b = basename(filename);
+  if (!b || b === "." || b === ".." || b.includes("\0")) {
+    throw new Error("Invalid idea filename");
+  }
+  return b;
+}
 
 export function listIdeas(globalDir: string, repoDir?: string): Idea[] {
   const out: Idea[] = [];
@@ -18,7 +26,7 @@ export function getIdea(
   repoDir: string | undefined,
   filename: string,
 ): Idea | undefined {
-  const fn = filename.endsWith(".md") ? filename : `${filename}.md`;
+  const fn = safeName(filename.endsWith(".md") ? filename : `${filename}.md`);
   const repPath = repoDir ? join(repoDir, fn) : null;
   if (repPath && existsSync(repPath)) {
     const r = parseIdeaFile(repPath, "repo", fn);
@@ -39,7 +47,7 @@ export function writeIdea(
   frontmatter: Record<string, unknown>,
 ): Idea {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const fn = filename.endsWith(".md") ? filename : `${filename}.md`;
+  const fn = safeName(filename.endsWith(".md") ? filename : `${filename}.md`);
   const path = join(dir, fn);
 
   if (existsSync(path)) {
@@ -59,7 +67,7 @@ export function writeIdea(
 }
 
 export function deleteIdea(dir: string, filename: string): void {
-  const fn = filename.endsWith(".md") ? filename : `${filename}.md`;
+  const fn = safeName(filename.endsWith(".md") ? filename : `${filename}.md`);
   const path = join(dir, fn);
   if (existsSync(path)) unlinkSync(path);
 }

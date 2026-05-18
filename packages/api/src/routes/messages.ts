@@ -10,12 +10,14 @@ export function createMessagesRoutes(ctx: ActionContext) {
     })
     .get("/by-session/:id", async (c) => {
       const cursor = c.req.query("cursor");
-      const limit = c.req.query("limit");
+      const limitRaw = c.req.query("limit");
       const direction = c.req.query("direction");
+      const cursorN = cursor ? Number(cursor) : null;
+      const limitN = limitRaw ? Number(limitRaw) : undefined;
       return c.json(
         act.listMessagesBySession(ctx, c.req.param("id"), {
-          cursor: cursor ? Number(cursor) : null,
-          limit: limit ? Number(limit) : undefined,
+          cursor: cursorN != null && Number.isFinite(cursorN) ? cursorN : null,
+          limit: limitN != null && Number.isFinite(limitN) ? Math.min(Math.max(limitN, 1), 500) : undefined,
           direction: direction === "after" ? "after" : "before",
         }),
       );

@@ -1,15 +1,25 @@
 import { hybridSearch } from "@moneypenny/engine";
 import type { ActionContext } from "./context.js";
 import { readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join, resolve, relative } from "node:path";
 import { existsSync } from "node:fs";
+import { ErrorCodes, MoneypennyError } from "../errors.js";
+
+function guardPath(cwd: string, rel: string): string {
+  const p = resolve(join(cwd, rel));
+  const r = relative(resolve(cwd), p);
+  if (r.startsWith("..") || r.includes("..")) {
+    throw new MoneypennyError(ErrorCodes.PERMISSION_DENIED, "path escape");
+  }
+  return p;
+}
 
 export async function searchCode(ctx: ActionContext, q: string, limit?: number) {
   return hybridSearch(ctx.readDb, q, limit ?? 20);
 }
 
 export async function readCodeFile(ctx: ActionContext, cwd: string, rel: string) {
-  const path = resolve(join(cwd, rel));
+  const path = guardPath(cwd, rel);
   if (!existsSync(path)) return null;
   return readFile(path, "utf8");
 }
